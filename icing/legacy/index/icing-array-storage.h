@@ -20,10 +20,13 @@
 #ifndef ICING_LEGACY_INDEX_ICING_ARRAY_STORAGE_H_
 #define ICING_LEGACY_INDEX_ICING_ARRAY_STORAGE_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mmapper.h"
 #include "icing/util/crc32.h"
@@ -71,11 +74,19 @@ class IcingArrayStorage {
   // Make array empty again.
   void Clear();
 
-  // Intent to write memory at (elt_idx, elt_idx + elt_len). Returns
-  // NULL if file cannot be grown to accommodate that offset.
+  // Intent to write memory at (elt_idx, elt_idx + elt_len).
+  //
+  // Returns:
+  //   The pointer to the memory on success.
+  //   RESOURCE_EXHAUSTED if file cannot be grown to accommodate that offset.
   template <class T>
-  T *GetMutableMem(uint32_t elt_idx, uint32_t elt_len) {
-    return static_cast<T *>(GetMutableMemInternal(elt_idx, elt_len));
+  libtextclassifier3::StatusOr<T *> GetMutableMem(uint32_t elt_idx,
+                                                  uint32_t elt_len) {
+    void *mem = GetMutableMemInternal(elt_idx, elt_len);
+    if (mem == nullptr) {
+      return absl_ports::ResourceExhaustedError("Failed to allocate memory");
+    }
+    return static_cast<T *>(mem);
   }
 
   // Resizes to first elt_len elements.
@@ -134,6 +145,7 @@ class IcingArrayStorage {
   static_assert(8 == sizeof(Change), "sizeof(Change) != 8");
   static_assert(4 == alignof(Change), "alignof(Change) != 4");
 
+  // Returns a pointer to the memory. Returns nullptr on failure.
   void *GetMutableMemInternal(uint32_t elt_idx, uint32_t elt_len);
 
   bool GrowIfNecessary(uint32_t num_elts);

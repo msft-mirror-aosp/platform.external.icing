@@ -180,7 +180,8 @@ class IndexProcessorTest : public Test {
                            /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
-        index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+        index_, Index::Create(options, &filesystem_, &icing_filesystem_,
+                              feature_flags_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         integer_index_,
@@ -316,7 +317,8 @@ class IndexProcessorTest : public Test {
         std::unique_ptr<QualifiedIdJoinIndexingHandler>
             qualified_id_join_indexing_handler,
         QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                               qualified_id_join_index_.get()));
+                                               qualified_id_join_index_.get(),
+                                               feature_flags_.get()));
     std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
     handlers.push_back(std::move(term_indexing_handler));
     handlers.push_back(std::move(integer_section_indexing_handler));
@@ -967,7 +969,8 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIdsInRecoveryMode) {
       std::unique_ptr<QualifiedIdJoinIndexingHandler>
           qualified_id_join_indexing_handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
   std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
   handlers.push_back(std::move(term_indexing_handler));
   handlers.push_back(std::move(integer_section_indexing_handler));
@@ -1128,7 +1131,8 @@ TEST_F(IndexProcessorTest, IndexingDocAutomaticMerge) {
                          /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
-      index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+      index_, Index::Create(options, &filesystem_, &icing_filesystem_,
+                            feature_flags_.get()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<TermIndexingHandler> term_indexing_handler,
@@ -1201,8 +1205,8 @@ TEST_F(IndexProcessorTest, IndexingDocMergeFailureResets) {
                          /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/16);
   ICING_ASSERT_OK_AND_ASSIGN(
-      index_,
-      Index::Create(options, &filesystem_, mock_icing_filesystem_.get()));
+      index_, Index::Create(options, &filesystem_, mock_icing_filesystem_.get(),
+                            feature_flags_.get()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<TermIndexingHandler> term_indexing_handler,

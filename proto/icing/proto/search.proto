@@ -382,7 +382,7 @@ message SnippetProto {
 }
 
 // Icing lib-supplied results from a search results.
-// Next tag: 7
+// Next tag: 9
 message SearchResultProto {
   // Status code can be one of:
   //   OK
@@ -450,6 +450,13 @@ message SearchResultProto {
   // of result documents (as their ground truth), then they should restart the
   // query via Search API when this field is true.
   optional bool page_token_not_found = 6;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 7;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 8;
 }
 
 // Next tag: 3
@@ -560,7 +567,7 @@ message NamespaceDocumentUriGroup {
   repeated string document_uris = 2;
 }
 
-// Next tag: 3
+// Next tag: 5
 message SuggestionResponse {
   message Suggestion {
     // The suggested query string for client to search for.
@@ -576,6 +583,13 @@ message SuggestionResponse {
   optional StatusProto status = 1;
 
   repeated Suggestion suggestions = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }
 
 // Specification for a left outer join.
