@@ -290,6 +290,9 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
     return &array_storage_[NODE].array_cast<Node>()[idx];
   }
 
+  // Returns the number of elements in the node array.
+  uint32_t GetNodeArraySize() const { return array_storage_[NODE].num_elts(); }
+
   // REQUIRES: !empty(). Otherwise node 0 could contain invalid data
   //   (next_index, is_leaf, log2_num_children).
   const Node *GetRootNode() const { return GetNode(0); }
@@ -1641,10 +1644,11 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(std::string_view key,
 
   uint32_t best_node_index;
   int key_offset;
-  FindBestNode(key, &best_node_index, &key_offset, false);
+  libtextclassifier3::Status status =
+      FindBestNode(key, &best_node_index, &key_offset, false);
 
   // A negative key_offset indicates that storage_ is empty
-  if (key_offset < 0) {
+  if (key_offset < 0 || !status.ok()) {
     // First key.
     if (!storage_->empty()) {
       return absl_ports::InternalError(
@@ -1858,9 +1862,10 @@ bool IcingDynamicTrie::Find(std::string_view key, void *value,
 
   uint32_t best_node_index;
   int key_offset;
-  FindBestNode(key, &best_node_index, &key_offset, false);
+  libtextclassifier3::Status status =
+      FindBestNode(key, &best_node_index, &key_offset, false);
 
-  if (key_offset < 0) {
+  if (key_offset < 0 || !status.ok()) {
     return false;
   }
 
@@ -1955,7 +1960,8 @@ void IcingDynamicTrie::Iterator::Reset() {
   // Find node matching prefix.
   uint32_t node_index;
   int key_offset;
-  trie_.FindBestNode(cur_key_, &node_index, &key_offset, true);
+  libtextclassifier3::Status status =
+      trie_.FindBestNode(cur_key_, &node_index, &key_offset, true);
 
   // Two cases/states:
   //
@@ -1966,9 +1972,8 @@ void IcingDynamicTrie::Iterator::Reset() {
   //   prefix. Check that suffix matches the prefix. Then we set
   //   single_leaf_match_ = true and apply different logic for
   //   Advance.
-  if (key_offset < 0) {
-    // A negative key_offset indicates that trie_.storage_ is empty
-    ICING_LOG(FATAL) << "Trie storage is empty";
+  if (key_offset < 0 || !status.ok()) {
+    ICING_LOG(FATAL) << "FindBestNode failed: " << status.error_message();
   }
 
   const Node *best_node = trie_.storage_->GetNode(node_index);
@@ -2205,8 +2210,8 @@ bool IcingDynamicTrie::Utf8Iterator::Branch::IsFinished() {
 
 bool IcingDynamicTrie::Utf8Iterator::IsValid() const { return cur_len_ > 0; }
 
-const IcingDynamicTrie::Next *IcingDynamicTrie::GetNextByChar(
-    const Node *node, uint8_t key_char) const {
+libtextclassifier3::StatusOr<const IcingDynamicTrie::Next*>
+IcingDynamicTrie::GetNextByChar(const Node* node, uint8_t key_char) const {
   const Next *next_start = storage_->GetNext(node->next_index(), 0);
   const Next *next_end = next_start + (1 << node->log2_num_children());
 
@@ -2214,6 +2219,11 @@ const IcingDynamicTrie::Next *IcingDynamicTrie::GetNextByChar(
   if (found >= next_end || found->val() != key_char ||
       found->node_index() == kInvalidNodeIndex) {
     return nullptr;
+  }
+
+  if (found->node_index() >= storage_->GetNodeArraySize()) {
+    return absl_ports::InternalError(
+        "Node index is out of bounds. The index may be corrupted.");
   }
 
   return found;
@@ -2255,9 +2265,9 @@ const IcingDynamicTrie::Next *IcingDynamicTrie::LowerBound(
   }
 }
 
-void IcingDynamicTrie::FindBestNode(std::string_view key,
-                                    uint32_t *best_node_index, int *key_offset,
-                                    bool prefix, bool utf8) const {
+libtextclassifier3::Status IcingDynamicTrie::FindBestNode(
+    std::string_view key, uint32_t* best_node_index, int* key_offset,
+    bool prefix, bool utf8) const {
   // Find the best node such that:
   //
   // - If key is NOT in the trie, key[0..key_offset) is a prefix to
@@ -2273,7 +2283,7 @@ void IcingDynamicTrie::FindBestNode(std::string_view key,
   if (storage_->empty()) {
     *best_node_index = 0;
     *key_offset = -1;
-    return;
+    return absl_ports::InternalError("Trie is empty.");
   }
 
   const Node *cur_node = storage_->GetRootNode();
@@ -2282,7 +2292,8 @@ void IcingDynamicTrie::FindBestNode(std::string_view key,
   const Node *utf8_node = cur_node;
   while (!cur_node->is_leaf()) {
     char cur_char = GetCharOrNull(key, cur_key_idx);
-    const Next *found = GetNextByChar(cur_node, cur_char);
+    ICING_ASSIGN_OR_RETURN(const Next* found,
+                           GetNextByChar(cur_node, cur_char));
     if (!found) break;
 
     if (prefix && found->val() == 0) {
@@ -2313,10 +2324,13 @@ void IcingDynamicTrie::FindBestNode(std::string_view key,
 
   *best_node_index = storage_->GetNodeIndex(cur_node);
   *key_offset = cur_key_idx;
+
+  return libtextclassifier3::Status::OK;
 }
 
-int IcingDynamicTrie::FindNewBranchingPrefixLength(std::string_view key,
-                                                   bool utf8) const {
+libtextclassifier3::StatusOr<int>
+IcingDynamicTrie::FindNewBranchingPrefixLength(std::string_view key,
+                                               bool utf8) const {
   if (!IsKeyValid(key)) {
     return kNoBranchFound;
   }
@@ -2327,7 +2341,8 @@ int IcingDynamicTrie::FindNewBranchingPrefixLength(std::string_view key,
 
   uint32_t best_node_index;
   int key_offset;
-  FindBestNode(key, &best_node_index, &key_offset, /*prefix=*/true, utf8);
+  ICING_RETURN_IF_ERROR(
+      FindBestNode(key, &best_node_index, &key_offset, /*prefix=*/true, utf8));
   if (key_offset < 0) {
     return kNoBranchFound;
   }
@@ -2379,8 +2394,9 @@ int IcingDynamicTrie::FindNewBranchingPrefixLength(std::string_view key,
   return kNoBranchFound;
 }
 
-std::vector<int> IcingDynamicTrie::FindBranchingPrefixLengths(
-    std::string_view key, bool utf8) const {
+libtextclassifier3::StatusOr<std::vector<int>>
+IcingDynamicTrie::FindBranchingPrefixLengths(std::string_view key,
+                                             bool utf8) const {
   std::vector<int> prefix_lengths;
 
   if (!IsKeyValid(key)) {
@@ -2409,7 +2425,8 @@ std::vector<int> IcingDynamicTrie::FindBranchingPrefixLengths(
     }
 
     // Move to next.
-    const Next *found = GetNextByChar(cur_node, key[idx]);
+    ICING_ASSIGN_OR_RETURN(const Next* found,
+                           GetNextByChar(cur_node, key[idx]));
     if (found == nullptr) {
       break;
     }
@@ -2420,7 +2437,8 @@ std::vector<int> IcingDynamicTrie::FindBranchingPrefixLengths(
   return prefix_lengths;
 }
 
-bool IcingDynamicTrie::IsBranchingTerm(std::string_view key) const {
+libtextclassifier3::StatusOr<bool> IcingDynamicTrie::IsBranchingTerm(
+    std::string_view key) const {
   if (!is_initialized()) {
     ICING_LOG(FATAL) << "DynamicTrie not initialized";
   }
@@ -2435,7 +2453,8 @@ bool IcingDynamicTrie::IsBranchingTerm(std::string_view key) const {
 
   uint32_t best_node_index;
   int key_offset;
-  FindBestNode(key, &best_node_index, &key_offset, /*prefix=*/true);
+  ICING_RETURN_IF_ERROR(
+      FindBestNode(key, &best_node_index, &key_offset, /*prefix=*/true));
   if (key_offset < 0) {
     return false;
   }
@@ -2454,7 +2473,8 @@ bool IcingDynamicTrie::IsBranchingTerm(std::string_view key) const {
   // Found key as an intermediate node, but key is not a valid term stored in
   // the trie. In this case, we need at least two children for key to be a
   // branching term.
-  if (GetNextByChar(cur_node, '\0') == nullptr) {
+  ICING_ASSIGN_OR_RETURN(const Next* next, GetNextByChar(cur_node, '\0'));
+  if (next == nullptr) {
     return cur_node->log2_num_children() >= 1;
   }
 
@@ -2692,9 +2712,9 @@ libtextclassifier3::Status IcingDynamicTrie::Delete(std::string_view key) {
     if (i == key.length()) {
       // When we're at the end of the key, the next char is the termination char
       // '\0'.
-      next = GetNextByChar(current_node, '\0');
+      ICING_ASSIGN_OR_RETURN(next, GetNextByChar(current_node, '\0'));
     } else {
-      next = GetNextByChar(current_node, key[i]);
+      ICING_ASSIGN_OR_RETURN(next, GetNextByChar(current_node, key[i]));
     }
 
     if (next == nullptr) {

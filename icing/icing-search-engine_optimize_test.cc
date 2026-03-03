@@ -245,6 +245,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
   optimize_result_proto.mutable_status()->set_message("");
   OptimizeResultProto actual_result = icing.Optimize();
   actual_result.clear_optimize_stats();
+  actual_result.clear_vm_binder_transaction_latency_start_time_ms();
   ASSERT_THAT(actual_result, EqualsProto(optimize_result_proto));
 
   // Tries to fetch the second page, no results since all tokens have been
@@ -486,6 +487,123 @@ TEST_F(IcingSearchEngineOptimizeTest, GetOptimizeInfoHasCorrectStats) {
     EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
     EXPECT_THAT(optimize_info.estimated_optimizable_bytes(), Eq(0));
     EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(4000));
+    EXPECT_FALSE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
+  }
+}
+
+TEST_F(IcingSearchEngineOptimizeTest,
+       NegativeTimeSinceLastOptimizeResetsToZero) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Message")
+          .AddStringProperty("body", "message body one")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("namespace", "uri2")
+                                .SetSchema("Message")
+                                .AddStringProperty("body", "message body two")
+                                .SetCreationTimestampMs(100)
+                                .SetTtlMs(500)
+                                .Build();
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_calculate_time_since_last_attempted_optimize(true);
+  {
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetSystemTimeMilliseconds(1000);
+    TestIcingSearchEngine icing(icing_options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    // Just initialized, nothing is optimizable yet.
+    GetOptimizeInfoResultProto optimize_info = icing.GetOptimizeInfo();
+    EXPECT_THAT(optimize_info.status(), ProtoIsOk());
+    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
+    EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
+
+    // Call some APIs
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Delete("namespace", "uri1").status(), ProtoIsOk());
+    // Add a second document, but it'll be expired since the time (1000) is
+    // greater than the document's creation timestamp (100) + the document's ttl
+    // (500)
+    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+
+    optimize_info = icing.GetOptimizeInfo();
+    EXPECT_THAT(optimize_info.status(), ProtoIsOk());
+    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(2));
+    EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(0));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
+
+    // Optimize
+    OptimizeResultProto optimize_result = icing.Optimize();
+    EXPECT_THAT(optimize_result.status(), ProtoIsOk());
+    EXPECT_THAT(optimize_result.optimize_stats().time_since_last_optimize_ms(),
+                Eq(0));
+    EXPECT_THAT(optimize_result.optimize_stats()
+                    .time_since_last_successful_optimize_ms(),
+                Eq(0));
+  }
+
+  {
+    // Recreate with new time that's earlier than the last successful optimize
+    // run time. no_previous_optimize_info should be true and time since last
+    // optimize values should be negative.
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetSystemTimeMilliseconds(500);
+    TestIcingSearchEngine icing(icing_options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    GetOptimizeInfoResultProto optimize_info = icing.GetOptimizeInfo();
+    EXPECT_THAT(optimize_info.status(), ProtoIsOk());
+    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
+    EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(-500));
+    EXPECT_TRUE(optimize_info.no_previous_optimize_info());
+    EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
+
+    // Optimize.
+    OptimizeResultProto optimize_result = icing.Optimize();
+    EXPECT_THAT(optimize_result.status(), ProtoIsOk());
+    EXPECT_THAT(optimize_result.optimize_stats().time_since_last_optimize_ms(),
+                Eq(-500));
+    EXPECT_THAT(optimize_result.optimize_stats()
+                    .time_since_last_successful_optimize_ms(),
+                Eq(-500));
+  }
+
+  {
+    // Recreate with new timer and check that time_since_last_optimize_ms is
+    // populated correctly.
+    auto fake_clock = std::make_unique<FakeClock>();
+    fake_clock->SetSystemTimeMilliseconds(800);
+    TestIcingSearchEngine icing(icing_options, std::make_unique<Filesystem>(),
+                                std::make_unique<IcingFilesystem>(),
+                                std::move(fake_clock), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    GetOptimizeInfoResultProto optimize_info = icing.GetOptimizeInfo();
+    EXPECT_THAT(optimize_info.status(), ProtoIsOk());
+    EXPECT_THAT(optimize_info.optimizable_docs(), Eq(0));
+    EXPECT_THAT(optimize_info.time_since_last_optimize_ms(), Eq(300));
     EXPECT_FALSE(optimize_info.no_previous_optimize_info());
     EXPECT_THAT(optimize_info.num_active_result_states(), Eq(0));
   }
