@@ -160,6 +160,13 @@ MATCHER_P5(EqualsDocumentAssociatedScoreData, corpus_id, document_score,
              has_valid_scorable_property_cache_index;
 }
 
+MATCHER_P4(EqualsDocumentMetadata, schema_type_name, name_space, uri,
+           document_id, "") {
+  return arg.schema_type_name == schema_type_name &&
+         arg.name_space == name_space && arg.uri == uri &&
+         arg.document_id == document_id;
+}
+
 // Used to match a ScorablePropertyManager::ScorablePropertyInfo
 MATCHER_P2(EqualsScorablePropertyInfo, property_path, data_type, "") {
   const ScorablePropertyManager::ScorablePropertyInfo& actual = arg;
@@ -633,6 +640,7 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   SearchResultProto actual_copy = arg;
   actual_copy.clear_query_stats();
   actual_copy.clear_debug_info();
+  actual_copy.clear_vm_binder_transaction_latency_start_time_ms();
   for (SearchResultProto::ResultProto& result :
        *actual_copy.mutable_results()) {
     // Joined results
@@ -646,6 +654,7 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   SearchResultProto expected_copy = expected;
   expected_copy.clear_query_stats();
   expected_copy.clear_debug_info();
+  actual_copy.clear_vm_binder_transaction_latency_start_time_ms();
   for (SearchResultProto::ResultProto& result :
        *expected_copy.mutable_results()) {
     // Joined results

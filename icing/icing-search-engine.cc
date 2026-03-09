@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -52,6 +53,8 @@
 #include "icing/index/term-indexing-handler.h"
 #include "icing/index/term-metadata.h"
 #include "icing/jni/jni-cache.h"
+#include "icing/join/delete-propagation-handler.h"
+#include "icing/join/document-dependency-processor.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/join/join-processor.h"
 #include "icing/join/qualified-id-join-index-impl-v2.h"
@@ -106,6 +109,7 @@
 #include "icing/util/data-loss.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "icing/util/logging.h"
+#include "icing/util/simple-task-scheduler.h"
 #include "icing/util/status-macros.h"
 #include "icing/util/status-util.h"
 #include "icing/util/tokenized-document.h"
@@ -118,6 +122,8 @@ namespace lib {
 namespace {
 
 using ::icing::lib::status_util::TransformStatus;
+
+constexpr SimpleTaskScheduler::TaskId kHandleExpiredDocumentsTaskId = 1;
 
 constexpr std::string_view kDocumentSubfolderName = "document_dir";
 constexpr std::string_view kBlobSubfolderName = "blob_dir";
@@ -385,22 +391,6 @@ InitializeStatsProto::RecoveryCause TranslateMarkerProtoToRecoveryCause(
   }
 }
 
-// Prepares the document for indexing. This includes tokenization and dependency
-// enforcement.
-libtextclassifier3::StatusOr<TokenizedDocument> PrepareDocumentForIndexing(
-    const SchemaStore* schema_store,
-    const LanguageSegmenter* language_segmenter, int64_t current_time_ms,
-    DocumentProto&& document) {
-  ICING_ASSIGN_OR_RETURN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store, language_segmenter,
-                                current_time_ms, std::move(document)));
-
-  // TODO(b/384947619): apply dependency enforcement.
-
-  return tokenized_document;
-}
-
 libtextclassifier3::Status RetrieveAndAddDocumentInfo(
     const DocumentStore* document_store, DeleteByQueryResultProto& result_proto,
     std::unordered_map<NamespaceTypePair,
@@ -519,7 +509,12 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_embedding_iterator_v2(),
                      options_.enable_reusable_decompression_buffer(),
                      options_.enable_schema_type_id_optimization(),
-                     options_.enable_optimize_improvements()),
+                     options_.enable_optimize_improvements(),
+                     options_.expired_document_purge_threshold_ms(),
+                     options_.enable_non_existent_qualified_id_join(),
+                     options_.enable_skip_set_schema_type_equality_check(),
+                     options_.enable_embed_query_optimization(),
+                     options_.enable_schema_definition_deduping()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -528,6 +523,9 @@ IcingSearchEngine::IcingSearchEngine(
 }
 
 IcingSearchEngine::~IcingSearchEngine() {
+  // Stop all scheduled background tasks before persisting to disk.
+  DestroyTaskScheduler();
+
   if (initialized_) {
     if (PersistToDisk(PersistType::FULL).status().code() != StatusProto::OK) {
       ICING_LOG(ERROR)
@@ -564,10 +562,12 @@ InitializeResultProto IcingSearchEngine::Initialize() {
       << ", embedding index restoration cause = "
       << static_cast<int>(
              result.initialize_stats().embedding_index_restoration_cause());
+  result.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result;
 }
 
-void IcingSearchEngine::ResetMembers() {
+void IcingSearchEngine::ResetMembersLocked() {
   // Reset all members in the reverse order of their initialization to ensure
   // the dependencies are not violated.
   embedding_index_.reset();
@@ -606,7 +606,7 @@ libtextclassifier3::Status IcingSearchEngine::CheckInitMarkerFile(
     if (host_init_attempts > kMaxUnsuccessfulInitAttempts) {
       // We're tried and failed to init too many times. We need to throw
       // everything out and start from scratch.
-      ResetMembers();
+      ResetMembersLocked();
       marker_file_fd.reset();
 
       // Delete the entire base directory.
@@ -670,11 +670,12 @@ InitializeResultProto IcingSearchEngine::InitializeLocked() {
   }
 
   if (options_.enable_delete_propagation_from() &&
-      !options_.enable_qualified_id_join_index_v3()) {
+      (!options_.enable_qualified_id_join_index_v3() ||
+       !options_.enable_soft_index_restoration())) {
     result_status->set_code(StatusProto::INVALID_ARGUMENT);
     result_status->set_message(
-        "Delete propagation is enabled but qualified id join index v3 is not "
-        "enabled.");
+        "Delete propagation is enabled but qualified id join index v3 or soft "
+        "index restoration is not enabled.");
     initialize_stats->set_failure_stage(
         InitializeStatsProto::FailureStage::OPTIONS_VALIDATION);
     return result_proto;
@@ -1053,8 +1054,38 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     }
   }
 
+  if (options_.enable_background_task_scheduler() &&
+      task_scheduler_ == nullptr) {
+    // Initialize the task scheduler.
+    //
+    // Note: InitializeMembers may be called by ResetLocked() when put API
+    //   fails. In that case, we can still use the existing task_scheduler_
+    //   and no need to re-initialize it.
+    task_scheduler_ = SimpleTaskScheduler::Create(*clock_);
+  }
+
   if (status.ok()) {
     status = index_init_status;
+  }
+
+  // Call HandleExpiredDocumentsLocked() to handle documents that expire during
+  // Icing was off. This function will reschedule another task with the next
+  // expiration timestamp if task_scheduler_ is not null (i.e.
+  // options_.enable_background_task_scheduler() is true).
+  if ((status.ok() || absl_ports::IsDataLoss(status)) &&
+      options_.enable_delete_propagation_from()) {
+    // Call HandleExpiredDocumentsLocked() to handle documents that expire
+    // during Icing was off. This function will reschedule another task with the
+    // next expiration timestamp and activate the task.
+    HandleExpiredDocumentsResultProto result = HandleExpiredDocumentsLocked();
+    if (result.status().code() != StatusProto::OK) {
+      ICING_LOG(ERROR) << "Failed to handle expired documents during "
+                          "initialization: "
+                       << result.status().message();
+      return absl_ports::InternalError(result.status().message());
+    }
+    initialize_stats->set_next_expiration_timestamp_ms(
+        result.next_expiration_timestamp_ms());
   }
 
   result_state_manager_ = std::make_unique<ResultStateManager>(
@@ -1383,8 +1414,10 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
   *set_schema_request.mutable_schema() = std::move(new_schema);
   set_schema_request.set_ignore_errors_and_delete_documents(
       ignore_errors_and_delete_documents);
-
-  return SetSchema(std::move(set_schema_request));
+  SetSchemaResultProto result_proto = SetSchema(std::move(set_schema_request));
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return result_proto;
 }
 
 SetSchemaResultProto IcingSearchEngine::SetSchema(
@@ -1698,17 +1731,23 @@ GetSchemaTypeResultProto IcingSearchEngine::GetSchemaType(
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
   auto type_config_or = schema_store_->GetSchemaTypeConfig(schema_type);
   if (!type_config_or.ok()) {
     TransformStatus(type_config_or.status(), result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
   result_status->set_code(StatusProto::OK);
   *result_proto.mutable_schema_type_config() = *(type_config_or.ValueOrDie());
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -1731,13 +1770,18 @@ BatchPutResultProto IcingSearchEngine::BatchPut(
         "IcingSearchEngine has not been initialized!");
     batch_put_result_proto.mutable_status()->set_code(
         StatusProto::FAILED_PRECONDITION);
+    batch_put_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return batch_put_result_proto;
   }
+
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
 
   for (DocumentProto& document_proto :
        *(put_document_request.mutable_documents())) {
     batch_put_result_proto.mutable_put_result_protos()->Add(
-        PutLocked(std::move(document_proto)));  // Call the locked version
+        PutLocked(std::move(document_proto),
+                  current_time_ms));  // Call the locked version
   }
 
   if (put_document_request.persist_type() != PersistType::UNKNOWN) {
@@ -1755,7 +1799,8 @@ BatchPutResultProto IcingSearchEngine::BatchPut(
   }
 
   batch_put_result_proto.mutable_status()->set_code(StatusProto::OK);
-
+  batch_put_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return batch_put_result_proto;
 }
 
@@ -1773,13 +1818,22 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
     StatusProto* result_status = result_proto.mutable_status();
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
-  return PutLocked(std::move(document));
+
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+
+  PutResultProto result_proto = PutLocked(std::move(document), current_time_ms);
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return result_proto;
 }
 
 // PutLocked to be called when mutex_ is already held.
-PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
+PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document,
+                                            int64_t current_time_ms) {
   PutResultProto result_proto;
   result_proto.set_uri(document.uri());
 
@@ -1795,13 +1849,12 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
   // SetSchema() which is protected by the same mutex.
   // NO LOCK ACQUISITION HERE - mutex_ is already held.
 
-  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
-
   auto tokenized_document_or =
-      PrepareDocumentForIndexing(schema_store_.get(), language_segmenter_.get(),
-                                 current_time_ms, std::move(document));
+      PrepareDocumentsForIndexing(std::move(document), current_time_ms);
   if (!tokenized_document_or.ok()) {
     TransformStatus(tokenized_document_or.status(), result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
   TokenizedDocument tokenized_document(
@@ -1810,17 +1863,25 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
   auto put_result_or = document_store_->Put(
       tokenized_document.document_wrapper(), put_document_stats);
   if (!put_result_or.ok()) {
+    // TODO(b/384947619): revisit here if it is document replacement. Determine
+    //   which stage of DocumentStore::Put failed and decide whether to delete
+    //   the document and run delete propagation.
     TransformStatus(put_result_or.status(), result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
   DocumentId old_document_id = put_result_or.ValueOrDie().old_document_id;
   DocumentId document_id = put_result_or.ValueOrDie().new_document_id;
-  result_proto.set_was_replacement(
-      put_result_or.ValueOrDie().was_replacement());
+  int64_t expiration_timestamp_ms =
+      put_result_or.ValueOrDie().expiration_timestamp_ms;
+  result_proto.set_was_replacement(put_result_or.ValueOrDie().was_replacement);
 
   auto data_indexing_handlers_or = CreateDataIndexingHandlers();
   if (!data_indexing_handlers_or.ok()) {
     TransformStatus(data_indexing_handlers_or.status(), result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
   IndexProcessor index_processor(
@@ -1833,9 +1894,35 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
   //   threshold)
   auto index_status = index_processor.IndexDocument(
       tokenized_document, document_id, old_document_id, put_document_stats);
-  // Getting an internal error from the index could possibly mean that the index
-  // is broken. Try to rebuild them to recover.
-  if (absl_ports::IsInternal(index_status)) {
+  if (index_status.ok()) {
+    result_proto.set_document_expiration_timestamp_ms(expiration_timestamp_ms);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
+    if (options_.enable_delete_propagation_from() &&
+        task_scheduler_ != nullptr) {
+      // Reschedule purging expired document task if:
+      // - expiration_timestamp_ms is not INT64_MAX (i.e. the new document never
+      //   expires). Note: it is fine to schedule a task with at t = INT64_MAX
+      //   since it will never be executed, but let's avoid this edge case.
+      // - AND one of the following is true:
+      //   - existing_scheduled_time_ms < 0: there was no task scheduled, so we
+      //     need to schedule one.
+      //   - expiration_timestamp_ms < existing_scheduled_time_ms: the new
+      //     document has an expiration time that is earlier than the existing
+      //     scheduled.
+      int64_t existing_scheduled_time_ms =
+          task_scheduler_->GetScheduledTimeMs(kHandleExpiredDocumentsTaskId);
+      if (expiration_timestamp_ms < std::numeric_limits<int64_t>::max() &&
+          (existing_scheduled_time_ms < 0 ||
+           expiration_timestamp_ms < existing_scheduled_time_ms)) {
+        task_scheduler_->ScheduleAt(kHandleExpiredDocumentsTaskId,
+                                    CreateHandleExpiredDocumentsTask(),
+                                    expiration_timestamp_ms);
+      }
+    }
+  } else if (absl_ports::IsInternal(index_status)) {
+    // Getting an internal error from the index could possibly mean that the
+    // index is broken. Try to rebuild them to recover.
     ICING_LOG(ERROR) << "Got an internal error from the index. Trying to "
                         "rebuild the index!\n"
                      << index_status.error_message();
@@ -1859,14 +1946,20 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document) {
         document_store_->Delete(document_id, current_time_ms);
     if (!delete_status.ok()) {
       // This is pretty dire (and, hopefully, unlikely). We can't roll back the
-      // document that we just added. Wipeout the whole index.
+      // document that we just added. Wipeout the whole database.
       ICING_LOG(ERROR) << "Cannot delete the document that is failed to index. "
                           "Wiping out the whole Icing search engine.";
       ResetLocked();
     }
+    // TODO(b/384947619): revisit here and decide whether to propagate delete to
+    //   all dependents if it is a replacement. We might not be able to rely on
+    //   normal delete propagation to remove the dependents here, since the join
+    //   index may be broken at this point.
   }
 
   TransformStatus(index_status, result_status);
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -2031,12 +2124,16 @@ ReportUsageResultProto IcingSearchEngine::ReportUsage(
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
   libtextclassifier3::Status status =
       document_store_->ReportUsage(usage_report);
   TransformStatus(status, result_status);
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -2101,11 +2198,14 @@ DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
     // It is possible that the document has expired and the delete operation
     // fails with NOT_FOUND_ERROR. In this case, we should still propagate the
     // delete operation, regardless of the outcome of the delete operation.
-    libtextclassifier3::StatusOr<int> propagated_child_docs_deleted_or =
-        PropagateDelete(/*deleted_document_ids=*/{document_id},
-                        current_time_ms);
+    // TODO(b/384947619): add metadata of propagated documents to
+    //   DeleteResultProto for observer.
+    libtextclassifier3::StatusOr<std::vector<DocumentStore::DocumentMetadata>>
+        propagated_child_docs_deleted_or = PropagateDelete(
+            /*deleted_document_ids=*/{document_id}, current_time_ms);
     if (propagated_child_docs_deleted_or.ok()) {
-      num_documents_deleted += propagated_child_docs_deleted_or.ValueOrDie();
+      num_documents_deleted += static_cast<int>(
+          propagated_child_docs_deleted_or.ValueOrDie().size());
     } else {
       propagate_delete_status =
           std::move(propagated_child_docs_deleted_or).status();
@@ -2319,15 +2419,19 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   }
 
   // Propagate deletion.
-  libtextclassifier3::StatusOr<int> propagated_child_docs_deleted_or =
-      PropagateDelete(deleted_document_ids, current_time_ms);
+  // TODO(b/384947619): add metadata of propagated documents to
+  //   DeleteResultProto for observer.
+  libtextclassifier3::StatusOr<std::vector<DocumentStore::DocumentMetadata>>
+      propagated_child_docs_deleted_or =
+          PropagateDelete(deleted_document_ids, current_time_ms);
   if (!propagated_child_docs_deleted_or.ok()) {
     TransformStatus(propagated_child_docs_deleted_or.status(), result_status);
     delete_stats->set_document_removal_latency_ms(
         component_timer->GetElapsedMilliseconds());
     return result_proto;
   }
-  num_deleted += propagated_child_docs_deleted_or.ValueOrDie();
+  num_deleted +=
+      static_cast<int>(propagated_child_docs_deleted_or.ValueOrDie().size());
 
   delete_stats->set_document_removal_latency_ms(
       component_timer->GetElapsedMilliseconds());
@@ -2348,50 +2452,25 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   return result_proto;
 }
 
-libtextclassifier3::StatusOr<int> IcingSearchEngine::PropagateDelete(
+// TODO(b/384947619): remove this function once we fully ramp
+// enable_delete_propagation_from.
+libtextclassifier3::StatusOr<std::vector<DocumentStore::DocumentMetadata>>
+IcingSearchEngine::PropagateDelete(
     const std::unordered_set<DocumentId>& deleted_document_ids,
     int64_t current_time_ms) {
-  int propagated_child_docs_deleted = 0;
-
-  if (!options_.enable_delete_propagation_from()) {
-    // No-op if delete propagation is disabled.
-    return propagated_child_docs_deleted;
+  if (!options_.enable_delete_propagation_from() ||
+      deleted_document_ids.empty()) {
+    // No-op if delete propagation is disabled or no deleted document ids, so
+    // return an empty vector.
+    return std::vector<DocumentStore::DocumentMetadata>();
   }
 
-  if (qualified_id_join_index_->version() !=
-      QualifiedIdJoinIndex::Version::kV3) {
-    // This should not happen since Icing should've failed initialization with
-    // delete propagation enabled and join index v3 disabled.
-    // But let's check it here again just in case.
-    return absl_ports::FailedPreconditionError(
-        "Delete propagation is enabled but qualified id join index v3 is not "
-        "used.");
-  }
-
-  // Create join processor to get propagated child documents to delete.
-  JoinProcessor join_processor(document_store_.get(), schema_store_.get(),
-                               qualified_id_join_index_.get(), current_time_ms);
   ICING_ASSIGN_OR_RETURN(
-      std::unordered_set<DocumentId> child_docs_to_delete,
-      join_processor.GetPropagatedChildDocumentsToDelete(deleted_document_ids));
-
-  // Delete all propagated child documents.
-  for (DocumentId child_doc_id : child_docs_to_delete) {
-    auto status = document_store_->Delete(child_doc_id, current_time_ms);
-    if (!status.ok()) {
-      if (absl_ports::IsNotFound(status)) {
-        // The child document has already been deleted or expired, so skip the
-        // error.
-        continue;
-      }
-
-      // Real error.
-      return status;
-    }
-    ++propagated_child_docs_deleted;
-  }
-
-  return propagated_child_docs_deleted;
+      DeletePropagationHandler delete_propagation_handler,
+      DeletePropagationHandler::Create(schema_store_.get(),
+                                       qualified_id_join_index_.get(),
+                                       document_store_.get(), current_time_ms));
+  return delete_propagation_handler.Handle(deleted_document_ids);
 }
 
 PersistToDiskResultProto IcingSearchEngine::PersistToDisk(
@@ -2413,6 +2492,8 @@ PersistToDiskResultProto IcingSearchEngine::PersistToDisk(
                           "uninitialized IcingSearchEngine.";
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
@@ -2426,6 +2507,8 @@ PersistToDiskResultProto IcingSearchEngine::PersistToDisk(
   }
   TransformStatus(status, result_status);
   persist_stats->set_latency_ms(persist_timer->GetElapsedMilliseconds());
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -2445,6 +2528,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
@@ -2453,6 +2538,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   ScopedTimer optimize_timer(
       clock_->GetNewTimer(),
       [optimize_stats](int64_t t) { optimize_stats->set_latency_ms(t); });
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
 
   // Read the optimize status and assign previous_optimize_status. This is the
   // time that we last ran optimize.
@@ -2517,6 +2604,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
         persist_timer->GetElapsedMilliseconds());
     if (!status.ok()) {
       TransformStatus(status, result_status);
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
       return result_proto;
     }
   }
@@ -2546,6 +2635,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
             IcingSearchEngineMarkerProto::OperationType::OPTIMIZE);
     if (!marker_file_or.ok()) {
       TransformStatus(marker_file_or.status(), result_status);
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
       return result_proto;
     }
     marker_file = std::move(marker_file_or).ValueOrDie();
@@ -2571,6 +2662,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
     // If INTERNAL_ERROR, we're having IO errors or other errors that we can't
     // recover from.
     TransformStatus(optimize_result_or.status(), result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
@@ -2631,7 +2724,7 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
 
     libtextclassifier3::Status qualified_id_join_index_optimize_status =
         qualified_id_join_index_->Optimize(
-            optimize_result.document_id_old_to_new,
+            document_store_.get(), optimize_result.document_id_old_to_new,
             optimize_result.namespace_id_old_to_new,
             document_store_->last_added_document_id());
     if (!qualified_id_join_index_optimize_status.ok()) {
@@ -2672,6 +2765,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
       TransformStatus(status, result_status);
       optimize_stats->set_index_restoration_latency_ms(
           optimize_index_timer->GetElapsedMilliseconds());
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
       return result_proto;
     }
 
@@ -2689,6 +2784,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
       TransformStatus(status, result_status);
       optimize_stats->set_index_restoration_latency_ms(
           optimize_index_timer->GetElapsedMilliseconds());
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
       return result_proto;
     }
   }
@@ -2728,6 +2825,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
       persist_timer->GetElapsedMilliseconds());
   if (!status.ok()) {
     TransformStatus(status, result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
@@ -2736,6 +2835,9 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
       Filesystem::SanitizeFileSize(after_size));
 
   TransformStatus(doc_store_optimize_result_status, result_status);
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  ICING_LOG(INFO) << "Finished optimizing icing storage";
   return result_proto;
 }
 
@@ -2749,6 +2851,8 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
@@ -2791,6 +2895,8 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
   auto doc_store_optimize_info_or = document_store_->GetOptimizeInfo();
   if (!doc_store_optimize_info_or.ok()) {
     TransformStatus(doc_store_optimize_info_or.status(), result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
   DocumentStore::OptimizeInfo doc_store_optimize_info =
@@ -2801,6 +2907,8 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
     // Can return early since there's nothing to calculate on the index side
     result_proto.set_estimated_optimizable_bytes(0);
     result_status->set_code(StatusProto::OK);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
 
@@ -2808,6 +2916,8 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
   auto index_elements_size_or = index_->GetElementsSize();
   if (!index_elements_size_or.ok()) {
     TransformStatus(index_elements_size_or.status(), result_status);
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
   int64_t index_elements_size = index_elements_size_or.ValueOrDie();
@@ -2821,6 +2931,8 @@ GetOptimizeInfoResultProto IcingSearchEngine::GetOptimizeInfo() {
       doc_store_optimize_info.estimated_optimizable_bytes);
 
   result_status->set_code(StatusProto::OK);
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -2849,6 +2961,8 @@ StorageInfoResultProto IcingSearchEngine::GetStorageInfo() {
       result.mutable_status()->set_code(StatusProto::INTERNAL);
       result.mutable_status()->set_message(
           namespace_blob_storage_infos_or.status().error_message());
+      result.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
       return result;
     }
     std::vector<NamespaceBlobStorageInfoProto> namespace_blob_storage_infos =
@@ -2863,6 +2977,8 @@ StorageInfoResultProto IcingSearchEngine::GetStorageInfo() {
   }
   // TODO(b/259744228): add stats for integer index
   result.mutable_status()->set_code(StatusProto::OK);
+  result.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result;
 }
 
@@ -3014,6 +3130,8 @@ SearchResultProto IcingSearchEngine::SearchLockedShared(
       lock_acquisition_latency);
   result_proto.mutable_query_stats()->set_latency_ms(
       overall_timer->GetElapsedMilliseconds());
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -3033,6 +3151,8 @@ SearchResultProto IcingSearchEngine::SearchLockedExclusive(
       lock_acquisition_latency);
   result_proto.mutable_query_stats()->set_latency_ms(
       overall_timer->GetElapsedMilliseconds());
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 
@@ -3290,6 +3410,32 @@ SearchResultProto IcingSearchEngine::SearchLocked(
   return result_proto;
 }
 
+libtextclassifier3::StatusOr<TokenizedDocument>
+IcingSearchEngine::PrepareDocumentsForIndexing(DocumentProto&& document,
+                                               int64_t current_time_ms) {
+  ICING_ASSIGN_OR_RETURN(
+      TokenizedDocument tokenized_document,
+      TokenizedDocument::Create(schema_store_.get(), language_segmenter_.get(),
+                                current_time_ms, std::move(document)));
+
+  if (!options_.enable_delete_propagation_from()) {
+    return tokenized_document;
+  }
+
+  // Make a temporary vector to hold the single tokenized document for
+  // DocumentDependencyProcessor.
+  std::vector<TokenizedDocument> tmp_tokenized_documents;
+  tmp_tokenized_documents.push_back(std::move(tokenized_document));
+
+  ICING_ASSIGN_OR_RETURN(
+      DocumentDependencyProcessor dependency_processor,
+      DocumentDependencyProcessor::Create(
+          document_store_.get(), tmp_tokenized_documents, current_time_ms));
+  ICING_RETURN_IF_ERROR(dependency_processor.Evaluate());
+
+  return std::move(tmp_tokenized_documents[0]);
+}
+
 IcingSearchEngine::QueryScoringResults IcingSearchEngine::ProcessQueryAndScore(
     const SearchSpecProto& search_spec, const ScoringSpecProto& scoring_spec,
     const ResultSpecProto& result_spec,
@@ -3496,6 +3642,119 @@ void IcingSearchEngine::InvalidateNextPageToken(uint64_t next_page_token) {
   result_state_manager_->InvalidateResultState(next_page_token);
 }
 
+HandleExpiredDocumentsResultProto IcingSearchEngine::HandleExpiredDocuments() {
+  absl_ports::unique_lock l(&mutex_);
+
+  if (!initialized_) {
+    HandleExpiredDocumentsResultProto result_proto;
+    StatusProto* result_status = result_proto.mutable_status();
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
+
+  return HandleExpiredDocumentsLocked();
+}
+
+HandleExpiredDocumentsResultProto
+IcingSearchEngine::HandleExpiredDocumentsLocked() {
+  HandleExpiredDocumentsResultProto result_proto;
+  StatusProto* result_status = result_proto.mutable_status();
+
+  // We don't need to purge expired documents before delete propagation is
+  // supported, since in search API it will automatically filter out expired
+  // documents. However, when delete propagation is enabled, we need to purge
+  // expired documents explicitly in order to propagate deletion to their
+  // children. Therefore, this API is implemented and can be released together
+  // with the delete propagation feature.
+  if (!options_.enable_delete_propagation_from()) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message(
+        "Delete propagation is not enabled in this Icing instance!");
+    return result_proto;
+  }
+
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+  // Step 1: purge expired documents.
+  auto expired_docs_or =
+      document_store_->PurgeExpiredDocuments(current_time_ms);
+  if (!expired_docs_or.ok()) {
+    TransformStatus(expired_docs_or.status(), result_status);
+    return result_proto;
+  }
+  std::vector<DocumentStore::DocumentMetadata> expired_docs =
+      std::move(expired_docs_or).ValueOrDie();
+
+  // Step 2: propagate deletion to their children.
+  std::unordered_set<DocumentId> expired_doc_ids;
+  expired_doc_ids.reserve(expired_docs.size());
+  for (const DocumentStore::DocumentMetadata& metadata : expired_docs) {
+    expired_doc_ids.insert(metadata.document_id);
+  }
+  auto propagated_deleted_docs_or =
+      PropagateDelete(expired_doc_ids, current_time_ms);
+  if (!propagated_deleted_docs_or.ok()) {
+    TransformStatus(propagated_deleted_docs_or.status(), result_status);
+    return result_proto;
+  }
+  std::vector<DocumentStore::DocumentMetadata> propagated_deleted_docs =
+      std::move(propagated_deleted_docs_or).ValueOrDie();
+
+  // Get the next expiration timestamp.
+  int64_t next_expired_doc_ts_ms =
+      document_store_->GetNextExpiredDocumentTimestampMs(current_time_ms);
+  result_proto.set_next_expiration_timestamp_ms(next_expired_doc_ts_ms);
+
+  // Step 3: reschedule the task to handle next expired document(s).
+  if (task_scheduler_ != nullptr) {
+    if (next_expired_doc_ts_ms < 0) {
+      // No more expired documents. Cancel the scheduled task.
+      task_scheduler_->Cancel(kHandleExpiredDocumentsTaskId);
+    } else {
+      task_scheduler_->ScheduleAt(kHandleExpiredDocumentsTaskId,
+                                  CreateHandleExpiredDocumentsTask(),
+                                  next_expired_doc_ts_ms);
+    }
+  }
+
+  result_proto.set_num_expired_documents(
+      static_cast<int32_t>(expired_docs.size()));
+  result_proto.set_num_propagated_deleted_documents(
+      static_cast<int32_t>(propagated_deleted_docs.size()));
+
+  // Add all deleted documents to the result proto, grouped by NamespaceTypePair
+  // (namespace, schema).
+  std::unordered_map<NamespaceTypePair,
+                     HandleExpiredDocumentsResultProto::DocumentGroupInfo*,
+                     NamespaceTypePairHasher>
+      group_map;
+  const auto add_fn =
+      [&result_proto,
+       &group_map](std::vector<DocumentStore::DocumentMetadata>&& metadata_list)
+      -> void {
+    for (DocumentStore::DocumentMetadata& metadata : metadata_list) {
+      NamespaceTypePair group_key = {std::move(metadata.name_space),
+                                     std::move(metadata.schema_type_name)};
+      auto itr = group_map.find(group_key);
+      if (itr == group_map.end()) {
+        HandleExpiredDocumentsResultProto::DocumentGroupInfo* entry =
+            result_proto.add_deleted_documents();
+        entry->set_name_space(group_key.namespace_);
+        entry->set_schema(group_key.type);
+        entry->add_uris(std::move(metadata.uri));
+        group_map.insert({std::move(group_key), entry});
+      } else {
+        itr->second->add_uris(std::move(metadata.uri));
+      }
+    }
+  };
+  add_fn(std::move(expired_docs));
+  add_fn(std::move(propagated_deleted_docs));
+
+  result_status->set_code(StatusProto::OK);
+  return result_proto;
+}
+
 BlobProto IcingSearchEngine::OpenWriteBlob(
     const PropertyProto::BlobHandleProto& blob_handle) {
   BlobProto blob_proto;
@@ -3512,10 +3771,14 @@ BlobProto IcingSearchEngine::OpenWriteBlob(
   if (!initialized_) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("IcingSearchEngine has not been initialized!");
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
-
-  return blob_store_->OpenWrite(blob_handle);
+  blob_proto = blob_store_->OpenWrite(blob_handle);
+  blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return blob_proto;
 }
 
 BlobProto IcingSearchEngine::RemoveBlob(
@@ -3527,16 +3790,22 @@ BlobProto IcingSearchEngine::RemoveBlob(
   if (blob_store_ == nullptr) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("Remove blob is not supported in this Icing instance!");
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
 
   if (!initialized_) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("IcingSearchEngine has not been initialized!");
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
-
-  return blob_store_->RemoveBlob(blob_handle);
+  blob_proto = blob_store_->RemoveBlob(blob_handle);
+  blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return blob_proto;
 }
 
 BlobProto IcingSearchEngine::OpenReadBlob(
@@ -3548,17 +3817,23 @@ BlobProto IcingSearchEngine::OpenReadBlob(
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message(
         "Open read blob is not supported in this Icing instance!");
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
 
   if (!initialized_) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("IcingSearchEngine has not been initialized!");
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     ICING_LOG(ERROR) << status->message();
     return blob_proto;
   }
-
-  return blob_store_->OpenRead(blob_handle);
+  blob_proto = blob_store_->OpenRead(blob_handle);
+  blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return blob_proto;
 }
 
 BlobProto IcingSearchEngine::CommitBlob(
@@ -3569,6 +3844,8 @@ BlobProto IcingSearchEngine::CommitBlob(
   if (blob_store_ == nullptr) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("Commit blob is not supported in this Icing instance!");
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
 
@@ -3576,10 +3853,14 @@ BlobProto IcingSearchEngine::CommitBlob(
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("IcingSearchEngine has not been initialized!");
     ICING_LOG(ERROR) << status->message();
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
-
-  return blob_store_->CommitBlob(blob_handle);
+  blob_proto = blob_store_->CommitBlob(blob_handle);
+  blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return blob_proto;
 }
 
 BlobProto IcingSearchEngine::GetAllBlobInfos() {
@@ -3590,6 +3871,8 @@ BlobProto IcingSearchEngine::GetAllBlobInfos() {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message(
         "Get all blob info is not supported in this Icing instance!");
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
 
@@ -3597,9 +3880,14 @@ BlobProto IcingSearchEngine::GetAllBlobInfos() {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("IcingSearchEngine has not been initialized!");
     ICING_LOG(ERROR) << status->message();
+    blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
-  return blob_store_->GetAllBlobInfos();
+  blob_proto = blob_store_->GetAllBlobInfos();
+  blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return blob_proto;
 }
 
 BlobProto IcingSearchEngine::PutBlobInfos(const BlobProto& blob_info_protos) {
@@ -3610,6 +3898,8 @@ BlobProto IcingSearchEngine::PutBlobInfos(const BlobProto& blob_info_protos) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message(
         "Put blob info is not supported in this Icing instance!");
+    result_blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_blob_proto;
   }
 
@@ -3617,9 +3907,15 @@ BlobProto IcingSearchEngine::PutBlobInfos(const BlobProto& blob_info_protos) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message("IcingSearchEngine has not been initialized!");
     ICING_LOG(ERROR) << status->message();
+    result_blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return result_blob_proto;
   }
-  return blob_store_->PutBlobInfos(std::move(blob_info_protos));
+
+  result_blob_proto = blob_store_->PutBlobInfos(blob_info_protos);
+  result_blob_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return result_blob_proto;
 }
 
 libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>
@@ -3826,9 +4122,7 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
 
     libtextclassifier3::Status status;
     libtextclassifier3::StatusOr<TokenizedDocument> tokenized_document_or =
-        PrepareDocumentForIndexing(schema_store_.get(),
-                                   language_segmenter_.get(), current_time_ms,
-                                   std::move(document));
+        PrepareDocumentsForIndexing(std::move(document), current_time_ms);
     if (!tokenized_document_or.ok()) {
       status = std::move(tokenized_document_or).status();
     } else {
@@ -3865,20 +4159,39 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
     }
   }
 
-  // Finally, delete all failed documents.
+  // Delete all failed documents and propagate deletion to their child
+  // documents. If there is any error, log it without failing index restoration.
+  // TODO(b/384947619): add metadata of deleted documents into
+  //   InitializeResultProto.
   if (options_.enable_soft_index_restoration()) {
     for (DocumentId document_id : failed_document_ids) {
-      libtextclassifier3::Status delete_status =
-          document_store_->Delete(document_id, current_time_ms);
-      if (!delete_status.ok()) {
+      libtextclassifier3::StatusOr<DocumentStore::DocumentMetadata>
+          deleted_metadata_or = document_store_->ForceDelete(document_id);
+      if (!deleted_metadata_or.ok()) {
         // This is pretty dire (and, hopefully, unlikely). Log the error and
         // skip it.
         ICING_LOG(WARNING) << "Cannot delete document " << document_id
                            << " that which failed to index: "
-                           << delete_status.error_message();
+                           << deleted_metadata_or.status().error_message();
       }
     }
-    // TODO(b/384947619): apply delete propagation on these failed documents.
+
+    // Propagate deletion to child documents. Call PropagateDelete directly here
+    // since the delete propagation flag will be checked there.
+    auto propagated_deleted_child_docs_or =
+        PropagateDelete(failed_document_ids, current_time_ms);
+    if (!propagated_deleted_child_docs_or.ok()) {
+      ICING_LOG(WARNING)
+          << "Cannot propagate deletion for child documents of failed "
+             "documents during index restoration: "
+          << propagated_deleted_child_docs_or.status().error_message();
+    } else {
+      ICING_LOG(INFO)
+          << "Successfully deleted " << failed_document_ids.size()
+          << " documents that failed to index, and propagated deletion to "
+          << propagated_deleted_child_docs_or.ValueOrDie().size()
+          << " child documents during index restoration.";
+    }
   }
 
   return IndexRestorationResult(std::move(overall_status),
@@ -3930,11 +4243,11 @@ IcingSearchEngine::CreateDataIndexingHandlers() {
   handlers.push_back(std::move(integer_section_indexing_handler));
 
   // Qualified id join index handler
-  ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<QualifiedIdJoinIndexingHandler>
-          qualified_id_join_indexing_handler,
-      QualifiedIdJoinIndexingHandler::Create(
-          clock_.get(), document_store_.get(), qualified_id_join_index_.get()));
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<QualifiedIdJoinIndexingHandler>
+                             qualified_id_join_indexing_handler,
+                         QualifiedIdJoinIndexingHandler::Create(
+                             clock_.get(), document_store_.get(),
+                             qualified_id_join_index_.get(), &feature_flags_));
   handlers.push_back(std::move(qualified_id_join_indexing_handler));
 
   // Embedding index handler
@@ -4147,8 +4460,21 @@ libtextclassifier3::Status IcingSearchEngine::ClearAllIndices() {
 }
 
 ResetResultProto IcingSearchEngine::ClearAndDestroy() {
-  absl_ports::unique_lock l(&mutex_);
-  return ClearAndDestroyLocked();
+  // Destroy the task scheduler first to make sure the background tasks finish
+  // before we delete the IcingSearchEngine object.
+  //
+  // Note: it is fine to not destroy the task scheduler since all the tasks will
+  //   fail silently due to initialized_ being false, but let's do it for
+  //   cleanup.
+  DestroyTaskScheduler();
+
+  {
+    absl_ports::unique_lock l(&mutex_);
+    ResetResultProto result_proto = ClearAndDestroyLocked();
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
+    return result_proto;
+  }
 }
 
 ResetResultProto IcingSearchEngine::ClearAndDestroyLocked() {
@@ -4159,7 +4485,7 @@ ResetResultProto IcingSearchEngine::ClearAndDestroyLocked() {
   StatusProto* result_status = result_proto.mutable_status();
 
   initialized_ = false;
-  ResetMembers();
+  ResetMembersLocked();
   if (!filesystem_->DeleteDirectoryRecursively(options_.base_dir().c_str())) {
     result_status->set_code(StatusProto::INTERNAL);
     return result_proto;
@@ -4171,7 +4497,10 @@ ResetResultProto IcingSearchEngine::ClearAndDestroyLocked() {
 
 ResetResultProto IcingSearchEngine::Reset() {
   absl_ports::unique_lock l(&mutex_);
-  return ResetLocked();
+  ResetResultProto result_proto = ResetLocked();
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return result_proto;
 }
 
 ResetResultProto IcingSearchEngine::ResetLocked() {
@@ -4214,6 +4543,8 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
   if (!initialized_) {
     response_status->set_code(StatusProto::FAILED_PRECONDITION);
     response_status->set_message("IcingSearchEngine has not been initialized!");
+    response.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return response;
   }
 
@@ -4221,6 +4552,8 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
       ValidateSuggestionSpec(suggestion_spec, performance_configuration_);
   if (!status.ok()) {
     TransformStatus(status, response_status);
+    response.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return response;
   }
 
@@ -4231,6 +4564,8 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
       schema_store_.get(), clock_.get(), &feature_flags_);
   if (!suggestion_processor_or.ok()) {
     TransformStatus(suggestion_processor_or.status(), response_status);
+    response.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return response;
   }
   std::unique_ptr<SuggestionProcessor> suggestion_processor =
@@ -4242,6 +4577,8 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
       suggestion_processor->QuerySuggestions(suggestion_spec, current_time_ms);
   if (!terms_or.ok()) {
     TransformStatus(terms_or.status(), response_status);
+    response.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
     return response;
   }
 
@@ -4252,7 +4589,42 @@ SuggestionResponse IcingSearchEngine::SearchSuggestions(
     response.mutable_suggestions()->Add(std::move(suggestion));
   }
   response_status->set_code(StatusProto::OK);
+  response.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return response;
+}
+
+void IcingSearchEngine::DestroyTaskScheduler() {
+  // We have to acquire the lock before accessing and resetting task_scheduler_.
+  // Otherwise, if the background task is still running in the critical section
+  // and accessing task_scheduler_, then it will cause data race issues on the
+  // pointer.
+  SimpleTaskScheduler* task_scheduler_local = nullptr;
+  {
+    absl_ports::unique_lock l(&mutex_);
+
+    if (task_scheduler_ != nullptr) {
+      task_scheduler_local = task_scheduler_.release();
+    }
+  }
+
+  // Delete the task scheduler OUTSIDE of the critical section. Otherwise, it is
+  // possible that a background task starts to run and blocks at acquiring the
+  // global lock, which causes deadlock.
+  if (task_scheduler_local != nullptr) {
+    delete task_scheduler_local;
+  }
+}
+
+std::function<void()> IcingSearchEngine::CreateHandleExpiredDocumentsTask() {
+  return [this]() -> void {
+    HandleExpiredDocumentsResultProto result = HandleExpiredDocuments();
+    if (result.status().code() != StatusProto::OK) {
+      ICING_LOG(ERROR)
+          << "Failed to handle expired documents in the background: "
+          << result.status().message();
+    }
+  };
 }
 
 }  // namespace lib
