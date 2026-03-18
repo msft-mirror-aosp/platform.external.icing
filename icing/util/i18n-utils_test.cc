@@ -71,6 +71,28 @@ TEST(IcuI18nUtilsTest, IsAlphabeticAt) {
             3);
 }
 
+TEST(IcuI18nUtilsTest, IsWhitespaceAt) {
+  // Test ASCII and non-ASCII whitespaces
+
+  // ASCII whitespaces:
+  EXPECT_TRUE(i18n_utils::IsWhitespaceAt("\u0009",
+                                         /*position=*/0));  // horizontal tab
+  EXPECT_TRUE(i18n_utils::IsWhitespaceAt("\u000a",
+                                         /*position=*/0));  // line feed '\n'
+  EXPECT_TRUE(
+      i18n_utils::IsWhitespaceAt("\u000b", /*position=*/0));  // vertical tab
+  EXPECT_TRUE(
+      i18n_utils::IsWhitespaceAt("\u000c", /*position=*/0));  // form feed
+  EXPECT_TRUE(i18n_utils::IsWhitespaceAt("\u000d",
+                                         /*position=*/0));  // carriage return
+  EXPECT_TRUE(
+      i18n_utils::IsWhitespaceAt("\u0020", /*position=*/0));  // space ' '
+
+  // Non-ASCII whitespaces:
+  EXPECT_TRUE(i18n_utils::IsWhitespaceAt(
+      "\u00a0", /*position=*/0));  // Non-breaking space
+}
+
 TEST(IcuI18nUtilsTest, GetUtf8Length) {
   // Test alphabetic and non-alphabetic ascii characters
   constexpr std::string_view kSomeAscii = "iJ?9";

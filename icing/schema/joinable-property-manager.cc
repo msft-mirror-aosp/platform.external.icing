@@ -14,7 +14,7 @@
 
 #include "icing/schema/joinable-property-manager.h"
 
-#include <memory>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -42,7 +42,8 @@ libtextclassifier3::Status AppendNewJoinablePropertyMetadata(
         metadata_list_wrapper,
     std::string&& concatenated_path,
     PropertyConfigProto::DataType::Code data_type,
-    JoinableConfig::ValueType::Code value_type) {
+    JoinableConfig::ValueType::Code value_type,
+    JoinableConfig::DeletePropagationType::Code delete_propagation_type) {
   // Validates next joinable property id, makes sure that joinable property id
   // is the same as the list index so that we could find any joinable property
   // metadata by id in O(1) later.
@@ -58,7 +59,8 @@ libtextclassifier3::Status AppendNewJoinablePropertyMetadata(
 
   // Creates joinable property metadata
   metadata_list_wrapper->metadata_list.push_back(JoinablePropertyMetadata(
-      new_id, data_type, value_type, std::move(concatenated_path)));
+      new_id, data_type, value_type, delete_propagation_type,
+      std::move(concatenated_path)));
   metadata_list_wrapper->property_path_to_id_map.insert(
       {metadata_list_wrapper->metadata_list.back().path, new_id});
   return libtextclassifier3::Status::OK;
@@ -101,7 +103,8 @@ JoinablePropertyManager::Builder::ProcessSchemaTypePropertyConfig(
         ICING_RETURN_IF_ERROR(AppendNewJoinablePropertyMetadata(
             &joinable_property_metadata_cache_[schema_type_id],
             std::move(property_path), PropertyConfigProto::DataType::STRING,
-            JoinableConfig::ValueType::QUALIFIED_ID));
+            JoinableConfig::ValueType::QUALIFIED_ID,
+            property_config.joinable_config().delete_propagation_type()));
       }
       break;
     }

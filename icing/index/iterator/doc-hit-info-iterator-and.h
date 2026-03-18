@@ -15,14 +15,16 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_AND_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_AND_H_
 
-#include <cstdint>
+#include <cstddef>
 #include <memory>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -33,7 +35,8 @@ std::unique_ptr<DocHitInfoIterator> CreateAndIterator(
     std::vector<std::unique_ptr<DocHitInfoIterator>> iterators);
 
 // Iterate over a logical AND of two child iterators.
-class DocHitInfoIteratorAnd : public DocHitInfoIterator {
+class DocHitInfoIteratorAnd
+    : public DocHitInfoIteratorSectionRestrictionApplyToChildren {
  public:
   // Set the shorter iterator to short_it to get performance benefits
   // for when an underlying iterator has a more efficient AdvanceTo.
@@ -49,9 +52,8 @@ class DocHitInfoIteratorAnd : public DocHitInfoIterator {
 
   std::string ToString() const override;
 
-  void MapChildren(const ChildrenMapper& mapper) override {
-    short_ = mapper(std::move(short_));
-    long_ = mapper(std::move(long_));
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {&short_, &long_};
   }
 
   void PopulateMatchedTermsStats(
@@ -75,7 +77,8 @@ class DocHitInfoIteratorAnd : public DocHitInfoIterator {
 // Iterate over a logical AND of multiple child iterators.
 // NOTE: DocHitInfoIteratorAnd is a faster alternative to AND exactly 2
 // iterators.
-class DocHitInfoIteratorAndNary : public DocHitInfoIterator {
+class DocHitInfoIteratorAndNary
+    : public DocHitInfoIteratorSectionRestrictionApplyToChildren {
  public:
   explicit DocHitInfoIteratorAndNary(
       std::vector<std::unique_ptr<DocHitInfoIterator>> iterators);
@@ -88,10 +91,13 @@ class DocHitInfoIteratorAndNary : public DocHitInfoIterator {
 
   std::string ToString() const override;
 
-  void MapChildren(const ChildrenMapper& mapper) override {
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    std::vector<std::unique_ptr<DocHitInfoIterator>*> children;
+    children.reserve(iterators_.size());
     for (int i = 0; i < iterators_.size(); ++i) {
-      iterators_[i] = mapper(std::move(iterators_[i]));
+      children.push_back(&iterators_[i]);
     }
+    return children;
   }
 
   void PopulateMatchedTermsStats(

@@ -16,11 +16,14 @@
 #define ICING_STORE_TOKENIZED_DOCUMENT_H_
 
 #include <cstdint>
-#include <string>
+#include <memory>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/proto/document.pb.h"
+#include "icing/proto/document_wrapper.pb.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
@@ -39,13 +42,29 @@ struct TokenizedSection {
         token_sequence(std::move(token_sequence_in)) {}
 };
 
+// A wrapper class to hold the input DocumentProto and the tokenized sections.
+// It finalizes the proto (to be added into DocumentStore) and tokens (to be
+// indexed), so after the creation, the proto and tokens are immutable and the
+// caller can simply use them to write.
+//
+// Note: the document dependency is not the responsibility of this class.
+// Additional steps (see DocumentDependencyProcessor) are needed to handle the
+// dependencies.
+//
+// Some essential fields are populated into the DocumentProto. For example:
+// - Creation timestamp: if it is not set by the client, it will be set to the
+//   current time.
+// - Length in tokens: the number of tokens in all string sections.
 class TokenizedDocument {
  public:
   static libtextclassifier3::StatusOr<TokenizedDocument> Create(
       const SchemaStore* schema_store,
-      const LanguageSegmenter* language_segmenter, DocumentProto document);
+      const LanguageSegmenter* language_segmenter, int64_t current_time_ms,
+      DocumentProto document);
 
-  const DocumentProto& document() const { return document_; }
+  // Due to DocumentStore's internal implementation, we need to wrap
+  // DocumentProto into DocumentWrapper.
+  const DocumentWrapper& document_wrapper() const { return *document_wrapper_; }
 
   int32_t num_string_tokens() const {
     int32_t num_string_tokens = 0;
@@ -63,6 +82,11 @@ class TokenizedDocument {
     return integer_sections_;
   }
 
+  const std::vector<Section<PropertyProto::VectorProto>>& vector_sections()
+      const {
+    return vector_sections_;
+  }
+
   const std::vector<JoinableProperty<std::string_view>>&
   qualified_id_join_properties() const {
     return joinable_property_group_.qualified_id_properties;
@@ -71,18 +95,21 @@ class TokenizedDocument {
  private:
   // Use TokenizedDocument::Create() to instantiate.
   explicit TokenizedDocument(
-      DocumentProto&& document,
+      std::unique_ptr<DocumentWrapper> document_wrapper,
       std::vector<TokenizedSection>&& tokenized_string_sections,
       std::vector<Section<int64_t>>&& integer_sections,
+      std::vector<Section<PropertyProto::VectorProto>>&& vector_sections,
       JoinablePropertyGroup&& joinable_property_group)
-      : document_(std::move(document)),
+      : document_wrapper_(std::move(document_wrapper)),
         tokenized_string_sections_(std::move(tokenized_string_sections)),
         integer_sections_(std::move(integer_sections)),
+        vector_sections_(std::move(vector_sections)),
         joinable_property_group_(std::move(joinable_property_group)) {}
 
-  DocumentProto document_;
+  std::unique_ptr<DocumentWrapper> document_wrapper_;
   std::vector<TokenizedSection> tokenized_string_sections_;
   std::vector<Section<int64_t>> integer_sections_;
+  std::vector<Section<PropertyProto::VectorProto>> vector_sections_;
   JoinablePropertyGroup joinable_property_group_;
 };
 
