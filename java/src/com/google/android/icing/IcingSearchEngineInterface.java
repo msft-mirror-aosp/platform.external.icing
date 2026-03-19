@@ -17,6 +17,7 @@ import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
+import com.google.android.icing.proto.HandleExpiredDocumentsResultProto;
 import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
@@ -146,6 +147,28 @@ public interface IcingSearchEngineInterface extends Closeable {
 
   /** Invalidates the next page token. */
   void invalidateNextPageToken(long nextPageToken);
+
+  /**
+   * Handles expired documents. The operation includes:
+   *
+   * <ul>
+   *   <li>Zero out bytes for all expired documents.
+   *   <li>Propagate delete to child documents with delete propagation enabled. Zero out bytes for
+   *       all propagated documents.
+   * </ul>
+   *
+   * <p>For Icing direct clients, there is no need to call this API since Icing already has a native
+   * background thread for scheduling tasks to call it. This API is exposed only for AppSearch
+   * system service (in Android) since native background thread is not recommended in system
+   * service, and tasks should be scheduled at AppSearch level instead.
+   *
+   * <p>Note: {@link #optimize()} also zeros out bytes for non-alive (delete, expired) documents,
+   * but it also additionally reclaims disk space for storage and rebuilds indices by rearranging
+   * alive documents. On the other hand, {@link #handleExpiredDocuments()} is a cheaper API that
+   * only deals with expired documents and delete propagation for child documents, without
+   * reclaiming disk space or rebuilding indices which requires additional disk I/O.
+   */
+  HandleExpiredDocumentsResultProto handleExpiredDocuments();
 
   /** Gets a file descriptor to write blob data. */
   BlobProto openWriteBlob(PropertyProto.BlobHandleProto blobHandle);

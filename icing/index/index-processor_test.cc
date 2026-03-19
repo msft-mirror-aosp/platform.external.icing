@@ -317,7 +317,8 @@ class IndexProcessorTest : public Test {
         std::unique_ptr<QualifiedIdJoinIndexingHandler>
             qualified_id_join_indexing_handler,
         QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                               qualified_id_join_index_.get()));
+                                               qualified_id_join_index_.get(),
+                                               feature_flags_.get()));
     std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
     handlers.push_back(std::move(term_indexing_handler));
     handlers.push_back(std::move(integer_section_indexing_handler));
@@ -968,7 +969,8 @@ TEST_F(IndexProcessorTest, OutOfOrderDocumentIdsInRecoveryMode) {
       std::unique_ptr<QualifiedIdJoinIndexingHandler>
           qualified_id_join_indexing_handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
   std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
   handlers.push_back(std::move(term_indexing_handler));
   handlers.push_back(std::move(integer_section_indexing_handler));
