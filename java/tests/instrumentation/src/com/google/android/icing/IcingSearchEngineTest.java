@@ -36,8 +36,10 @@ import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
+import com.google.android.icing.proto.HandleExpiredDocumentsResultProto;
 import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
+import com.google.android.icing.proto.JoinableConfig;
 import com.google.android.icing.proto.LogSeverity;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
@@ -68,6 +70,7 @@ import com.google.android.icing.proto.SuggestionSpecProto;
 import com.google.android.icing.proto.TermMatchType;
 import com.google.android.icing.proto.TermMatchType.Code;
 import com.google.android.icing.proto.UsageReport;
+import com.google.common.collect.ImmutableList;
 import com.google.android.icing.protobuf.ByteString;
 import java.io.File;
 import java.io.FileDescriptor;
@@ -457,16 +460,18 @@ public final class IcingSearchEngineTest {
 
     PutDocumentRequest putDocumentRequest = PutDocumentRequest.getDefaultInstance();
     BatchPutResultProto batchPutResultProto = icingSearchEngine.batchPut(putDocumentRequest);
+    BatchPutResultProto actualProto =
+        batchPutResultProto.toBuilder().clearVmBinderTransactionLatencyStartTimeMs().build();
 
     BatchPutResultProto expected =
         BatchPutResultProto.newBuilder()
             .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.OK))
             .build();
-    assertThat(batchPutResultProto).isEqualTo(expected);
+    assertThat(actualProto).isEqualTo(expected);
 
     // PersistToDiskResultProto should not be set if persist_type is not set in the
     // PutDocumentRequest.
-    assertThat(batchPutResultProto.getPersistToDiskResultProto().getStatus().getCode())
+    assertThat(actualProto.getPersistToDiskResultProto().getStatus().getCode())
         .isEqualTo(StatusProto.Code.UNKNOWN);
   }
 
@@ -739,6 +744,7 @@ public final class IcingSearchEngineTest {
     assertThat(searchResultProto.getResultsCount()).isEqualTo(0);
   }
 
+
   @Ignore // b/350530146
   @Test
   public void writeAndReadBlob_blobContentMatches() throws Exception {
@@ -840,8 +846,8 @@ public final class IcingSearchEngineTest {
     assertThat(commitBlobProto.getStatus().getCode()).isEqualTo(StatusProto.Code.NOT_FOUND);
   }
 
+  @Ignore // b/350530146
   @Test
-  @Ignore // b/434206770
   public void getAndPutBlobInfo() throws Exception {
     // 1 Arrange: set up IcingSearchEngine with and blob data
     File tempDir = temporaryFolder.newFolder();
@@ -1460,9 +1466,6 @@ public final class IcingSearchEngineTest {
   }
 
   @Test
-  @Ignore
-  // TODO: b/417644758 - Re-enable this test once the JNI API is pre-registered and dropped back
-  // into g3.
   public void throwIfClosed() throws Exception {
     icingSearchEngine.close();
     assertThrows(IllegalStateException.class, () -> icingSearchEngine.initialize());

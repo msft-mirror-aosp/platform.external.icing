@@ -14,6 +14,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -1347,6 +1348,83 @@ void BM_JoinQueryQualifiedId(benchmark::State& state) {
   }
 }
 BENCHMARK(BM_JoinQueryQualifiedId);
+
+void BM_Optimize(benchmark::State& state) {
+  int num_docs = state.range(0);
+  int num_deleted = state.range(1);
+
+  // Initialize the filesystem
+  std::string test_dir = GetTestTempDir() + "/icing/benchmark";
+  Filesystem filesystem;
+
+  // Create the schema.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TermMatchType::PREFIX,
+                                     StringIndexingConfig::TokenizerType::PLAIN)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .Build();
+
+  // Create documents.
+  DocumentProto base_document = DocumentBuilder()
+                                    .SetSchema("Message")
+                                    .SetNamespace("namespace")
+                                    .AddStringProperty("body", "foo")
+                                    .Build();
+  std::vector<std::string> uris;
+  uris.reserve(num_docs);
+  std::vector<DocumentProto> documents;
+  documents.reserve(num_docs);
+  for (int i = 0; i < num_docs; ++i) {
+    std::string uri = std::to_string(i);
+    uris.push_back(uri);
+    documents.push_back(DocumentBuilder(base_document).SetUri(uri).Build());
+  }
+
+  std::vector<std::string> uris_to_delete = uris;
+  std::shuffle(uris_to_delete.begin(), uris_to_delete.end(),
+               std::default_random_engine(12345));
+  uris_to_delete.resize(num_deleted);
+
+  for (auto s : state) {
+    state.PauseTiming();
+    DestructibleDirectory ddir(filesystem, test_dir);
+    // Create the index.
+    IcingSearchEngineOptions options;
+    options.set_enable_optimize_improvements(true);
+    options.set_base_dir(test_dir);
+    options.set_index_merge_size(kIcingFullIndexSize);
+    std::unique_ptr<IcingSearchEngine> icing =
+        std::make_unique<IcingSearchEngine>(options);
+
+    ASSERT_THAT(icing->Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing->SetSchema(schema).status(), ProtoIsOk());
+
+    for (const auto& doc : documents) {
+      ASSERT_THAT(icing->Put(doc).status(), ProtoIsOk());
+    }
+
+    for (int i = 0; i < num_deleted; ++i) {
+      ASSERT_THAT(icing->Delete("namespace", uris_to_delete[i]).status(),
+                  ProtoIsOk());
+    }
+    state.ResumeTiming();
+
+    ASSERT_THAT(icing->Optimize().status(), ProtoIsOk());
+  }
+}
+
+BENCHMARK(BM_Optimize)
+    // Arguments: num_documents, num_deleted
+    ->ArgPair(1024, 256)
+    ->ArgPair(1024, 512)
+    ->ArgPair(1024, 1024)
+    ->ArgPair(8192, 2048)
+    ->ArgPair(8192, 4096)
+    ->ArgPair(8192, 8192);
 
 void BM_PersistToDisk(benchmark::State& state) {
   // Initialize the filesystem

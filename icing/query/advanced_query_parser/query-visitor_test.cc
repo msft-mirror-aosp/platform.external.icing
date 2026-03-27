@@ -202,13 +202,16 @@ struct QueryVisitorTestParams {
   QueryType query_type;
   bool get_embedding_match_info;
   bool enable_embedding_iterator_v2;
+  bool enable_embed_query_optimization;
 
   explicit QueryVisitorTestParams(QueryType query_type,
                                   bool get_embedding_match_info,
-                                  bool enable_embedding_iterator_v2)
+                                  bool enable_embedding_iterator_v2,
+                                  bool enable_embed_query_optimization)
       : query_type(query_type),
         get_embedding_match_info(get_embedding_match_info),
-        enable_embedding_iterator_v2(enable_embedding_iterator_v2) {}
+        enable_embedding_iterator_v2(enable_embedding_iterator_v2),
+        enable_embed_query_optimization(enable_embed_query_optimization) {}
 };
 
 class QueryVisitorTest
@@ -230,7 +233,13 @@ class QueryVisitorTest
                      /*enable_proto_log_new_header_format=*/true,
                      GetParam().enable_embedding_iterator_v2,
                      /*enable_reusable_decompression_buffer=*/true,
-                     /*enable_schema_type_id_optimization=*/true));
+                     /*enable_schema_type_id_optimization=*/true,
+                     /*enable_optimize_improvements=*/true,
+                     /*expired_document_purge_threshold_ms=*/0,
+                     /*enable_non_existent_qualified_id_join=*/true,
+                     /*enable_skip_set_schema_type_equality_check=*/true,
+                     /*enable_embed_query_optimization=*/true,
+                     /*enable_schema_definition_deduping=*/true));
     test_dir_ = GetTestTempDir() + "/icing";
     index_dir_ = test_dir_ + "/index";
     numeric_index_dir_ = test_dir_ + "/numeric_index";
@@ -281,7 +290,8 @@ class QueryVisitorTest
                            /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
-        index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+        index_, Index::Create(options, &filesystem_, &icing_filesystem_,
+                              feature_flags_.get()));
 
     ICING_ASSERT_OK_AND_ASSIGN(
         numeric_index_,
@@ -5170,16 +5180,6 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionHybridQueries) {
                                        match_infos, /*score=*/-2,
                                        /*position_in_section=*/0,
                                        /*section_id=*/kSectionId0));
-
-    // Check section match info for document 1.
-    match_infos =
-        query_results.embedding_query_results.GetMatchedInfosForDocument(
-            /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
-            kDocumentId1);
-    EXPECT_TRUE(ContainsMatchInfoEntry(query_results.embedding_query_results,
-                                       match_infos, /*score=*/6,
-                                       /*position_in_section=*/0,
-                                       /*section_id=*/kSectionId0));
   } else {
     EXPECT_THAT(*query_results.embedding_query_results.global_section_infos,
                 IsEmpty());
@@ -5336,6 +5336,98 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionDeletedDocument) {
       query_results.embedding_query_results.GetMatchedScoresForDocument(
           /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
       IsEmpty());
+}
+
+TEST_P(QueryVisitorTest, SemanticSearchFunctionCallStats) {
+  if (!GetParam().enable_embedding_iterator_v2) {
+    // Call stats are only populated in embedding iterator v2.
+    return;
+  }
+
+  // Set up
+  ICING_ASSERT_OK(schema_store_->SetSchema(
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("type")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                            QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build(),
+      /*ignore_errors_and_delete_documents=*/false));
+  ICING_ASSERT_OK(document_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build())));
+  ICING_ASSERT_OK(document_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build())));
+
+  // Index 2 unquantized embedding vectors, and 1 quantized embedding vector.
+  PropertyProto::VectorProto vector0 =
+      CreateVector("my_model", {1., 1., 1.});  // Size: 12 bytes
+  PropertyProto::VectorProto vector1 =
+      CreateVector("my_model", {-1., -1., -1.});  // Size: 12 bytes
+  PropertyProto::VectorProto vector2 = CreateVector(
+      "my_model", {0., 0., 0.});  // Size: 3 + sizeof(Quantizer) = 11 bytes.
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(kSectionId0, kDocumentId0), vector0, QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(kSectionId0, kDocumentId1), vector1, QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"type"));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(kSectionId1, kDocumentId1), vector2,
+      QUANTIZATION_TYPE_QUANTIZE_8_BIT,
+      /*schema_name=*/"type"));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+
+  // Create a query that matches all embeddings.
+  std::vector<PropertyProto::VectorProto> embedding_query_vectors = {
+      CreateVector("my_model", {1., 1., 1.})};
+  std::string query = "semanticSearch(getEmbeddingParameter(0))";
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Node> root_node,
+                             ParseQueryHelper(query));
+  SearchSpecProto search_spec =
+      CreateSearchSpec(query, TERM_MATCH_PREFIX, embedding_query_vectors,
+                       EMBEDDING_METRIC_DOT_PRODUCT);
+  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                             ProcessQuery(search_spec, root_node.get()));
+  EXPECT_THAT(ExtractKeys(query_results.query_term_iterators), IsEmpty());
+  EXPECT_THAT(query_results.query_terms, IsEmpty());
+  EXPECT_THAT(query_results.features_in_use,
+              UnorderedElementsAre(kListFilterQueryLanguageFeature));
+  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()),
+              ElementsAre(kDocumentId1, kDocumentId0));
+  EXPECT_THAT(
+      query_results.embedding_query_results.GetMatchedScoresForDocument(
+          /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId0),
+      UnorderedElementsAre(DoubleNear(3., kEps)));
+  EXPECT_THAT(
+      query_results.embedding_query_results.GetMatchedScoresForDocument(
+          /*query_vector_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT, kDocumentId1),
+      UnorderedElementsAre(DoubleNear(-3., kEps), DoubleNear(0, kEps)));
+
+  // Check call stats.
+  // We should see 2 unquantized embeddings scored and 1 quantized embedding
+  // scored. The size read should be 12 + 12 + 11 = 35 bytes.
+  EXPECT_THAT(query_results.root_iterator->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/2,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/0,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/0,
+                  DocHitInfoIterator::CallStats::EmbeddingStats{
+                      .num_unquantized_embeddings_scored = 2,
+                      .num_quantized_embeddings_scored = 1,
+                      .unquantized_shards_read = {5},
+                      .quantized_shards_read = {5},
+                      .num_embedding_bytes_read = 35}));
 }
 
 TEST_P(QueryVisitorTest,
@@ -5545,28 +5637,68 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(
         QueryVisitorTestParams(QueryType::kSearch,
                                /*get_embedding_match_info=*/true,
-                               /*enable_embedding_iterator_v2=*/true),
+                               /*enable_embedding_iterator_v2=*/true,
+                               /*enable_embed_query_optimization=*/false),
         QueryVisitorTestParams(QueryType::kSearch,
                                /*get_embedding_match_info=*/true,
-                               /*enable_embedding_iterator_v2=*/false),
+                               /*enable_embedding_iterator_v2=*/false,
+                               /*enable_embed_query_optimization=*/false),
         QueryVisitorTestParams(QueryType::kSearch,
                                /*get_embedding_match_info=*/false,
-                               /*enable_embedding_iterator_v2=*/true),
+                               /*enable_embedding_iterator_v2=*/true,
+                               /*enable_embed_query_optimization=*/false),
         QueryVisitorTestParams(QueryType::kSearch,
                                /*get_embedding_match_info=*/false,
-                               /*enable_embedding_iterator_v2=*/false),
+                               /*enable_embedding_iterator_v2=*/false,
+                               /*enable_embed_query_optimization=*/false),
         QueryVisitorTestParams(QueryType::kPlain,
                                /*get_embedding_match_info=*/true,
-                               /*enable_embedding_iterator_v2=*/true),
+                               /*enable_embedding_iterator_v2=*/true,
+                               /*enable_embed_query_optimization=*/false),
         QueryVisitorTestParams(QueryType::kPlain,
                                /*get_embedding_match_info=*/true,
-                               /*enable_embedding_iterator_v2=*/false),
+                               /*enable_embedding_iterator_v2=*/false,
+                               /*enable_embed_query_optimization=*/false),
         QueryVisitorTestParams(QueryType::kPlain,
                                /*get_embedding_match_info=*/false,
-                               /*enable_embedding_iterator_v2=*/true),
+                               /*enable_embedding_iterator_v2=*/true,
+                               /*enable_embed_query_optimization=*/false),
         QueryVisitorTestParams(QueryType::kPlain,
                                /*get_embedding_match_info=*/false,
-                               /*enable_embedding_iterator_v2=*/false)));
+                               /*enable_embedding_iterator_v2=*/false,
+                               /*enable_embed_query_optimization=*/false),
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/true,
+                               /*enable_embed_query_optimization=*/true),
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/false,
+                               /*enable_embed_query_optimization=*/true),
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/true,
+                               /*enable_embed_query_optimization=*/true),
+        QueryVisitorTestParams(QueryType::kSearch,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/false,
+                               /*enable_embed_query_optimization=*/true),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/true,
+                               /*enable_embed_query_optimization=*/true),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/true,
+                               /*enable_embedding_iterator_v2=*/false,
+                               /*enable_embed_query_optimization=*/true),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/true,
+                               /*enable_embed_query_optimization=*/true),
+        QueryVisitorTestParams(QueryType::kPlain,
+                               /*get_embedding_match_info=*/false,
+                               /*enable_embedding_iterator_v2=*/false,
+                               /*enable_embed_query_optimization=*/true)));
 
 }  // namespace
 

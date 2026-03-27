@@ -153,8 +153,8 @@ bool IsSchemaTypeCompatible(const PropertyConfigProto& old_property,
                             const PropertyConfigProto& new_property) {
   if (old_property.schema_type() != new_property.schema_type()) {
     ICING_LOG(INFO) << absl_ports::StrCat("Schema type ",
-                                        old_property.schema_type(), "->",
-                                        new_property.schema_type());
+                                          old_property.schema_type(), "->",
+                                          new_property.schema_type());
     return false;
   }
   return true;
@@ -1098,10 +1098,12 @@ SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
 
   // TODO(cassiewang): consider caching property_config_map for some properties,
   // e.g. using LRU cache. Or changing schema.proto to use go/protomap.
-  for (const PropertyConfigProto& property_config : type_config.properties()) {
+  for (int position = 0; position < type_config.properties_size(); ++position) {
+    const PropertyConfigProto& property_config =
+        type_config.properties(position);
     std::string_view property_name = property_config.property_name();
-    parsed_property_configs.property_config_map.emplace(property_name,
-                                                        &property_config);
+    parsed_property_configs.property_config_map.emplace(
+        property_name, PropertyConfigInfo{&property_config, position});
     if (property_config.cardinality() ==
         PropertyConfigProto::Cardinality::REQUIRED) {
       parsed_property_configs.required_properties.insert(property_name);
@@ -1181,7 +1183,10 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     bool is_incompatible = false;
     bool is_index_incompatible = false;
     bool is_join_incompatible = false;
-    for (const auto& old_property_config : old_type_config.properties()) {
+    for (int position = 0; position < old_type_config.properties_size();
+         ++position) {
+      const PropertyConfigProto& old_property_config =
+          old_type_config.properties(position);
       std::string_view property_name = old_property_config.property_name();
       if (old_property_config.cardinality() ==
           PropertyConfigProto::Cardinality::REQUIRED) {
@@ -1229,10 +1234,17 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
       }
 
       const PropertyConfigProto* new_property_config =
-          new_property_name_and_config->second;
+          new_property_name_and_config->second.property_config;
+      bool property_order_changed =
+          feature_flags.enable_schema_definition_deduping() &&
+          position != new_property_name_and_config->second.position;
       if (!has_property_changed &&
-          !ArePropertiesEqual(old_property_config, *new_property_config)) {
-        // Finally found a property that changed.
+          (!ArePropertiesEqual(old_property_config, *new_property_config) ||
+           property_order_changed)) {
+        // Found a property that changed. A property change is either a
+        // PropertyConfigProto change or (when schema deduping is enabled) a
+        // change in the property's position in the type config's repeated
+        // properties field.
         has_property_changed = true;
       }
 
@@ -1259,8 +1271,8 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
         is_index_incompatible = true;
       }
 
-      if (old_property_config.joinable_config().value_type() !=
-          new_property_config->joinable_config().value_type()) {
+      if (!AreJoinableConfigsEqual(old_property_config.joinable_config(),
+                                   new_property_config->joinable_config())) {
         is_join_incompatible = true;
       }
     }
