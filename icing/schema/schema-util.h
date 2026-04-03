@@ -15,6 +15,7 @@
 #ifndef ICING_SCHEMA_SCHEMA_UTIL_H_
 #define ICING_SCHEMA_SCHEMA_UTIL_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -26,14 +27,178 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/feature-flags.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/util/sha256.h"
 
 namespace icing {
 namespace lib {
 
 class SchemaUtil {
  public:
-  using TypeConfigMap =
-      std::unordered_map<std::string, const SchemaTypeConfigProto>;
+  using TypeConfigMap = std::unordered_map<std::string, SchemaTypeConfigProto>;
+
+  // A cache of schema type config definitions.
+  //
+  // This cache allows faster lookup of type configs in the schema and makes
+  // schema-related and section-related operations faster.
+  //
+  // TODO: b/448166747 - Move this class to its own header file.
+  class TypeConfigInfoCache {
+   public:
+    // A wrapper class to hold references to the type config and its properties.
+    // This allows us to avoid making a copy of the SchemaTypeConfigProto when
+    // fetching it from the cache, while still providing a unified view of the
+    // type config and its (possibly deduped) properties.
+    class TypeConfigHolder {
+     public:
+      explicit TypeConfigHolder(
+          const SchemaTypeConfigProto& type_config,
+          const google::protobuf::RepeatedPtrField<PropertyConfigProto>& properties)
+          : type_config_(type_config), properties_(properties) {}
+
+      // Returns a reference to the properties of this type.
+      //
+      // Note that these properties may belong to a different type config if the
+      // base type config has been deduped.
+      const google::protobuf::RepeatedPtrField<PropertyConfigProto>& properties() const {
+        return properties_;
+      }
+
+      // Returns a reference to the underlying SchemaTypeConfigProto.
+      //
+      // Note that the properties field in this proto may be empty if
+      // deduplication is enabled. Callers should use properties() to get the
+      // full list of properties.
+      const SchemaTypeConfigProto& base_type_config() const {
+        return type_config_;
+      }
+
+      // Returns a fully-defined SchemaTypeConfigProto instance with the
+      // properties field populated.
+      //
+      // This creates a deep copy of the underlying type config.
+      SchemaTypeConfigProto ToSchemaTypeConfigProto() const {
+        SchemaTypeConfigProto type_config = type_config_;
+        if (type_config.properties().empty()) {
+          type_config.mutable_properties()->Add(properties_.begin(),
+                                                properties_.end());
+        }
+        return type_config;
+      }
+
+     private:
+      // The actual type. This may or may not have its properties field
+      // populated.
+      const SchemaTypeConfigProto& type_config_;
+
+      // A reference to the properties. These may belong to a different
+      // type config due to de-duping.
+      const google::protobuf::RepeatedPtrField<PropertyConfigProto>& properties_;
+    };
+
+    explicit TypeConfigInfoCache(bool enable_schema_definition_deduping)
+        : enable_schema_definition_deduping_(
+              enable_schema_definition_deduping) {}
+
+    // Adds the given type config to the cache. This is a no-op if the type
+    // config already exists in the cache.
+    //
+    // - If enable_schema_definition_deduping_ is true, the type config will
+    //   be deduped.
+    //
+    // Returns:
+    //   - OK on success.
+    //   - INTERNAL_ERROR for any IO or deserialization errors.
+    libtextclassifier3::Status AddTypeConfig(
+        SchemaTypeConfigProto&& type_config);
+
+    // TEST ONLY: This should only be used in our tests. Use the above r-value
+    // version in production code.
+    //
+    // Adds the given type config to the cache. This is a no-op if
+    // the type config already exists in the cache.
+    //
+    // Returns:
+    //   - OK on success.
+    //   - INTERNAL_ERROR for any IO or deserialization errors.
+    libtextclassifier3::Status AddTypeConfig(
+        const SchemaTypeConfigProto& type_config) {
+      return AddTypeConfig(SchemaTypeConfigProto(type_config));
+    }
+
+    // Removes the type config from the cache. This is a no-op if the type
+    // config does not exist in the cache.
+    //
+    // Returns:
+    //   - OK on success
+    //   - INTERNAL_ERROR for any IO or deserialization errors.
+    libtextclassifier3::Status RemoveTypeConfig(
+        std::string_view type_to_remove);
+
+    // Fetches a TypeConfigHolder with a unified view of the base
+    // SchemaTypeConfigProto and its full properties definitions.
+    //
+    // LIFETIME: The returned Holder contains references to data owned by this
+    // cache. It must not outlive the TypeConfigInfoCache or the specific type
+    // config within it.
+    //
+    // Returns:
+    //   - A TypeConfigHolder providing a non-owning view to the full type
+    //     definition on success.
+    //   - NOT_FOUND if the schema_type does not exist in the cache.
+    //   - INTERNAL_ERROR on any I/O or deserialization errors.
+    libtextclassifier3::StatusOr<TypeConfigHolder>
+    GetFullSchemaTypeConfigHolder(std::string_view schema_type) const;
+
+    // Gets a pointer to the raw SchemaTypeConfigProto stored in the cache for
+    // schema_type.
+    // - This method could point to a deduped type config without any property
+    //   definitions. Use GetFullSchemaTypeConfig instead if you need the
+    //   property definition for the type config.
+    //
+    // Returns:
+    //   - SchemaTypeConfigProto pointer on success
+    //   - NOT_FOUND if schema type name doesn't exist in the cache
+    libtextclassifier3::StatusOr<const SchemaTypeConfigProto*>
+    GetRawSchemaTypeConfigPointer(std::string_view schema_type) const;
+
+    void Clear() {
+      properties_sha256_digest_map_.clear();
+      type_config_map_.clear();
+    }
+
+    // Returns the number of type configs in the cache.
+    size_t size() const { return type_config_map_.size(); }
+
+    const TypeConfigMap& type_config_map() const { return type_config_map_; }
+
+   private:
+    // A map of (schema type -> type config).
+    //
+    // - When schema-deduping is enabled, type configs in this map will be
+    //   deduped and may will not have any property definitions.
+    // - When disabled, this map will contain fully-defined type configs.
+    TypeConfigMap type_config_map_;
+
+    // A map of (Sha256 properties digest -> vector of type names that match
+    // that properties digest).
+    //
+    // - The first element in the vector is the name of the fully-defined type
+    //   which is stored in the TypeConfigMap with full property definitions.
+    // - The remaining elements are duplicate types whose configs are stored
+    //   without any property definitions.
+    //
+    // This map is only populated if enable_schema_definition_deduping_ is true.
+    std::unordered_map<Sha256Digest, std::vector<std::string>>
+        properties_sha256_digest_map_;
+
+    // Whether schema definition deduping is enabled.
+    //
+    // - If true, config protos in type_config_map_ will be deduped (i.e. types
+    //   with the same properties will not repeat the property definition).
+    // - If false, properties_sha256_digest_map_ will be empty and all type
+    //   configs in type_config_map_ will contain fully-defined type configs.
+    bool enable_schema_definition_deduping_;
+  };
 
   // A data structure that stores the relationships between schema types. The
   // keys in TypeRelationMap are schema types, and the values are sets of schema
@@ -226,10 +391,15 @@ class SchemaUtil {
   static void BuildTypeConfigMap(const SchemaProto& schema,
                                  TypeConfigMap* type_config_map);
 
-  // Parses the given type_config and returns a struct of easily-parseable
+  // Creates a TypeConfigInfoCache from the given schema. The
+  // TypeConfigInfoCache is cleared, and each type config is added to the cache.
+  static libtextclassifier3::Status BuildTypeConfigInfoCache(
+      const SchemaProto& schema, TypeConfigInfoCache* type_config_info_cache);
+
+  // Parses the given type_config and returns a struct of easily-parsable
   // information about the properties.
   static ParsedPropertyConfigs ParsePropertyConfigs(
-      const SchemaTypeConfigProto& type_config);
+      const google::protobuf::RepeatedPtrField<PropertyConfigProto>& properties);
 
   // Computes the delta between the old and new schema. There are a few
   // differences that'll be reported:
@@ -289,10 +459,42 @@ class SchemaUtil {
   // SchemaTypeConfig.schema_type and the PropertyConfigProto.property_name.
   //
   // Returns a SchemaDelta that captures the aforementioned differences.
-  static const SchemaDelta ComputeCompatibilityDelta(
+  static SchemaDelta ComputeCompatibilityDelta(
       const SchemaProto& old_schema, const SchemaProto& new_schema,
       const DependentMap& new_schema_dependent_map,
       const FeatureFlags& feature_flags);
+
+  // Computes the SHA256 digest of the properties in the given type config.
+  //
+  // The digest is computed over a serialized SchemaTypeConfigProto, where only
+  // the properties field is populated. This means that the digest is sensitive
+  // to the order of the property definitions in the type config.
+  //
+  // Returns:
+  //   - The Sha256-hashed properties digest.
+  static Sha256Digest ComputeSchemaPropertiesSha256Digest(
+      const SchemaTypeConfigProto& type_config);
+
+  // Populates the properties_digest field in the given type config and returns
+  // the populated digest.
+  //
+  // If the properties_digest field is already populated, it will be
+  // overwritten.
+  //
+  // Returns:
+  //   - The populated Sha256-hashed properties digest.
+  static Sha256Digest PopulatePropertiesDigestField(
+      SchemaTypeConfigProto& type_config);
+
+  // Returns the deserialized the digest from the type config proto if it
+  // exists.
+  //
+  // Returns:
+  //   - The Sha256 properties digest on success.
+  //   - INTERNAL_ERROR if deserialization fails because the digest is empty or
+  //     invalid.
+  static libtextclassifier3::StatusOr<Sha256Digest> GetSchemaPropertiesDigest(
+      const SchemaTypeConfigProto& type_config);
 
   // Validates the 'property_name' field.
   //   1. Can't be an empty string

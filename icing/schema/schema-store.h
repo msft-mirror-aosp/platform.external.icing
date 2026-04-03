@@ -301,13 +301,27 @@ class SchemaStore {
   // Persists and updates checksum of subcomponents.
   ~SchemaStore();
 
-  // Retrieve the current schema if it exists.
+  // Retrieves the current schema stored in the file-backed schema proto.
+  //
+  // Note: When enable_schema_definition_deduping is enabled, this method should
+  // only be used if you don't need the full schema property definitions in
+  // SchemaTypeConfigProto.properties. Otherwise, use `GetFullSchemaProto()`.
   //
   // Returns:
   //   - SchemaProto* if exists
   //   - INTERNAL_ERROR on any IO errors
   //   - NOT_FOUND_ERROR if a schema hasn't been set before
-  libtextclassifier3::StatusOr<const SchemaProto*> GetSchema() const;
+  libtextclassifier3::StatusOr<const SchemaProto*> GetFileBackedSchemaProto()
+      const;
+
+  // Retrieves the full schema proto, with full schema type config definitions
+  // that contains all property definitions.
+  //
+  // Returns:
+  //   - SchemaProto if exists
+  //   - INTERNAL_ERROR on any IO errors
+  //   - NOT_FOUND_ERROR if a schema hasn't been set before
+  libtextclassifier3::StatusOr<SchemaProto> GetFullSchemaProto() const;
 
   // Retrieve the current schema for a given database if it exists.
   //
@@ -364,15 +378,44 @@ class SchemaStore {
   libtextclassifier3::StatusOr<SetSchemaResult> SetSchema(
       SetSchemaRequestProto&& set_schema_request);
 
-  // Get the SchemaTypeConfigProto of schema_type name.
+  // TODO - b/448166747: Remove this method once
+  // enable_schema_definition_deduping is fully rolled out.
+  //
+  // DEPRECATED: This method should not be called, especially when
+  // feature_flags_->enable_schema_definition_deduping()` is true.
+  // Use GetSchemaTypeConfig(std::string_view schema_type) instead.
+  //
+  // Gets a pointer to the SchemaTypeConfigProto of schema_type name stored in
+  // the schema store.
+  // -  With schema deduplication enabled, this pointer points to the internal
+  //    SchemaTypeConfigProto that schema store holds after deduplication, which
+  //    could be have all property definitions removed.
   //
   // Returns:
-  //   SchemaTypeConfigProto on success
-  //   FAILED_PRECONDITION if schema hasn't been set yet
-  //   NOT_FOUND if schema type name doesn't exist
-  //   INTERNAL on any I/O errors
+  //   - SchemaTypeConfigProto* on success
+  //   - FAILED_PRECONDITION if schema hasn't been set yet
+  //   - NOT_FOUND if schema type name doesn't exist
+  //   - INTERNAL on any I/O errors or if called when schema deduplication is
+  //     enabled.
   libtextclassifier3::StatusOr<const SchemaTypeConfigProto*>
-  GetSchemaTypeConfig(std::string_view schema_type) const;
+  GetSchemaTypeConfigPointer(std::string_view schema_type) const;
+
+  // Fetches a TypeConfigHolder with a unified view of the base
+  // SchemaTypeConfigProto and its full properties definitions.
+  //
+  // LIFETIME: The returned Holder contains references to data owned by this
+  // cache. It must not outlive the TypeConfigInfoCache or the specific type
+  // config within it.
+  //
+  // Returns:
+  //   - A TypeConfigHolder providing a non-owning view to the full type
+  //     definition on success.
+  //   - FAILED_PRECONDITION if schema hasn't been set yet
+  //   - NOT_FOUND if the schema_type does not exist in the cache.
+  //   - INTERNAL_ERROR on any I/O or deserialization errors.
+  libtextclassifier3::StatusOr<
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder>
+  GetSchemaTypeConfigHolder(std::string_view schema_type) const;
 
   // Get a map contains all schema_type name to its blob property paths.
   //
@@ -1030,10 +1073,25 @@ class SchemaStore {
   // schema operations to be performed on a per-database basis.
   std::unordered_map<std::string, std::vector<std::string>> database_type_map_;
 
-  // A hash map of (type config name -> type config), allows faster lookup of
-  // type config in schema. The O(1) type config access makes schema-related and
-  // section-related operations faster.
-  SchemaUtil::TypeConfigMap type_config_map_;
+  // The type config info cache contains the following:
+  //
+  // 1. TypeConfigMap: A map of (type config name -> type config).
+  //    - When schema-deduping is enabled, type configs in this map will be
+  //      deduped and many may not have any property definitions.
+  //    - When disabled, this map contains full type config definitions.
+  //
+  // 2. PropertiesDigestToTypeConfigMap
+  //    - Only populated when schema-deduping is enabled.
+  //    - A map of (Sha256 properties digest -> vector of type names that match
+  //      that properties digest).
+  //    - The first element in the vector is the name of the fully-defined type
+  //      which is stored in the TypeConfigMap with full property definitions.
+  //    - The remaining elements are duplicate types whose configs are stored
+  //      without any property definitions.
+  //
+  // This cache allows faster lookup of type configs in the schema and makes
+  // schema-related and section-related operations faster.
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache_;
 
   // Maps from each type id to all of its subtype ids.
   // T2 is a subtype of T1, if and only if one of the following conditions is

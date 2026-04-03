@@ -121,10 +121,8 @@ libtextclassifier3::Status LiteIndex::Initialize() {
   IcingTimer timer;
 
   absl_ports::unique_lock l(&mutex_);
-  if (!lexicon_.CreateIfNotExist(options_.lexicon_options) ||
-      !lexicon_.Init()) {
-    return absl_ports::InternalError("Failed to initialize lexicon trie");
-  }
+  ICING_RETURN_IF_ERROR(lexicon_.CreateIfNotExist(options_.lexicon_options));
+  ICING_RETURN_IF_ERROR(lexicon_.Init());
 
   hit_buffer_fd_.reset(filesystem_->OpenForWrite(
       MakeHitBufferFilename(options_.filename_base).c_str()));
@@ -148,13 +146,13 @@ libtextclassifier3::Status LiteIndex::Initialize() {
 
     ICING_VLOG(2) << "Creating new hit buffer";
     // Make sure files are fresh.
-    if (!lexicon_.Remove() ||
-        !lexicon_.CreateIfNotExist(options_.lexicon_options) ||
-        !lexicon_.Init()) {
+    if (!lexicon_.Remove()) {
       status =
           absl_ports::InternalError("Failed to refresh lexicon during clear");
       goto error;
     }
+    ICING_RETURN_IF_ERROR(lexicon_.CreateIfNotExist(options_.lexicon_options));
+    ICING_RETURN_IF_ERROR(lexicon_.Init());
 
     // Create fresh hit buffer by first emptying the hit buffer file and then
     // allocating header_padded_size of the cleared space.
@@ -234,7 +232,7 @@ libtextclassifier3::Status LiteIndex::Reset() {
   absl_ports::unique_lock l(&mutex_);
   // TODO(b/140436942): When these components have been changed to return errors
   // they should be propagated from here.
-  lexicon_.Clear();
+  ICING_RETURN_IF_ERROR(lexicon_.Clear());
   hit_buffer_.Clear();
   header_->Reset();
   UpdateChecksumInternal();
@@ -246,23 +244,20 @@ libtextclassifier3::Status LiteIndex::Reset() {
 void LiteIndex::Warm() {
   absl_ports::shared_lock l(&mutex_);
   hit_buffer_.Warm();
-  lexicon_.Warm();
+  libtextclassifier3::Status status = lexicon_.Warm();
+  if (!status.ok()) {
+    ICING_LOG(ERROR) << "Failed to warm lexicon: " << status.error_message();
+  }
 }
 
 libtextclassifier3::Status LiteIndex::PersistToDisk() {
   absl_ports::unique_lock l(&mutex_);
-  bool success = true;
-  if (!lexicon_.Sync()) {
-    ICING_VLOG(1) << "Failed to sync the lexicon.";
-    success = false;
-  }
+  ICING_RETURN_IF_ERROR(lexicon_.Sync());
   hit_buffer_.Sync();
   UpdateChecksumInternal();
   header_mmap_.Sync();
 
-  return (success) ? libtextclassifier3::Status::OK
-                   : absl_ports::InternalError(
-                         "Unable to sync lite index components.");
+  return libtextclassifier3::Status::OK;
 }
 
 Crc32 LiteIndex::UpdateChecksum() {

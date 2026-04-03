@@ -16,6 +16,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <cstring>
 #include <queue>
 #include <string>
 #include <string_view>
@@ -34,7 +36,9 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/util/logging.h"
+#include "icing/util/sha256.h"
 #include "icing/util/status-macros.h"
+#include <google/protobuf/repeated_field.h>
 
 namespace icing {
 namespace lib {
@@ -311,6 +315,256 @@ void FindScorablePropertyInconsistentTypes(
 
 }  // namespace
 
+// SchemaUtil::TypeConfigInfoCache methods.
+libtextclassifier3::Status SchemaUtil::TypeConfigInfoCache::AddTypeConfig(
+    SchemaTypeConfigProto&& type_config) {
+  const std::string& type_name = type_config.schema_type();
+  if (!enable_schema_definition_deduping_) {
+    // Schema definition deduping is disabled. Just insert the type config
+    // directly.
+    type_config_map_.insert({type_name, std::move(type_config)});
+    return libtextclassifier3::Status::OK;
+  }
+
+  // Schema definition deduping enabled
+  // Step 1: Check that the type config is not already in the type_config_map_.
+  if (type_config_map_.find(type_name) != type_config_map_.end()) {
+    ICING_VLOG(1) << "Schema type '" << type_name
+                  << "' not added because it already exists in the "
+                     "type_config_info_cache.";
+    return libtextclassifier3::Status::OK;
+  }
+
+  // Step 2: Compute the properties digest.
+  libtextclassifier3::StatusOr<Sha256Digest> properties_digest =
+      SchemaUtil::GetSchemaPropertiesDigest(type_config);
+  Sha256Digest properties_digest_value;
+  if (properties_digest.ok()) {
+    properties_digest_value = std::move(properties_digest).ValueOrDie();
+  } else {
+    // The properties digest is empty or corrupted. We can still recompute the
+    // properties digest if either:
+    // 1. The properties digest is empty (this indicates that this is the first
+    //    time the config is provided and it has not been processed yet)
+    // 2. The properties field is not empty. This means that the current digest
+    //    value must be corrupted. Therefore, we will recalculate this.
+    //
+    // Populate the properties digest field once recomputed so that the correct
+    // digest is stored in the type_config_map_.
+    if (type_config.properties_digest().empty() ||
+        !type_config.properties().empty()) {
+      properties_digest_value =
+          SchemaUtil::PopulatePropertiesDigestField(type_config);
+    } else {
+      return properties_digest.status();
+    }
+  }
+
+  // Step 3: Insert the type config into the maps.
+  std::vector<std::string>& schema_types =
+      properties_sha256_digest_map_[properties_digest_value];
+  if (schema_types.empty()) {
+    // First type with this properties digest. Insert into both maps directly as
+    // is.
+    schema_types.push_back(type_name);
+    type_config_map_.insert({type_name, std::move(type_config)});
+    return libtextclassifier3::Status::OK;
+  }
+
+  // Guaranteed to have at least one type matching this properties digest at
+  // this point.
+  if (type_config.properties().empty()) {
+    // Type has already been deduped.
+    // - This happens when we're adding types to create the TypeConfigInfoCache
+    //   from an existing, already deduped schema.
+    // Insert into both maps directly.
+    schema_types.push_back(type_name);
+    type_config_map_.insert({type_name, std::move(type_config)});
+    return libtextclassifier3::Status::OK;
+  }
+
+  // The input type config is a fully defined type config. We need to check if
+  // it should be deduped before inserting into the type-config map.
+  auto first_type_itr = type_config_map_.find(schema_types.front());
+  if (first_type_itr == type_config_map_.end()) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Type '", schema_types.front(),
+        "exists in the properties_sha256_digest_map_ but not the "
+        "type_config_map_. This should never happen."));
+  }
+  const SchemaTypeConfigProto& first_type_config = first_type_itr->second;
+  if (first_type_config.properties().empty()) {
+    // First type in the digest vector is not the canonical type config.
+    // - This happens when we're adding types to create the TypeConfigInfoCache
+    //   from an existing, already deduped schema, and deduped types are added
+    //   before the canonical type config.
+    // The input type will be the canonical type for this property digest.
+    //
+    // Insert to front of the vector and do not dedupe.
+    schema_types.insert(schema_types.begin(), type_name);
+  } else {
+    // Otherwise, push to the back of the vector.
+    // This is a duplicate type config that should not have any property
+    // definitions. Clear the properties field before inserting into the map.
+    schema_types.push_back(type_name);
+    type_config.clear_properties();
+  }
+
+  type_config_map_.insert({type_name, std::move(type_config)});
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status SchemaUtil::TypeConfigInfoCache::RemoveTypeConfig(
+    std::string_view type_to_remove) {
+  auto config_to_remove_itr = type_config_map_.find(
+      std::string(type_to_remove.data(), type_to_remove.size()));
+  if (config_to_remove_itr == type_config_map_.end()) {
+    // Type is already removed from the type-config map.
+    return libtextclassifier3::Status::OK;
+  }
+
+  if (!enable_schema_definition_deduping_) {
+    type_config_map_.erase(config_to_remove_itr);
+    return libtextclassifier3::Status::OK;
+  }
+
+  ICING_ASSIGN_OR_RETURN(
+      Sha256Digest properties_digest,
+      GetSchemaPropertiesDigest(config_to_remove_itr->second));
+  auto types_vector_itr = properties_sha256_digest_map_.find(properties_digest);
+  if (types_vector_itr == properties_sha256_digest_map_.end()) {
+    // Properties digest not found in digest map. This shouldn't really happen
+    // if the type still exists in the type-config map, but remove the type
+    // config anyway.
+    ICING_LOG(WARNING)
+        << "Schema type to remove '" << type_to_remove
+        << "' is in the type_config_map_ but not in the "
+           "properties_sha256_digest_map_. This should never happen.";
+    type_config_map_.erase(config_to_remove_itr);
+
+    return libtextclassifier3::Status::OK;
+  }
+
+  std::vector<std::string>& matching_types = types_vector_itr->second;
+  if (matching_types.size() <= 1) {
+    // This is the only type with this properties digest. We can safely remove
+    // the entries from both maps.
+    type_config_map_.erase(config_to_remove_itr);
+    properties_sha256_digest_map_.erase(types_vector_itr);
+    return libtextclassifier3::Status::OK;
+  }
+
+  if (matching_types.front() != type_to_remove) {
+    // The schema type config is not the canonical one that holds the property
+    // definitions. It can be safely removed from both the type-config map and
+    // the types_matching_sha_digest vector.
+    type_config_map_.erase(config_to_remove_itr);
+    // Remove the type from the sha-digest vector.
+    auto itr =
+        std::find(matching_types.begin(), matching_types.end(), type_to_remove);
+    if (itr == matching_types.end()) {
+      ICING_LOG(WARNING)
+          << "Type to remove " << type_to_remove
+          << " not found in the sha-digest vector. This should never happen.";
+    } else {
+      std::swap(*itr, matching_types.back());
+      matching_types.pop_back();
+    }
+    return libtextclassifier3::Status::OK;
+  }
+
+  // The type that we're removing is the canonical one (i.e. it's the first type
+  // in the sha-digest vector).
+  // We need to copy the property definitions to another valid type in the
+  // sha-digest vector. Use the last type in the vector.
+  const std::string& new_canonical_type = matching_types.back();
+  auto new_canonical_itr = type_config_map_.find(new_canonical_type);
+  if (new_canonical_type == type_to_remove ||
+      new_canonical_itr == type_config_map_.end()) {
+    // The last type is the type we're removing, or has already been removed.
+    // This should never happen.
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Cannot make last type in properties_sha256_digest_map_ the "
+        "new canonical type config. This should never happen. "
+        "Last type: ",
+        new_canonical_type, " Type to remove: ", type_to_remove));
+  }
+  // Copy the property definitions from the original type config to create the
+  // new canonical type config.
+  SchemaTypeConfigProto& new_canonical_proto = new_canonical_itr->second;
+  new_canonical_proto.mutable_properties()->CopyFrom(
+      config_to_remove_itr->second.properties());
+
+  // Remove the original type config from the type-config map.
+  type_config_map_.erase(config_to_remove_itr);
+
+  // Clean up the sha-digest vector by swapping the front and back elements and
+  // then popping the back.
+  std::swap(matching_types.front(), matching_types.back());
+  matching_types.pop_back();
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::StatusOr<SchemaUtil::TypeConfigInfoCache::TypeConfigHolder>
+SchemaUtil::TypeConfigInfoCache::GetFullSchemaTypeConfigHolder(
+    std::string_view schema_type) const {
+  auto type_config_itr = type_config_map_.find(
+      std::string(schema_type.data(), schema_type.size()));
+  if (type_config_itr == type_config_map_.end()) {
+    return absl_ports::NotFoundError(
+        absl_ports::StrCat("Schema type config '", schema_type, "' not found"));
+  }
+
+  const SchemaTypeConfigProto& type_config = type_config_itr->second;
+  // Schema definitions are not deduped, or the type config has already been
+  // fully defined. We can just return the type config as-is.
+  if (!enable_schema_definition_deduping_ ||
+      !type_config.properties().empty()) {
+    return TypeConfigHolder(type_config, type_config.properties());
+  }
+
+  // This type config has been deduped. Construct the full proto by looking
+  // up the properties_sha256_digest_map_.
+  ICING_ASSIGN_OR_RETURN(Sha256Digest properties_digest,
+                         SchemaUtil::GetSchemaPropertiesDigest(type_config));
+  auto duplicate_types_itr =
+      properties_sha256_digest_map_.find(properties_digest);
+  if (duplicate_types_itr == properties_sha256_digest_map_.end() ||
+      duplicate_types_itr->second.empty()) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "properties_digest for type '", schema_type,
+        "' does not exist in the properties_sha256_digest_map_. This should "
+        "never happen."));
+  }
+
+  // Return a TypeConfigHolder with references to the properties from the
+  // canonical type config.
+  auto canonical_type_config_itr =
+      type_config_map_.find(duplicate_types_itr->second.front());
+  if (canonical_type_config_itr == type_config_map_.end()) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Failed to find the canonical type config for type '", schema_type,
+        "' in the type_config_map. This should never happen."));
+  }
+
+  return TypeConfigHolder(type_config,
+                          canonical_type_config_itr->second.properties());
+}
+
+libtextclassifier3::StatusOr<const SchemaTypeConfigProto*>
+SchemaUtil::TypeConfigInfoCache::GetRawSchemaTypeConfigPointer(
+    std::string_view schema_type) const {
+  auto type_config_itr = type_config_map_.find(
+      std::string(schema_type.data(), schema_type.size()));
+  if (type_config_itr == type_config_map_.end()) {
+    return absl_ports::NotFoundError(
+        absl_ports::StrCat("Schema type config '", schema_type, "' not found"));
+  }
+
+  return &type_config_itr->second;
+}
+
+// SchemaUtil methods.
 libtextclassifier3::Status CalculateTransitiveNestedTypeRelations(
     const SchemaUtil::DependentMap& direct_nested_types_map,
     const std::unordered_set<std::string_view>& joinable_types,
@@ -1091,16 +1345,24 @@ void SchemaUtil::BuildTypeConfigMap(
     type_config_map->emplace(type_config.schema_type(), type_config);
   }
 }
+libtextclassifier3::Status SchemaUtil::BuildTypeConfigInfoCache(
+    const SchemaProto& schema,
+    SchemaUtil::TypeConfigInfoCache* type_config_info_cache) {
+  type_config_info_cache->Clear();
+  for (const SchemaTypeConfigProto& type_config : schema.types()) {
+    ICING_RETURN_IF_ERROR(type_config_info_cache->AddTypeConfig(type_config));
+  }
+  return libtextclassifier3::Status::OK;
+}
 
 SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
-    const SchemaTypeConfigProto& type_config) {
+    const google::protobuf::RepeatedPtrField<PropertyConfigProto>& properties) {
   ParsedPropertyConfigs parsed_property_configs;
 
   // TODO(cassiewang): consider caching property_config_map for some properties,
   // e.g. using LRU cache. Or changing schema.proto to use go/protomap.
-  for (int position = 0; position < type_config.properties_size(); ++position) {
-    const PropertyConfigProto& property_config =
-        type_config.properties(position);
+  for (int position = 0; position < properties.size(); ++position) {
+    const PropertyConfigProto& property_config = properties.Get(position);
     std::string_view property_name = property_config.property_name();
     parsed_property_configs.property_config_map.emplace(
         property_name, PropertyConfigInfo{&property_config, position});
@@ -1133,7 +1395,7 @@ SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
   return parsed_property_configs;
 }
 
-const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
+SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     const SchemaProto& old_schema, const SchemaProto& new_schema,
     const DependentMap& new_schema_dependent_map,
     const FeatureFlags& feature_flags) {
@@ -1165,7 +1427,7 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     }
 
     ParsedPropertyConfigs new_parsed_property_configs =
-        ParsePropertyConfigs(new_schema_type_and_config->second);
+        ParsePropertyConfigs(new_schema_type_and_config->second.properties());
 
     // We only need to check the old, existing properties to see if they're
     // compatible since we'll have old data that may be invalidated or need to
@@ -1367,6 +1629,50 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
   }
 
   return schema_delta;
+}
+
+Sha256Digest SchemaUtil::ComputeSchemaPropertiesSha256Digest(
+    const SchemaTypeConfigProto& type_config) {
+  SchemaTypeConfigProto properties_only_type_config;
+  properties_only_type_config.mutable_properties()->Add(
+      type_config.properties().begin(), type_config.properties().end());
+  std::string serialized_properties =
+      properties_only_type_config.SerializeAsString();
+  const uint8_t* properties_data =
+      reinterpret_cast<const uint8_t*>(serialized_properties.data());
+
+  Sha256 sha256;
+  sha256.Update(properties_data, serialized_properties.size());
+  return std::move(sha256).Finalize();
+}
+
+Sha256Digest SchemaUtil::PopulatePropertiesDigestField(
+    SchemaTypeConfigProto& type_config) {
+  Sha256Digest properties_sha256_digest =
+      ComputeSchemaPropertiesSha256Digest(type_config);
+  type_config.set_properties_digest(
+      reinterpret_cast<const char*>(properties_sha256_digest.data()),
+      properties_sha256_digest.size());
+
+  return properties_sha256_digest;
+}
+
+libtextclassifier3::StatusOr<Sha256Digest>
+SchemaUtil::GetSchemaPropertiesDigest(
+    const SchemaTypeConfigProto& type_config) {
+  const std::string& digest_bytes = type_config.properties_digest();
+
+  if (digest_bytes.size() == kSha256DigestBytes) {
+    Sha256Digest properties_sha256_digest;
+    std::memcpy(properties_sha256_digest.data(), digest_bytes.data(),
+                kSha256DigestBytes);
+    return properties_sha256_digest;
+  }
+
+  return absl_ports::InternalError(absl_ports::StrCat(
+      "Failed to deserialize properties_digest: stored digest is either empty "
+      "or invalid. Schema type: '",
+      type_config.schema_type(), "'."));
 }
 
 }  // namespace lib

@@ -177,7 +177,7 @@ libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<MainIndex> main_index,
       MainIndex::Create(MakeMainIndexFilepath(options.base_dir), filesystem,
-                        icing_filesystem));
+                        icing_filesystem, feature_flags));
   return std::unique_ptr<Index>(
       new Index(options, std::move(term_id_codec), std::move(lite_index),
                 std::move(main_index), filesystem, feature_flags));

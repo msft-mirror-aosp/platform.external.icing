@@ -2825,6 +2825,99 @@ TEST_F(IndexTest, PublishQueryStats) {
   EXPECT_THAT(query_stats3.lite_index_hit_buffer_unsorted_byte_size(), Eq(0));
 }
 
+class IndexUpdateChecksumEnsuresDataConsistencyTest
+    : public IndexTest,
+      public ::testing::WithParamInterface<bool> {
+ protected:
+  void SetUp() override {
+    bool enable_optimize_improvements = GetParam();
+    feature_flags_ = std::make_unique<FeatureFlags>(
+        /*enable_circular_schema_definitions=*/true,
+        /*enable_scorable_properties=*/true,
+        /*enable_repeated_field_joins=*/true,
+        /*enable_embedding_backup_generation=*/true,
+        /*enable_schema_database=*/true,
+        /*release_backup_schema_file_if_overlay_present=*/true,
+        /*enable_strict_page_byte_size_limit=*/true,
+        /*enable_smaller_decompression_buffer_size=*/true,
+        /*enable_passing_filter_to_children=*/true,
+        /*enable_proto_log_new_header_format=*/true,
+        /*enable_reusable_decompression_buffer=*/true,
+        /*enable_schema_type_id_optimization=*/true,
+        enable_optimize_improvements,
+        /*expired_document_purge_threshold_ms=*/0,
+        /*enable_non_existent_qualified_id_join=*/true,
+        /*enable_skip_set_schema_type_equality_check=*/true,
+        /*enable_embed_query_optimization=*/true,
+        /*enable_schema_definition_deduping=*/true);
+
+    index_dir_ = GetTestTempDir() + "/index_test/";
+    Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
+                           /*lite_index_sort_at_indexing=*/true,
+                           /*lite_index_sort_size=*/1024 * 8);
+    ICING_ASSERT_OK_AND_ASSIGN(
+        index_, Index::Create(options, &filesystem_, &icing_filesystem_,
+                              feature_flags_.get()));
+  }
+};
+
+TEST_P(IndexUpdateChecksumEnsuresDataConsistencyTest,
+       UpdateChecksumEnsuresDataConsistency) {
+  // 1. Add 10 hits
+  for (DocumentId doc_id = 0; doc_id < 10; ++doc_id) {
+    Index::Editor edit = index_->Edit(doc_id, kSectionId2, /*namespace_id=*/0);
+    EXPECT_THAT(edit.BufferTerm("foo", TermMatchType::EXACT_ONLY), IsOk());
+    EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+  }
+
+  // 2. Merge
+  ICING_ASSERT_OK(index_->Merge());
+
+  // 3. Add another 10 hits
+  for (DocumentId doc_id = 10; doc_id < 20; ++doc_id) {
+    Index::Editor edit = index_->Edit(doc_id, kSectionId2, /*namespace_id=*/0);
+    EXPECT_THAT(edit.BufferTerm("foo", TermMatchType::EXACT_ONLY), IsOk());
+    EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+  }
+
+  // 4. UpdateChecksum, which is what we do for PersistType::RECOVERY_PROOF of
+  // PersistToDisk.
+  index_->UpdateChecksum();
+
+  // 5. Destroy and reinitialize the index.
+  index_.reset();
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
+                         /*lite_index_sort_at_indexing=*/true,
+                         /*lite_index_sort_size=*/1024 * 8);
+  auto index_or = Index::Create(options, &filesystem_, &icing_filesystem_,
+                                feature_flags_.get());
+
+  // 6. Verify consistency.
+  if (!index_or.ok()) {
+    // If initialization fails, it means data wasn't synced and checksum
+    // mismatch occurred. This is OK, since IcingSearchEngine will try to
+    // restore the index from ground truth.
+    return;
+  }
+  index_ = std::move(index_or).ValueOrDie();
+
+  // Verify all 20 hits
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<DocHitInfo> hits,
+      GetHits("foo", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
+              TermMatchType::EXACT_ONLY));
+  ASSERT_THAT(hits, SizeIs(20));
+  for (int i = 0; i < 20; ++i) {
+    // hits[i] should be docId (19 - i)
+    EXPECT_THAT(hits[i],
+                EqualsDocHitInfo(19 - i, std::vector<SectionId>{kSectionId2}));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(IndexUpdateChecksumEnsuresDataConsistencyTest,
+                         IndexUpdateChecksumEnsuresDataConsistencyTest,
+                         ::testing::Bool());
+
 }  // namespace
 
 }  // namespace lib

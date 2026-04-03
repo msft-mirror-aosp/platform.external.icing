@@ -201,16 +201,13 @@ enum class QueryType {
 struct QueryVisitorTestParams {
   QueryType query_type;
   bool get_embedding_match_info;
-  bool enable_embedding_iterator_v2;
   bool enable_embed_query_optimization;
 
   explicit QueryVisitorTestParams(QueryType query_type,
                                   bool get_embedding_match_info,
-                                  bool enable_embedding_iterator_v2,
                                   bool enable_embed_query_optimization)
       : query_type(query_type),
         get_embedding_match_info(get_embedding_match_info),
-        enable_embedding_iterator_v2(enable_embedding_iterator_v2),
         enable_embed_query_optimization(enable_embed_query_optimization) {}
 };
 
@@ -221,17 +218,14 @@ class QueryVisitorTest
     feature_flags_ = std::make_unique<FeatureFlags>(
         FeatureFlags(/*enable_circular_schema_definitions=*/true,
                      /*enable_scorable_properties=*/true,
-                     /*enable_embedding_quantization=*/true,
                      /*enable_repeated_field_joins=*/true,
                      /*enable_embedding_backup_generation=*/true,
                      /*enable_schema_database=*/true,
                      /*release_backup_schema_file_if_overlay_present=*/true,
                      /*enable_strict_page_byte_size_limit=*/true,
                      /*enable_smaller_decompression_buffer_size=*/true,
-                     /*enable_eigen_embedding_scoring=*/true,
                      /*enable_passing_filter_to_children=*/true,
                      /*enable_proto_log_new_header_format=*/true,
-                     GetParam().enable_embedding_iterator_v2,
                      /*enable_reusable_decompression_buffer=*/true,
                      /*enable_schema_type_id_optimization=*/true,
                      /*enable_optimize_improvements=*/true,
@@ -5339,11 +5333,6 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionDeletedDocument) {
 }
 
 TEST_P(QueryVisitorTest, SemanticSearchFunctionCallStats) {
-  if (!GetParam().enable_embedding_iterator_v2) {
-    // Call stats are only populated in embedding iterator v2.
-    return;
-  }
-
   // Set up
   ICING_ASSERT_OK(schema_store_->SetSchema(
       SchemaBuilder()
@@ -5637,67 +5626,15 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(
         QueryVisitorTestParams(QueryType::kSearch,
                                /*get_embedding_match_info=*/true,
-                               /*enable_embedding_iterator_v2=*/true,
-                               /*enable_embed_query_optimization=*/false),
-        QueryVisitorTestParams(QueryType::kSearch,
-                               /*get_embedding_match_info=*/true,
-                               /*enable_embedding_iterator_v2=*/false,
                                /*enable_embed_query_optimization=*/false),
         QueryVisitorTestParams(QueryType::kSearch,
                                /*get_embedding_match_info=*/false,
-                               /*enable_embedding_iterator_v2=*/true,
-                               /*enable_embed_query_optimization=*/false),
-        QueryVisitorTestParams(QueryType::kSearch,
-                               /*get_embedding_match_info=*/false,
-                               /*enable_embedding_iterator_v2=*/false,
                                /*enable_embed_query_optimization=*/false),
         QueryVisitorTestParams(QueryType::kPlain,
                                /*get_embedding_match_info=*/true,
-                               /*enable_embedding_iterator_v2=*/true,
-                               /*enable_embed_query_optimization=*/false),
-        QueryVisitorTestParams(QueryType::kPlain,
-                               /*get_embedding_match_info=*/true,
-                               /*enable_embedding_iterator_v2=*/false,
-                               /*enable_embed_query_optimization=*/false),
-        QueryVisitorTestParams(QueryType::kPlain,
-                               /*get_embedding_match_info=*/false,
-                               /*enable_embedding_iterator_v2=*/true,
-                               /*enable_embed_query_optimization=*/false),
-        QueryVisitorTestParams(QueryType::kPlain,
-                               /*get_embedding_match_info=*/false,
-                               /*enable_embedding_iterator_v2=*/false,
-                               /*enable_embed_query_optimization=*/false),
-        QueryVisitorTestParams(QueryType::kSearch,
-                               /*get_embedding_match_info=*/true,
-                               /*enable_embedding_iterator_v2=*/true,
-                               /*enable_embed_query_optimization=*/true),
-        QueryVisitorTestParams(QueryType::kSearch,
-                               /*get_embedding_match_info=*/true,
-                               /*enable_embedding_iterator_v2=*/false,
-                               /*enable_embed_query_optimization=*/true),
-        QueryVisitorTestParams(QueryType::kSearch,
-                               /*get_embedding_match_info=*/false,
-                               /*enable_embedding_iterator_v2=*/true,
-                               /*enable_embed_query_optimization=*/true),
-        QueryVisitorTestParams(QueryType::kSearch,
-                               /*get_embedding_match_info=*/false,
-                               /*enable_embedding_iterator_v2=*/false,
-                               /*enable_embed_query_optimization=*/true),
-        QueryVisitorTestParams(QueryType::kPlain,
-                               /*get_embedding_match_info=*/true,
-                               /*enable_embedding_iterator_v2=*/true,
-                               /*enable_embed_query_optimization=*/true),
-        QueryVisitorTestParams(QueryType::kPlain,
-                               /*get_embedding_match_info=*/true,
-                               /*enable_embedding_iterator_v2=*/false,
                                /*enable_embed_query_optimization=*/true),
         QueryVisitorTestParams(QueryType::kPlain,
                                /*get_embedding_match_info=*/false,
-                               /*enable_embedding_iterator_v2=*/true,
-                               /*enable_embed_query_optimization=*/true),
-        QueryVisitorTestParams(QueryType::kPlain,
-                               /*get_embedding_match_info=*/false,
-                               /*enable_embedding_iterator_v2=*/false,
                                /*enable_embed_query_optimization=*/true)));
 
 }  // namespace

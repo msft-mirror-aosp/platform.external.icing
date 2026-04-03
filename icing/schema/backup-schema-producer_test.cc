@@ -61,15 +61,17 @@ class BackupSchemaProducerTest : public ::testing::TestWithParam<FeatureFlags> {
 
 TEST_P(BackupSchemaProducerTest, EmptySchema) {
   SchemaProto empty;
-  SchemaUtil::TypeConfigMap type_config_map;
-  SchemaUtil::BuildTypeConfigMap(empty, &type_config_map);
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  SchemaUtil::BuildTypeConfigInfoCache(empty, &type_config_info_cache);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
                                                  /*maximum_size_bytes=*/10000));
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache, type_id_mapper.get()));
 
   BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -105,8 +107,10 @@ TEST_P(BackupSchemaProducerTest, NoIndexedPropertySchema) {
                                         .SetDataType(TYPE_STRING)))
           .Build();
 
-  SchemaUtil::TypeConfigMap type_config_map;
-  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+    SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  SchemaUtil::BuildTypeConfigInfoCache(schema, &type_config_info_cache);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
@@ -115,7 +119,7 @@ TEST_P(BackupSchemaProducerTest, NoIndexedPropertySchema) {
   ASSERT_THAT(type_id_mapper->Put("TypeB", 1), IsOk());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache, type_id_mapper.get()));
 
   BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -153,8 +157,10 @@ TEST_P(BackupSchemaProducerTest, RollbackCompatibleSchema) {
                                                            TOKENIZER_VERBATIM)))
           .Build();
 
-  SchemaUtil::TypeConfigMap type_config_map;
-  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+    SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  SchemaUtil::BuildTypeConfigInfoCache(schema, &type_config_info_cache);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
@@ -163,7 +169,7 @@ TEST_P(BackupSchemaProducerTest, RollbackCompatibleSchema) {
   ASSERT_THAT(type_id_mapper->Put("TypeB", 1), IsOk());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache, type_id_mapper.get()));
 
   BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -182,8 +188,10 @@ TEST_P(BackupSchemaProducerTest, RemoveRfc822) {
                   .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_RFC822)))
           .Build();
 
-  SchemaUtil::TypeConfigMap type_config_map;
-  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+    SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  SchemaUtil::BuildTypeConfigInfoCache(schema, &type_config_info_cache);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
@@ -191,7 +199,7 @@ TEST_P(BackupSchemaProducerTest, RemoveRfc822) {
   ASSERT_THAT(type_id_mapper->Put("TypeA", 0), IsOk());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache, type_id_mapper.get()));
 
   BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -242,8 +250,10 @@ TEST_P(BackupSchemaProducerTest, MakeExtraStringIndexedPropertiesUnindexed) {
           .Build();
   SchemaProto schema = SchemaBuilder().AddType(type).Build();
 
-  SchemaUtil::TypeConfigMap type_config_map;
-  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+    SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  SchemaUtil::BuildTypeConfigInfoCache(schema, &type_config_info_cache);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
@@ -252,7 +262,7 @@ TEST_P(BackupSchemaProducerTest, MakeExtraStringIndexedPropertiesUnindexed) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache, type_id_mapper.get()));
 
   BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -324,8 +334,10 @@ TEST_P(BackupSchemaProducerTest, MakeExtraIntIndexedPropertiesUnindexed) {
           .Build();
   SchemaProto schema = SchemaBuilder().AddType(type).Build();
 
-  SchemaUtil::TypeConfigMap type_config_map;
-  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+    SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  SchemaUtil::BuildTypeConfigInfoCache(schema, &type_config_info_cache);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
@@ -334,7 +346,7 @@ TEST_P(BackupSchemaProducerTest, MakeExtraIntIndexedPropertiesUnindexed) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache, type_id_mapper.get()));
 
   BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -408,8 +420,10 @@ TEST_P(BackupSchemaProducerTest, MakeExtraDocumentIndexedPropertiesUnindexed) {
 
   SchemaProto schema = SchemaBuilder().AddType(typeA).AddType(typeB).Build();
 
-  SchemaUtil::TypeConfigMap type_config_map;
-  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+    SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  SchemaUtil::BuildTypeConfigInfoCache(schema, &type_config_info_cache);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
@@ -419,7 +433,7 @@ TEST_P(BackupSchemaProducerTest, MakeExtraDocumentIndexedPropertiesUnindexed) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache, type_id_mapper.get()));
 
   BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -492,8 +506,10 @@ TEST_P(
 
   SchemaProto schema = SchemaBuilder().AddType(typeA).AddType(typeB).Build();
 
-  SchemaUtil::TypeConfigMap type_config_map;
-  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+    SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  SchemaUtil::BuildTypeConfigInfoCache(schema, &type_config_info_cache);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
@@ -503,7 +519,7 @@ TEST_P(
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache, type_id_mapper.get()));
   ASSERT_THAT(schema_type_manager->section_manager().GetMetadataList("TypeA"),
               IsOkAndHolds(Pointee(SizeIs(18))));
 
@@ -573,8 +589,10 @@ TEST_P(BackupSchemaProducerTest, MakeRfcPropertiesUnindexedFirst) {
 
   SchemaProto schema = SchemaBuilder().AddType(typeA).Build();
 
-  SchemaUtil::TypeConfigMap type_config_map;
-  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+    SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  SchemaUtil::BuildTypeConfigInfoCache(schema, &type_config_info_cache);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
@@ -583,7 +601,7 @@ TEST_P(BackupSchemaProducerTest, MakeRfcPropertiesUnindexedFirst) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache, type_id_mapper.get()));
 
   BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -670,8 +688,10 @@ TEST_P(BackupSchemaProducerTest, MakeExtraPropertiesUnindexedMultipleTypes) {
 
   SchemaProto schema = SchemaBuilder().AddType(typeA).AddType(typeB).Build();
 
-  SchemaUtil::TypeConfigMap type_config_map;
-  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+    SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  SchemaUtil::BuildTypeConfigInfoCache(schema, &type_config_info_cache);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
@@ -681,7 +701,7 @@ TEST_P(BackupSchemaProducerTest, MakeExtraPropertiesUnindexedMultipleTypes) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache, type_id_mapper.get()));
   ASSERT_THAT(schema_type_manager->section_manager().GetMetadataList("TypeA"),
               IsOkAndHolds(Pointee(SizeIs(26))));
 
@@ -754,8 +774,10 @@ TEST_P(BackupSchemaProducerTest,
                                          EmbeddingIndexingType::LINEAR_SEARCH)))
           .Build();
 
-  SchemaUtil::TypeConfigMap type_config_map;
-  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+    SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  SchemaUtil::BuildTypeConfigInfoCache(schema, &type_config_info_cache);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
@@ -763,7 +785,7 @@ TEST_P(BackupSchemaProducerTest,
   ASSERT_THAT(type_id_mapper->Put("TypeA", 0), IsOk());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache, type_id_mapper.get()));
 
   BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -786,8 +808,10 @@ TEST_P(BackupSchemaProducerTest, RemoveEmbeddingProperty) {
                                          EmbeddingIndexingType::LINEAR_SEARCH)))
           .Build();
 
-  SchemaUtil::TypeConfigMap type_config_map;
-  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+    SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  SchemaUtil::BuildTypeConfigInfoCache(schema, &type_config_info_cache);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
@@ -795,7 +819,7 @@ TEST_P(BackupSchemaProducerTest, RemoveEmbeddingProperty) {
   ASSERT_THAT(type_id_mapper->Put("TypeA", 0), IsOk());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache, type_id_mapper.get()));
 
   BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -827,8 +851,10 @@ TEST_P(BackupSchemaProducerTest, RemoveRequiredEmbeddingProperty) {
                                          EmbeddingIndexingType::LINEAR_SEARCH)))
           .Build();
 
-  SchemaUtil::TypeConfigMap type_config_map;
-  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+    SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  SchemaUtil::BuildTypeConfigInfoCache(schema, &type_config_info_cache);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
@@ -836,7 +862,7 @@ TEST_P(BackupSchemaProducerTest, RemoveRequiredEmbeddingProperty) {
   ASSERT_THAT(type_id_mapper->Put("TypeA", 0), IsOk());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache, type_id_mapper.get()));
 
   BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -897,8 +923,10 @@ TEST_P(BackupSchemaProducerTest, RemoveEmbeddingPropertyFirst) {
 
   SchemaProto schema = SchemaBuilder().AddType(typeA).Build();
 
-  SchemaUtil::TypeConfigMap type_config_map;
-  SchemaUtil::BuildTypeConfigMap(schema, &type_config_map);
+    SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  SchemaUtil::BuildTypeConfigInfoCache(schema, &type_config_info_cache);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<DynamicTrieKeyMapper<SchemaTypeId>> type_id_mapper,
       DynamicTrieKeyMapper<SchemaTypeId>::Create(filesystem_, schema_store_dir_,
@@ -907,7 +935,7 @@ TEST_P(BackupSchemaProducerTest, RemoveEmbeddingPropertyFirst) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, type_id_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache, type_id_mapper.get()));
 
   BackupSchemaProducer backup_producer(feature_flags_.get());
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -948,17 +976,14 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(FeatureFlags(
                         /*allow_circular_schema_definitions=*/true,
                         /*enable_scorable_properties=*/true,
-                        /*enable_embedding_quantization=*/true,
                         /*enable_repeated_field_joins=*/true,
                         /*enable_embedding_backup_generation=*/false,
                         /*enable_schema_database=*/true,
                         /*release_backup_schema_file_if_overlay_present=*/true,
                         /*enable_strict_page_byte_size=*/true,
                         /*enable_smaller_decompression_buffer_size=*/true,
-                        /*enable_eigen_embedding_scoring=*/true,
                         /*enable_passing_filter_to_children=*/true,
                         /*enable_proto_log_new_header_format=*/true,
-                        /*enable_embedding_iterator_v2=*/true,
                         /*enable_reusable_decompression_buffer=*/true,
                         /*enable_schema_type_id_optimization=*/true,
                         /*enable_optimize_improvements=*/true,
@@ -970,17 +995,14 @@ INSTANTIATE_TEST_SUITE_P(
                     FeatureFlags(
                         /*allow_circular_schema_definitions=*/true,
                         /*enable_scorable_properties=*/true,
-                        /*enable_embedding_quantization=*/true,
                         /*enable_repeated_field_joins=*/true,
                         /*enable_embedding_backup_generation=*/true,
                         /*enable_schema_database=*/true,
                         /*release_backup_schema_file_if_overlay_present=*/true,
                         /*enable_strict_page_byte_size=*/true,
                         /*enable_smaller_decompression_buffer_size=*/true,
-                        /*enable_eigen_embedding_scoring=*/true,
                         /*enable_passing_filter_to_children=*/true,
                         /*enable_proto_log_new_header_format=*/true,
-                        /*enable_embedding_iterator_v2=*/true,
                         /*enable_reusable_decompression_buffer=*/true,
                         /*enable_schema_type_id_optimization=*/true,
                         /*enable_optimize_improvements=*/true,

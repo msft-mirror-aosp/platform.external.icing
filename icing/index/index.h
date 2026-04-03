@@ -314,9 +314,7 @@ class Index {
     ICING_RETURN_IF_ERROR(main_index_->AddHits(
         *term_id_codec_, std::move(outputs.backfill_map),
         std::move(term_id_hit_pairs), lite_index_->last_added_document_id()));
-    if (!feature_flags_.enable_optimize_improvements()) {
-      ICING_RETURN_IF_ERROR(main_index_->PersistToDisk());
-    }
+    ICING_RETURN_IF_ERROR(main_index_->PersistToDisk());
     return lite_index_->Reset();
   }
 

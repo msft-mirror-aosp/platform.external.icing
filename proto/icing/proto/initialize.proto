@@ -148,7 +148,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 54
+// Next tag: 56
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -288,22 +288,24 @@ message IcingSearchEngineOptions {
   // rolled out.
   optional bool enable_schema_database = 18;
 
+  // DEPRECATED: The flag is always treated as true.
   // Whether to enable embedding index.
   // If set to false, the EmbeddingIndex will only be created with a header, and
   // embedding properties will not be indexed.
   // TODO(b/326656531): Change the default value to false when the flag is
   // propagated from AppSearch.
-  optional bool enable_embedding_index = 19 [default = true];
+  optional bool enable_embedding_index = 19 [deprecated = true, default = true];
 
   // Feature flag guarding the new scorable properties feature.
   // TODO - b/357105837: Remove this flag once the feature is fully rolled out.
   optional bool enable_scorable_properties = 21;
 
+  // DEPRECATED: The flag is always treated as true.
   // Whether to enable quantization for embedding vectors.
   // If set to false, all embedding vectors will not be quantized. Otherwise,
   // quantization will be controlled by the quantization type specified in the
   // schema.
-  optional bool enable_embedding_quantization = 22;
+  optional bool enable_embedding_quantization = 22 [deprecated = true];
 
   // Level of blob_info_file_log store compression in blob store ,
   // NO_COMPRESSION = 0, BEST_SPEED = 1, BEST_COMPRESSION = 9
@@ -397,10 +399,11 @@ message IcingSearchEngineOptions {
   // If set to false, the default buffer size of 64kb will be used.
   optional bool enable_smaller_decompression_buffer_size = 39;
 
+  // DEPRECATED: The flag is always treated as true.
   // Whether to enable the Eigen library for embedding scoring.
   // If set to true **and** Eigen is compiled in (when ICING_DISABLE_EIGEN is
   // not defined), Eigen will be used for embedding scoring.
-  optional bool enable_eigen_embedding_scoring = 40;
+  optional bool enable_eigen_embedding_scoring = 40 [deprecated = true];
 
   // Whether to enable passing down filter predicates to child iterators during
   // DocHitInfo retrieval. If set to true, filter predicates may be passed to
@@ -412,10 +415,11 @@ message IcingSearchEngineOptions {
   // PortableFileBackedProtoLog.
   optional bool enable_proto_log_new_header_format = 42;
 
+  // DEPRECATED: The flag is always treated as true.
   // Whether to enable the new embedding iterator DocHitInfoIteratorEmbeddingV2.
   // This new iterator optimizes the access order of the embedding data for
   // sequential reads.
-  optional bool enable_embedding_iterator_v2 = 43;
+  optional bool enable_embedding_iterator_v2 = 43 [deprecated = true];
 
   // Whether PortableFileBackedProtoLog should retain a decompression buffer
   // that reads can reuse rather than allocating a new one for each read.
@@ -489,6 +493,23 @@ message IcingSearchEngineOptions {
   // deduped, and only one of the types will be stored with full property
   // definitions.
   optional bool enable_schema_definition_deduping = 53;
+
+  // Whether to enable database stableness logging.
+  // If set to true, Icing will log the database stableness information to a
+  // file, and inspect the log during initialization and report additional
+  // information in InitializeStatsProto.
+  //
+  // See IcingDatabaseStablenessProto for more details.
+  optional bool enable_database_stableness_log = 54;
+
+  // Whether to enable manual control of PersistToDisk in the IcingSearchEngine.
+  //
+  // Setting this flag to true prevents the IcingSearchEngine destructor from
+  // automatically calling PersistToDisk, so PersistToDisk can be fully manually
+  // controlled.
+  //
+  // Note: This flag should ONLY be enabled in tests.
+  optional bool enable_manual_persist_to_disk = 55;
 
   reserved 2, 20, 25;
 }

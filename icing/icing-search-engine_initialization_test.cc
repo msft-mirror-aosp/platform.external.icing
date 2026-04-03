@@ -123,6 +123,7 @@ using ::testing::Ne;
 using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::SizeIs;
+using ::testing::UnorderedElementsAre;
 
 // - Before we only created a marker file for set schema.
 // - Now, we switch to a general marker file for different operations that are
@@ -260,8 +261,6 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_document_store_namespace_id_fingerprint(true);
-  icing_options.set_enable_embedding_index(true);
-  icing_options.set_enable_embedding_quantization(true);
   icing_options.set_enable_blob_store(true);
   icing_options.set_enable_qualified_id_join_index_v3(true);
   icing_options.set_enable_soft_index_restoration(true);
@@ -270,6 +269,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_proto_log_new_header_format(true);
   icing_options.set_embedding_index_num_shards(32);
   icing_options.set_enable_non_existent_qualified_id_join(true);
+  icing_options.set_enable_database_stableness_log(true);
   return icing_options;
 }
 
@@ -6848,6 +6848,215 @@ TEST_F(IcingSearchEngineInitializationTest,
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
+       Initialize_defaultDatabaseStablenessLogShouldReportNothing) {
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+
+  // Initialize an empty storage. Database stableness log should be initialized
+  // with default values, so no database stableness info will be reported in
+  // InitializeStatsProto.
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  InitializeResultProto initialize_result_proto = icing.Initialize();
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(
+      initialize_result_proto.initialize_stats().last_persist_to_disk_type(),
+      Eq(PersistType::UNKNOWN));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .after_last_flush_lite_call_types(),
+              IsEmpty());
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .after_last_flush_full_call_types(),
+              IsEmpty());
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .after_last_flush_recovery_proof_call_types(),
+              IsEmpty());
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       Initialize_reportDatabaseStablenessInfo) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  FakeClock* fake_clock_ptr = fake_clock.get();
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+
+  TestIcingSearchEngine icing(icing_options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+
+  fake_clock_ptr->SetSystemTimeMilliseconds(1000);
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  fake_clock_ptr->SetSystemTimeMilliseconds(2000);
+  // Call SetSchema with PersistToDisk.
+  fake_clock_ptr->SetSystemTimeMilliseconds(3000);
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  fake_clock_ptr->SetSystemTimeMilliseconds(4000);
+  ASSERT_THAT(icing.PersistToDisk(PersistType::LITE).status(), ProtoIsOk());
+
+  // Call several write APIs without PersistToDisk.
+  fake_clock_ptr->SetSystemTimeMilliseconds(5000);
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/0")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("body", "message body")
+          .AddInt64Property("indexableInteger", 123)
+          .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  fake_clock_ptr->SetSystemTimeMilliseconds(6000);
+  UsageReport usage_report;
+  usage_report.set_document_namespace("icing");
+  usage_report.set_document_uri("fake_type/0");
+  usage_report.set_usage_timestamp_ms(
+      fake_clock_ptr->GetSystemTimeMilliseconds());
+  usage_report.set_usage_type(UsageReport::USAGE_TYPE1);
+  ASSERT_THAT(icing.ReportUsage(usage_report).status(), ProtoIsOk());
+
+  // Initialize another Icing instance. Database stableness info should be
+  // reported.
+  IcingSearchEngine another_icing(icing_options, GetTestJniCache());
+  InitializeResultProto initialize_result_proto = another_icing.Initialize();
+  EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(
+      initialize_result_proto.initialize_stats().last_persist_to_disk_type(),
+      Eq(PersistType::LITE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .after_last_flush_full_call_types(),
+              UnorderedElementsAre(
+                  IcingApiCallType::INITIALIZE, IcingApiCallType::SET_SCHEMA,
+                  IcingApiCallType::PUT, IcingApiCallType::REPORT_USAGE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .after_last_flush_recovery_proof_call_types(),
+              UnorderedElementsAre(
+                  IcingApiCallType::INITIALIZE, IcingApiCallType::SET_SCHEMA,
+                  IcingApiCallType::PUT, IcingApiCallType::REPORT_USAGE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .after_last_flush_lite_call_types(),
+              UnorderedElementsAre(IcingApiCallType::PUT,
+                                   IcingApiCallType::REPORT_USAGE));
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       Initialize_reportDatabaseStablenessInfo_skipLowerLevelPersistType) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  FakeClock* fake_clock_ptr = fake_clock.get();
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+
+  TestIcingSearchEngine icing(icing_options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+
+  fake_clock_ptr->SetSystemTimeMilliseconds(1000);
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Call SetSchema with PersistToDisk LITE.
+  fake_clock_ptr->SetSystemTimeMilliseconds(2000);
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  fake_clock_ptr->SetSystemTimeMilliseconds(3000);
+  ASSERT_THAT(icing.PersistToDisk(PersistType::LITE).status(), ProtoIsOk());
+
+  // Call:
+  // - Put
+  // - PersistToDisk RECOVERY_PROOF
+  // - ReportUsage
+  fake_clock_ptr->SetSystemTimeMilliseconds(4000);
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/0")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("body", "message body")
+          .AddInt64Property("indexableInteger", 123)
+          .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  fake_clock_ptr->SetSystemTimeMilliseconds(5000);
+  ASSERT_THAT(icing.PersistToDisk(PersistType::RECOVERY_PROOF).status(),
+              ProtoIsOk());
+
+  fake_clock_ptr->SetSystemTimeMilliseconds(6000);
+  UsageReport usage_report;
+  usage_report.set_document_namespace("icing");
+  usage_report.set_document_uri("fake_type/0");
+  usage_report.set_usage_timestamp_ms(
+      fake_clock_ptr->GetSystemTimeMilliseconds());
+  usage_report.set_usage_type(UsageReport::USAGE_TYPE1);
+  ASSERT_THAT(icing.ReportUsage(usage_report).status(), ProtoIsOk());
+
+  // Initialize another Icing instance. Even though Put and ReportUsage are
+  // called after PersistToDisk LITE, they should not be reported in lite
+  // related fields InitializeStatsProto given that there was a PersistToDisk
+  // RECOVERY_PROOF after LITE.
+  IcingSearchEngine another_icing(icing_options, GetTestJniCache());
+  InitializeResultProto initialize_result_proto = another_icing.Initialize();
+  EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(
+      initialize_result_proto.initialize_stats().last_persist_to_disk_type(),
+      Eq(PersistType::RECOVERY_PROOF));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .after_last_flush_full_call_types(),
+              UnorderedElementsAre(
+                  IcingApiCallType::INITIALIZE, IcingApiCallType::SET_SCHEMA,
+                  IcingApiCallType::PUT, IcingApiCallType::REPORT_USAGE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .after_last_flush_recovery_proof_call_types(),
+              UnorderedElementsAre(IcingApiCallType::REPORT_USAGE));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .after_last_flush_lite_call_types(),
+              IsEmpty());
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
+       Initialize_corruptedDatabaseStablenessLogShouldIgnoreError) {
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Call SetSchema with PersistToDisk.
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(icing.PersistToDisk(PersistType::RECOVERY_PROOF).status(),
+              ProtoIsOk());
+
+  // Call several write APIs without PersistToDisk.
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/0")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("body", "message body")
+          .AddInt64Property("indexableInteger", 123)
+          .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Manually corrupt the database stableness log.
+  std::string database_stableness_log_path =
+      icing_options.base_dir() + "/database_stableness_log";
+  ASSERT_TRUE(filesystem()->PWrite(
+      database_stableness_log_path.c_str(),
+      /*offset=*/0, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", /*size=*/30));
+
+  // Initialize another Icing instance. Database stableness proto cannot be
+  // parsed, but initialization should still succeed and report nothing in
+  // InitializeStatsProto.
+  IcingSearchEngine another_icing(icing_options, GetTestJniCache());
+  InitializeResultProto initialize_result_proto = another_icing.Initialize();
+  EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+  EXPECT_THAT(
+      initialize_result_proto.initialize_stats().last_persist_to_disk_type(),
+      Eq(PersistType::UNKNOWN));
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .after_last_flush_lite_call_types(),
+              IsEmpty());
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .after_last_flush_full_call_types(),
+              IsEmpty());
+  EXPECT_THAT(initialize_result_proto.initialize_stats()
+                  .after_last_flush_recovery_proof_call_types(),
+              IsEmpty());
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
        ProtoLogNewHeaderFormat_switchFlagFromOnToOffShouldDiscardUnsyncedTail) {
   SchemaProto schema =
       SchemaBuilder()
@@ -7403,8 +7612,7 @@ TEST_P(IcingSearchEngineInitializationVersionChangeTest,
             feature_flags_.get()));
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<EmbeddingIndexingHandler> embedding_indexing_handler,
-        EmbeddingIndexingHandler::Create(&fake_clock, embedding_index.get(),
-                                         /*enable_embedding_index=*/true));
+        EmbeddingIndexingHandler::Create(&fake_clock, embedding_index.get()));
     std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
     handlers.push_back(std::move(term_indexing_handler));
     handlers.push_back(std::move(integer_section_indexing_handler));
@@ -7810,268 +8018,6 @@ INSTANTIATE_TEST_SUITE_P(
     testing::Values(std::make_tuple(false, false), std::make_tuple(false, true),
                     std::make_tuple(true, false), std::make_tuple(true, true)));
 
-class IcingSearchEngineInitializationChangeEmbeddingFlagTest
-    : public IcingSearchEngineInitializationTest,
-      public ::testing::WithParamInterface<std::vector<bool>> {};
-TEST_P(IcingSearchEngineInitializationChangeEmbeddingFlagTest,
-       ChangeEnableEmbeddingIndexFlagTest) {
-  std::vector<bool> enable_embedding_index_flags = GetParam();
-
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
-              PropertyConfigBuilder()
-                  .SetName("embedding")
-                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
-                  .SetCardinality(CARDINALITY_REQUIRED)))
-          .Build();
-
-  // Create a document with an embedding.
-  DocumentProto document =
-      DocumentBuilder()
-          .SetKey("icing", "uri")
-          .SetSchema("Message")
-          .SetCreationTimestampMs(1)
-          .AddVectorProperty(
-              "embedding", CreateVector("my_model", {0.1, 0.2, 0.3, 0.4, 0.5}))
-          .Build();
-
-  // Create icing with a document that has an embedding.
-  {
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_enable_embedding_index(enable_embedding_index_flags[0]);
-    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
-                                std::make_unique<IcingFilesystem>(),
-                                std::make_unique<FakeClock>(),
-                                GetTestJniCache());
-
-    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
-    ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
-  }
-
-  // Create icing multiple times with different enable_embedding_index flags.
-  for (int i = 1; i < enable_embedding_index_flags.size(); ++i) {
-    bool flag_changed =
-        enable_embedding_index_flags[i] != enable_embedding_index_flags[i - 1];
-
-    // Ensure that the embedding index is rebuilt if the flag is changed.
-    auto mock_filesystem = std::make_unique<MockFilesystem>();
-    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
-        .WillRepeatedly(DoDefault());
-    EXPECT_CALL(*mock_filesystem,
-                DeleteDirectoryRecursively(EndsWith("/embedding_index_dir")))
-        .Times(flag_changed ? 1 : 0);
-
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_enable_embedding_index(enable_embedding_index_flags[i]);
-    TestIcingSearchEngine icing(options, std::move(mock_filesystem),
-                                std::make_unique<IcingFilesystem>(),
-                                std::make_unique<FakeClock>(),
-                                GetTestJniCache());
-    InitializeResultProto initialize_result = icing.Initialize();
-    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
-    // Ensure that the embedding index is rebuilt if the flag is changed.
-    EXPECT_THAT(initialize_result.initialize_stats()
-                    .embedding_index_restoration_cause(),
-                Eq(flag_changed ? InitializeStatsProto::FEATURE_FLAG_CHANGED
-                                : InitializeStatsProto::NONE));
-    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
-                Eq(InitializeStatsProto::NONE));
-    EXPECT_THAT(
-        initialize_result.initialize_stats().integer_index_restoration_cause(),
-        Eq(InitializeStatsProto::NONE));
-    EXPECT_THAT(initialize_result.initialize_stats()
-                    .qualified_id_join_index_restoration_cause(),
-                Eq(InitializeStatsProto::NONE));
-
-    // Write a embedding query that should match the document if the embedding
-    // index is enabled.
-    SearchSpecProto search_spec;
-    search_spec.set_query("semanticSearch(getEmbeddingParameter(0), 0)");
-    *search_spec.add_embedding_query_vectors() =
-        CreateVector("my_model", {1, 1, 1, 1, 1});
-    search_spec.set_embedding_query_metric_type(
-        SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
-    search_spec.add_enabled_features(
-        std::string(kListFilterQueryLanguageFeature));
-
-    SearchResultProto results =
-        icing.Search(search_spec, GetDefaultScoringSpec(),
-                     ResultSpecProto::default_instance());
-    EXPECT_THAT(results.status(), ProtoIsOk());
-    // The document should be returned if the embedding index is enabled.
-    if (enable_embedding_index_flags[i]) {
-      EXPECT_THAT(results.results(), SizeIs(1));
-      EXPECT_THAT(results.results(0).document(), EqualsProto(document));
-    } else {
-      EXPECT_THAT(results.results(), IsEmpty());
-    }
-  }
-}
-
-TEST_P(IcingSearchEngineInitializationChangeEmbeddingFlagTest,
-       ChangeEnableEmbeddingQuantizationFlagTest) {
-  std::vector<bool> enable_embedding_quantization_flags = GetParam();
-
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder()
-                  .SetType("Message")
-                  .AddProperty(
-                      PropertyConfigBuilder()
-                          .SetName("embeddingUnquantized")
-                          .SetDataTypeVector(
-                              EMBEDDING_INDEXING_LINEAR_SEARCH,
-                              EmbeddingIndexingConfig::QuantizationType::NONE)
-                          .SetCardinality(CARDINALITY_OPTIONAL))
-                  .AddProperty(PropertyConfigBuilder()
-                                   .SetName("embeddingQuantized")
-                                   .SetDataTypeVector(
-                                       EMBEDDING_INDEXING_LINEAR_SEARCH,
-                                       EmbeddingIndexingConfig::
-                                           QuantizationType::QUANTIZE_8_BIT)
-                                   .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build();
-
-  // If quantization is enabled, this vector will be quantized to {0, 1, 255}.
-  PropertyProto::VectorProto vector = CreateVector("my_model", {0, 1.45, 255});
-  // Create two documents with different quantization types. If quantization is
-  // enabled, then only document2's embedding will be quantized. Otherwise, both
-  // will be unquantized.
-  DocumentProto document1 =
-      DocumentBuilder()
-          .SetKey("icing", "uri1")
-          .SetSchema("Message")
-          .SetCreationTimestampMs(1)
-          .AddVectorProperty("embeddingUnquantized", vector)
-          .Build();
-  DocumentProto document2 = DocumentBuilder()
-                                .SetKey("icing", "uri2")
-                                .SetSchema("Message")
-                                .SetCreationTimestampMs(1)
-                                .AddVectorProperty("embeddingQuantized", vector)
-                                .Build();
-
-  // Create icing with a document that has an embedding.
-  {
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_enable_embedding_index(true);
-    options.set_enable_embedding_quantization(
-        enable_embedding_quantization_flags[0]);
-    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
-                                std::make_unique<IcingFilesystem>(),
-                                std::make_unique<FakeClock>(),
-                                GetTestJniCache());
-
-    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
-    ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
-    ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
-  }
-
-  // Create icing multiple times with different enable_embedding_index flags.
-  for (int i = 1; i < enable_embedding_quantization_flags.size(); ++i) {
-    bool flag_changed = enable_embedding_quantization_flags[i] !=
-                        enable_embedding_quantization_flags[i - 1];
-
-    // Ensure that the embedding index is rebuilt if the flag is changed.
-    auto mock_filesystem = std::make_unique<MockFilesystem>();
-    EXPECT_CALL(*mock_filesystem, DeleteDirectoryRecursively(_))
-        .WillRepeatedly(DoDefault());
-    EXPECT_CALL(*mock_filesystem,
-                DeleteDirectoryRecursively(EndsWith("/embedding_index_dir")))
-        .Times(flag_changed ? 1 : 0);
-
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_enable_embedding_index(true);
-    options.set_enable_embedding_quantization(
-        enable_embedding_quantization_flags[i]);
-    TestIcingSearchEngine icing(options, std::move(mock_filesystem),
-                                std::make_unique<IcingFilesystem>(),
-                                std::make_unique<FakeClock>(),
-                                GetTestJniCache());
-    InitializeResultProto initialize_result = icing.Initialize();
-    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
-    // Ensure that the embedding index is rebuilt if the flag is changed.
-    EXPECT_THAT(initialize_result.initialize_stats()
-                    .embedding_index_restoration_cause(),
-                Eq(flag_changed ? InitializeStatsProto::FEATURE_FLAG_CHANGED
-                                : InitializeStatsProto::NONE));
-    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
-                Eq(InitializeStatsProto::NONE));
-    EXPECT_THAT(
-        initialize_result.initialize_stats().integer_index_restoration_cause(),
-        Eq(InitializeStatsProto::NONE));
-    EXPECT_THAT(initialize_result.initialize_stats()
-                    .qualified_id_join_index_restoration_cause(),
-                Eq(InitializeStatsProto::NONE));
-
-    // Write an embedding query that always matches all the documents. We will
-    // check quantization by checking the scores.
-    //
-    // This query will assign a dot product score that is equal to the sum of
-    // all dimensions of the matched embedding. As a result, if quantization is
-    // enabled, the score will be 0 + 1 + 255 = 256. Otherwise, the score will
-    // be 0 + 1.45 + 255 = 256.45.
-    SearchSpecProto search_spec;
-    search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
-    *search_spec.add_embedding_query_vectors() =
-        CreateVector("my_model", {1, 1, 1});
-    search_spec.set_embedding_query_metric_type(
-        SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
-    search_spec.add_enabled_features(
-        std::string(kListFilterQueryLanguageFeature));
-    ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
-    scoring_spec.set_rank_by(
-        ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
-    // Set the advanced scoring expression to a constant so that the documents
-    // will be returned according to their order they were added.
-    scoring_spec.set_advanced_scoring_expression("0");
-    // Set the additional advanced scoring expression to check the embedding
-    // scores.
-    scoring_spec.add_additional_advanced_scoring_expressions(
-        "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))");
-
-    SearchResultProto results = icing.Search(
-        search_spec, scoring_spec, ResultSpecProto::default_instance());
-    EXPECT_THAT(results.status(), ProtoIsOk());
-    EXPECT_THAT(results.results(), SizeIs(2));
-
-    constexpr float eps = 0.0001f;
-    constexpr float unquantized_score = 256.45f;
-    constexpr float quantized_score = 256.0f;
-    EXPECT_THAT(results.results(0).document(), EqualsProto(document2));
-    if (enable_embedding_quantization_flags[i]) {
-      // When quantization is enabled, only the embedding that is configured
-      // with quantization is quantized. So only document2's embedding is
-      // quantized.
-      EXPECT_NEAR(results.results(0).additional_scores(0), quantized_score,
-                  eps);
-    } else {
-      // When quantization is disabled, all embeddings are unquantized.
-      EXPECT_NEAR(results.results(0).additional_scores(0), unquantized_score,
-                  eps);
-    }
-    // document1's embedding is always unquantized, since it is not configured
-    // to be quantized.
-    EXPECT_THAT(results.results(1).document(), EqualsProto(document1));
-    EXPECT_NEAR(results.results(1).additional_scores(0), unquantized_score,
-                eps);
-  }
-}
-
-INSTANTIATE_TEST_SUITE_P(
-    IcingSearchEngineInitializationChangeEmbeddingFlagTest,
-    IcingSearchEngineInitializationChangeEmbeddingFlagTest,
-    testing::Values(std::vector<bool>{false, true, false, true, false, true},
-                    std::vector<bool>{true, false, true, false, true, false},
-                    std::vector<bool>{false, true, true, true, false, true},
-                    std::vector<bool>{true, false, false, false, true, false},
-                    std::vector<bool>{true, true, true, true},
-                    std::vector<bool>{false, false, false, false}));
-
 class IcingSearchEngineInitializationChangeEmbeddingIndexNumShardsTest
     : public IcingSearchEngineInitializationTest,
       public ::testing::WithParamInterface<std::vector<uint32_t>> {};
@@ -8116,8 +8062,6 @@ TEST_P(IcingSearchEngineInitializationChangeEmbeddingIndexNumShardsTest,
   }
   {
     IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_enable_embedding_index(true);
-    options.set_enable_embedding_quantization(true);
     options.set_embedding_index_num_shards(num_shards[0]);
     TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
                                 std::make_unique<IcingFilesystem>(),
@@ -8143,8 +8087,6 @@ TEST_P(IcingSearchEngineInitializationChangeEmbeddingIndexNumShardsTest,
         .Times(num_shards_changed ? 1 : 0);
 
     IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_enable_embedding_index(true);
-    options.set_enable_embedding_quantization(true);
     options.set_embedding_index_num_shards(num_shards[i]);
     TestIcingSearchEngine icing(options, std::move(mock_filesystem),
                                 std::make_unique<IcingFilesystem>(),

@@ -19,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -32,6 +33,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/store/document-id.h"
+#include "icing/tokenization/language-segmenter.h"
 
 namespace icing {
 namespace lib {
@@ -46,7 +48,7 @@ class InMemoryIcingSearchEngine {
     std::optional<DocumentProto> document;
   };
 
-  InMemoryIcingSearchEngine(MonkeyTestRandomEngine *random) : random_(random) {}
+  InMemoryIcingSearchEngine(MonkeyTestRandomEngine* random);
 
   uint32_t GetNumAliveDocuments() const { return existing_doc_ids_.size(); }
 
@@ -124,23 +126,6 @@ class InMemoryIcingSearchEngine {
       const SearchSpecProto &search_spec) const;
 
  private:
-  // Does not own.
-  MonkeyTestRandomEngine *random_;
-
-  std::vector<MonkeyTokenizedDocument> documents_;
-  std::vector<DocumentId> existing_doc_ids_;
-  // A map from namespaces to uris and then from uris to internal document ids,
-  // which is used for fast lookups.
-  std::unordered_map<std::string, std::unordered_map<std::string, DocumentId>>
-      namespace_uri_docid_map;
-
-  std::unique_ptr<SchemaProto> schema_;
-  // A map that maps from (schema_type, property_name) to the corresponding
-  // PropertyConfigProto.
-  std::unordered_map<
-      std::string, std::unordered_map<std::string, const PropertyConfigProto &>>
-      property_config_map_;
-
   // Finds and returns the internal document id for the document identified by
   // the given key (namespace, uri)
   //
@@ -159,22 +144,51 @@ class InMemoryIcingSearchEngine {
       const std::string &schema_type, const std::string &property_name) const;
 
   struct PropertyIndexInfo {
-    // Whether the property is indexable.
-    bool indexable;
+    // Data type of the property.
+    PropertyConfigProto::DataType::Code data_type =
+        PropertyConfigProto::DataType::UNKNOWN;
+
     // The term match type if the property is of type string.
-    TermMatchType::Code term_match_type =
-        TermMatchType::Code::TermMatchType_Code_UNKNOWN;
+    TermMatchType::Code term_match_type = TermMatchType::UNKNOWN;
+
+    // The tokenizer type if the property is of type string.
+    StringIndexingConfig::TokenizerType::Code tokenizer_type =
+        StringIndexingConfig::TokenizerType::NONE;
+
     // The quantization type if the property is of type vector.
     EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
         EmbeddingIndexingConfig::QuantizationType::NONE;
+
+    // Whether the property is indexable.
+    bool indexable = false;
   };
   libtextclassifier3::StatusOr<PropertyIndexInfo> GetPropertyIndexInfo(
-      const std::string &schema_type,
-      const MonkeyTokenizedSection &section) const;
+      const std::string& schema_type, std::string_view property_path) const;
 
   libtextclassifier3::StatusOr<bool> DoesDocumentMatchQuery(
       const MonkeyTokenizedDocument &document,
       const SearchSpecProto &search_spec) const;
+
+  // Does not own.
+  MonkeyTestRandomEngine* random_;
+
+  // Language segmenter for tokenization.
+  std::unique_ptr<LanguageSegmenter> language_segmenter_;
+
+  std::vector<MonkeyTokenizedDocument> documents_;
+  std::vector<DocumentId> existing_doc_ids_;
+
+  // A map from namespaces to uris and then from uris to internal document ids,
+  // which is used for fast lookups.
+  std::unordered_map<std::string, std::unordered_map<std::string, DocumentId>>
+      namespace_uri_docid_map_;
+
+  std::unique_ptr<SchemaProto> schema_;
+  // A map that maps from (schema_type, property_name) to the corresponding
+  // PropertyConfigProto.
+  std::unordered_map<
+      std::string, std::unordered_map<std::string, const PropertyConfigProto&>>
+      property_config_map_;
 };
 
 }  // namespace lib

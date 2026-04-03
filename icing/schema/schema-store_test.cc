@@ -172,7 +172,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveConstructible) {
 
   // Move construct an instance of SchemaStore
   SchemaStore move_constructed_schema_store(std::move(*schema_store));
-  EXPECT_THAT(move_constructed_schema_store.GetSchema(),
+  EXPECT_THAT(move_constructed_schema_store.GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(schema))));
   EXPECT_THAT(move_constructed_schema_store.UpdateChecksum(),
               IsOkAndHolds(Eq(expected_checksum)));
@@ -224,7 +224,7 @@ TEST_F(SchemaStoreTest, SchemaStoreMoveAssignment) {
 
   // Move assign the first instance into the second one.
   *move_assigned_schema_store = std::move(*schema_store);
-  EXPECT_THAT(move_assigned_schema_store->GetSchema(),
+  EXPECT_THAT(move_assigned_schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(schema1))));
   EXPECT_THAT(move_assigned_schema_store->UpdateChecksum(),
               IsOkAndHolds(Eq(expected_checksum)));
@@ -251,7 +251,7 @@ TEST_F(SchemaStoreTest, CorruptSchemaError) {
                     schema_, /*ignore_errors_and_delete_documents=*/false),
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
     ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                               schema_store->GetSchema());
+                               schema_store->GetFileBackedSchemaProto());
     EXPECT_THAT(*actual_schema, EqualsProto(schema_));
   }
 
@@ -291,7 +291,7 @@ TEST_F(SchemaStoreTest, RecoverCorruptDerivedFileOk) {
                     schema_, /*ignore_errors_and_delete_documents=*/false),
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
     ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                               schema_store->GetSchema());
+                               schema_store->GetFileBackedSchemaProto());
     EXPECT_THAT(*actual_schema, EqualsProto(schema_));
 
     EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
@@ -327,7 +327,7 @@ TEST_F(SchemaStoreTest, RecoverCorruptDerivedFileOk) {
 
   // Everything looks fine, ground truth and derived data
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema_));
   EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
 
@@ -357,7 +357,7 @@ TEST_F(SchemaStoreTest, RecoverDiscardDerivedFilesOk) {
                     schema_, /*ignore_errors_and_delete_documents=*/false),
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
     ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                               schema_store->GetSchema());
+                               schema_store->GetFileBackedSchemaProto());
     EXPECT_THAT(*actual_schema, EqualsProto(schema_));
 
     EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
@@ -388,7 +388,7 @@ TEST_F(SchemaStoreTest, RecoverDiscardDerivedFilesOk) {
 
   // Everything looks fine, ground truth and derived data
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema_));
   EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
 
@@ -418,7 +418,7 @@ TEST_F(SchemaStoreTest, RecoverBadChecksumOk) {
                     schema_, /*ignore_errors_and_delete_documents=*/false),
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
     ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                               schema_store->GetSchema());
+                               schema_store->GetFileBackedSchemaProto());
     EXPECT_THAT(*actual_schema, EqualsProto(schema_));
 
     EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
@@ -452,7 +452,7 @@ TEST_F(SchemaStoreTest, RecoverBadChecksumOk) {
 
   // Everything looks fine, ground truth and derived data
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema_));
   EXPECT_THAT(schema_store->GetSchemaTypeId("email"), IsOkAndHolds(0));
 
@@ -474,9 +474,11 @@ TEST_F(SchemaStoreTest, CreateNoPreviousSchemaOk) {
                           feature_flags_.get()));
 
   // The apis to retrieve information about the schema should fail gracefully.
-  EXPECT_THAT(store->GetSchema(),
+  EXPECT_THAT(store->GetFileBackedSchemaProto(),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(store->GetSchemaTypeConfig("foo"),
+  EXPECT_THAT(store->GetSchemaTypeConfigPointer("foo"),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(store->GetSchemaTypeConfigHolder("foo"),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(store->GetSchemaTypeId("foo"),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
@@ -544,8 +546,15 @@ TEST_F(SchemaStoreTest, MultipleCreateOk) {
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   // Verify that our in-memory structures are ok
-  EXPECT_THAT(schema_store->GetSchemaTypeConfig("email"),
-              IsOkAndHolds(Pointee(EqualsProto(schema_.types(0)))));
+  if (!feature_flags_->enable_schema_definition_deduping()) {
+    // This method will be deprecated once the flag is fully rolled out.
+    EXPECT_THAT(schema_store->GetSchemaTypeConfigPointer("email"),
+                IsOkAndHolds(Pointee(EqualsProto(schema_.types(0)))));
+  } else {
+    EXPECT_THAT(schema_store->GetSchemaTypeConfigHolder("email"),
+                IsOkAndHolds(TypeConfigHolderEqualsProtoIgnorePropertiesDigest(
+                    schema_.types(0))));
+  }
   ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
                              schema_store->ExtractSections(document));
   EXPECT_THAT(section_group.string_sections[0].content,
@@ -572,9 +581,15 @@ TEST_F(SchemaStoreTest, MultipleCreateOk) {
                                         &fake_clock_, feature_flags_.get()));
 
   // Verify that our in-memory structures are ok
-  EXPECT_THAT(schema_store->GetSchemaTypeConfig("email"),
-              IsOkAndHolds(Pointee(EqualsProto(schema_.types(0)))));
-
+  if (!feature_flags_->enable_schema_definition_deduping()) {
+    // This method will be deprecated once the flag is fully rolled out.
+    EXPECT_THAT(schema_store->GetSchemaTypeConfigPointer("email"),
+                IsOkAndHolds(Pointee(EqualsProto(schema_.types(0)))));
+  } else {
+    EXPECT_THAT(schema_store->GetSchemaTypeConfigHolder("email"),
+                IsOkAndHolds(TypeConfigHolderEqualsProtoIgnorePropertiesDigest(
+                    schema_.types(0))));
+  }
   ICING_ASSERT_OK_AND_ASSIGN(section_group,
                              schema_store->ExtractSections(document));
   EXPECT_THAT(section_group.string_sections[0].content,
@@ -610,8 +625,10 @@ TEST_F(SchemaStoreTest, SetNewSchemaOk) {
                   schema_, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema_));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema_)));
 }
 
 TEST_F(SchemaStoreTest, SetNewSchemaInDifferentDatabaseOk) {
@@ -637,8 +654,10 @@ TEST_F(SchemaStoreTest, SetNewSchemaInDifferentDatabaseOk) {
                   db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(db1_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(db1_schema)));
   EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
 
@@ -676,8 +695,10 @@ TEST_F(SchemaStoreTest, SetNewSchemaInDifferentDatabaseOk) {
                                                       .SetType("db2/message")
                                                       .SetDatabase("db2/"))
                                          .Build();
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
   EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
   EXPECT_THAT(schema_store->GetSchema("db2/"),
@@ -703,8 +724,10 @@ TEST_F(SchemaStoreTest, SetEmptyDatabaseSchemaOk) {
                   schema, /*database=*/"",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
   EXPECT_THAT(schema_store->GetSchema(""), IsOkAndHolds(EqualsProto(schema)));
 
   // Reset the schema. This should still reset the empty schema, and replace
@@ -729,8 +752,10 @@ TEST_F(SchemaStoreTest, SetEmptyDatabaseSchemaOk) {
                   schema, /*database=*/"",
                   /*ignore_errors_and_delete_documents=*/true)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
   EXPECT_THAT(schema_store->GetSchema(""), IsOkAndHolds(EqualsProto(schema)));
 }
 
@@ -753,8 +778,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithEmptyDatabaseResetsEntireSchema) {
                   schema, /*database=*/"",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
   EXPECT_THAT(schema_store->GetSchema(""), IsOkAndHolds(EqualsProto(schema)));
 
   // Reset the schema using an empty database. This should ignore the
@@ -788,8 +815,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithEmptyDatabaseResetsEntireSchema) {
                   schema, /*database=*/"",
                   /*ignore_errors_and_delete_documents=*/true)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 
   // The empty database should be replaced by db1/ and db2/.
   EXPECT_THAT(schema_store->GetSchema(""),
@@ -835,8 +864,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithUnpopulatedDatabaseResetsEntireSchema) {
                   schema, /*database=*/"",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
   EXPECT_THAT(schema_store->GetSchema(""), IsOkAndHolds(EqualsProto(schema)));
 
   schema = SchemaBuilder()
@@ -875,8 +906,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithUnpopulatedDatabaseResetsEntireSchema) {
 
   EXPECT_THAT(schema_store->SetSchema(std::move(set_schema_request)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 
   // The empty database should be replaced by db1/ and db2/.
   EXPECT_THAT(schema_store->GetSchema(""),
@@ -917,8 +950,10 @@ TEST_F(SchemaStoreTest, SetSameSchemaOk) {
                   schema_, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema_));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema_)));
 
   // And one more for fun
   result = SchemaStore::SetSchemaResult();
@@ -926,8 +961,11 @@ TEST_F(SchemaStoreTest, SetSameSchemaOk) {
   EXPECT_THAT(schema_store->SetSchema(
                   schema_, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema_));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema_)));
 }
 
 TEST_F(SchemaStoreTest, SetSameDatabaseSchemaOk) {
@@ -985,8 +1023,10 @@ TEST_F(SchemaStoreTest, SetSameDatabaseSchemaOk) {
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema, EqualsProto(expected_full_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
 
   // Reset db1 with the same SchemaProto. The schema should be exactly the same.
   result = SchemaStore::SetSchemaResult();
@@ -997,8 +1037,10 @@ TEST_F(SchemaStoreTest, SetSameDatabaseSchemaOk) {
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   // Check the schema, this should not have changed
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
   EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
   EXPECT_THAT(schema_store->GetSchema("db2/"),
@@ -1087,8 +1129,10 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedTypesNoChange) {
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   // Verify schema.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema, EqualsProto(expected_full_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
 
   // Reset db2 with the types reordered. This should not change the existing
   // schema in any way.
@@ -1112,8 +1156,10 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedTypesNoChange) {
               IsEmpty());
 
   // Check the schema
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
   EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
 
@@ -1212,8 +1258,10 @@ TEST_F(SchemaStoreTest, SetDatabaseAddedTypesPreserveSchemaTypeIds) {
               IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
   // Verify schema.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema, EqualsProto(expected_full_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
 
   // Reset db2 and add a type. The added type should be appended to the end of
   // the SchemaProto, and SchemaTypeIds for existing types should not change.
@@ -1266,8 +1314,10 @@ TEST_F(SchemaStoreTest, SetDatabaseAddedTypesPreserveSchemaTypeIds) {
               IsEmpty());
 
   // Check the schema
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
   EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
   EXPECT_THAT(
@@ -1364,8 +1414,10 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedSchemaPreservesSchemaTypeIds) {
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   // Verify schema.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema, EqualsProto(expected_full_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
 
   // Reset db1 with the types reordered. SchemaTypeIds should not change.
   SchemaProto new_db1_schema = SchemaBuilder()
@@ -1390,8 +1442,10 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedSchemaPreservesSchemaTypeIds) {
               IsEmpty());
 
   // Check the schema
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
   EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
   EXPECT_THAT(schema_store->GetSchema("db2/"),
@@ -1440,8 +1494,10 @@ TEST_F(SchemaStoreTest,
 
   // Verify schema.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema, EqualsProto(expected_full_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
 
   // 2. In a loop, change the ordering of the types in one of the dbs, call
   // setSchema and verify that type ids remain the same.
@@ -1472,8 +1528,10 @@ TEST_F(SchemaStoreTest,
     // Verify schema
     EXPECT_THAT(schema_store->GetSchema(db_name),
                 IsOkAndHolds(EqualsProto(db_schema)));
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+    EXPECT_THAT(schema_store->GetFullSchemaProto(),
+                IsOkAndHolds(EqualsProto(expected_full_schema)));
   }
 }
 
@@ -1560,8 +1618,10 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesOk) {
           .Build();
   // Verify schema.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema, EqualsProto(expected_full_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
 
   // Reset db2 and delete some types. With the type id optimization, only the
   // last few type ids should be changed.
@@ -1599,8 +1659,10 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesOk) {
                     /*ignore_errors_and_delete_documents=*/true)),
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
     // Check the schema
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+    EXPECT_THAT(schema_store->GetFullSchemaProto(),
+                IsOkAndHolds(EqualsProto(expected_full_schema)));
     EXPECT_THAT(schema_store->GetSchema("db1/"),
                 IsOkAndHolds(EqualsProto(db1_schema)));
     EXPECT_THAT(schema_store->GetSchema("db2/"),
@@ -1646,8 +1708,10 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesOk) {
                     /*ignore_errors_and_delete_documents=*/true)),
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
     // Check the schema
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+    EXPECT_THAT(schema_store->GetFullSchemaProto(),
+                IsOkAndHolds(EqualsProto(expected_full_schema)));
     EXPECT_THAT(schema_store->GetSchema("db1/"),
                 IsOkAndHolds(EqualsProto(db1_schema)));
     EXPECT_THAT(schema_store->GetSchema("db2/"),
@@ -1698,8 +1762,10 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesWithLastTypeRemovedOk) {
                   .ok());
   // Verify schema.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema, EqualsProto(full_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(full_schema)));
 
   // Reset db2 and delete some types. With the type id optimization, only the
   // last few type ids should be changed.
@@ -1744,8 +1810,10 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesWithLastTypeRemovedOk) {
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
 
     // Check the schema
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+    EXPECT_THAT(schema_store->GetFullSchemaProto(),
+                IsOkAndHolds(EqualsProto(expected_full_schema)));
     EXPECT_THAT(
         schema_store->GetSchema("db1/"),
         IsOkAndHolds(EqualsProto(SchemaBuilder()
@@ -1817,8 +1885,10 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesWithLastTypeRemovedOk) {
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
 
     // Check the schema
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+    EXPECT_THAT(schema_store->GetFullSchemaProto(),
+                IsOkAndHolds(EqualsProto(expected_full_schema)));
     EXPECT_THAT(
         schema_store->GetSchema("db1/"),
         IsOkAndHolds(EqualsProto(SchemaBuilder()
@@ -1899,8 +1969,10 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesWithGapsOk) {
                   .ok());
   // Verify schema.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema, EqualsProto(expected_full_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
 
   // Set schema again for db2 and delete some types.
   SchemaProto db2_schema = SchemaBuilder()
@@ -1960,8 +2032,10 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesWithGapsOk) {
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
 
     // Check the schema
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+    EXPECT_THAT(schema_store->GetFullSchemaProto(),
+                IsOkAndHolds(EqualsProto(expected_full_schema)));
 
     EXPECT_THAT(schema_store->GetSchema("db1/"),
                 IsOkAndHolds(EqualsProto(SchemaBuilder()
@@ -2044,8 +2118,10 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesWithGapsOk) {
                 IsOkAndHolds(EqualsSetSchemaResult(result)));
 
     // Check the schema
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+    EXPECT_THAT(schema_store->GetFullSchemaProto(),
+                IsOkAndHolds(EqualsProto(expected_full_schema)));
 
     EXPECT_THAT(schema_store->GetSchema("db1/"),
                 IsOkAndHolds(EqualsProto(SchemaBuilder()
@@ -2186,12 +2262,12 @@ TEST_F(SchemaStoreTest, SetDatabaseRenamedTypesPreserveTypeIds) {
 
   // Verify schema.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema, EqualsProto(expected_full_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
 
   // Check the schema for each database.
-  EXPECT_THAT(schema_store->GetSchema(),
-              IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
   EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
   EXPECT_THAT(schema_store->GetSchema("db2/"),
@@ -2323,12 +2399,12 @@ TEST_F(SchemaStoreTest, SetDatabaseAddMoreTypesThanDeletedPreserveTypeIds) {
 
   // Verify schema.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema, EqualsProto(expected_full_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
 
   // Check the schema for each database.
-  EXPECT_THAT(schema_store->GetSchema(),
-              IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
   EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
   EXPECT_THAT(
@@ -2374,7 +2450,7 @@ TEST_F(SchemaStoreTest, SetEmptySchemaOk) {
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   // Verify schema.
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(schema))));
 
   // Reset to an empty schema.
@@ -2390,8 +2466,10 @@ TEST_F(SchemaStoreTest, SetEmptySchemaOk) {
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   // Check the schema. It should be empty.
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(SchemaProto()))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(SchemaProto())));
 
   EXPECT_THAT(schema_store->PersistToDisk(), IsOk());
 }
@@ -2478,8 +2556,10 @@ TEST_F(SchemaStoreTest, SetEmptySchemaClearsDatabase) {
                        .SetType("db3/message")  // SchemaTypeId 5
                        .SetDatabase("db3/"))
           .Build();
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
 
   // Set an empty schema for db2. This deletes all types from db2, and changes
   // the type ids of types from db3 because they appear after db2 in the
@@ -2551,8 +2631,10 @@ TEST_F(SchemaStoreTest, SetEmptySchemaClearsDatabase) {
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 
   // Get full schema.
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
 }
 
 TEST_F(SchemaStoreTest, SetIncompatibleSchemaOk) {
@@ -2569,8 +2651,10 @@ TEST_F(SchemaStoreTest, SetIncompatibleSchemaOk) {
                   schema_, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema_));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema_)));
 
   // Make the schema incompatible by removing a type.
   schema_.clear_types();
@@ -2640,8 +2724,10 @@ TEST_F(SchemaStoreTest, SetIncompatibleInDifferentDatabaseOk) {
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema, EqualsProto(expected_full_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
 
   // Make db2 incompatible by changing a type name
   SchemaProto db2_schema_incompatible =
@@ -2664,8 +2750,10 @@ TEST_F(SchemaStoreTest, SetIncompatibleInDifferentDatabaseOk) {
               IsOkAndHolds(EqualsSetSchemaResult(result)));
 
   // Check the schema, this should not have changed
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
   EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
   EXPECT_THAT(schema_store->GetSchema("db2/"),
@@ -2727,8 +2815,10 @@ TEST_F(SchemaStoreTest, SetInvalidInDifferentDatabaseFails) {
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema, EqualsProto(expected_full_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
 
   // Make db2 invalid by duplicating a property name
   PropertyConfigProto prop =
@@ -2751,8 +2841,10 @@ TEST_F(SchemaStoreTest, SetInvalidInDifferentDatabaseFails) {
               StatusIs(libtextclassifier3::StatusCode::ALREADY_EXISTS));
 
   // Check the schema, this should not have changed
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(expected_full_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
   EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
   EXPECT_THAT(schema_store->GetSchema("db2/"),
@@ -2846,8 +2938,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithDuplicateTypeNameAcrossDifferentDbFails) {
                   db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(db1_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(db1_schema)));
   EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
 
@@ -2866,8 +2960,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithDuplicateTypeNameAcrossDifferentDbFails) {
               StatusIs(libtextclassifier3::StatusCode::ALREADY_EXISTS));
 
   // Check schema, this should not have changed
-  EXPECT_THAT(schema_store->GetSchema(),
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(EqualsProto(db1_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(db1_schema)));
   EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
 }
@@ -2890,8 +2986,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedTypeOk) {
                   schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 
   // Add a type, shouldn't affect the index or cached SchemaTypeIds
   schema = SchemaBuilder(schema)
@@ -2905,8 +3003,11 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedTypeOk) {
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 }
 
 TEST_F(SchemaStoreTest, SetSchemaWithDeletedTypeOk) {
@@ -2930,8 +3031,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithDeletedTypeOk) {
                   schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId old_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -2966,8 +3069,11 @@ TEST_F(SchemaStoreTest, SetSchemaWithDeletedTypeOk) {
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/true),
               IsOkAndHolds(EqualsSetSchemaResult(force_result)));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 }
 
 TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
@@ -2991,8 +3097,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
                   schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 
   // Reorder the types
   SchemaProto reordered_schema =
@@ -3012,8 +3120,11 @@ TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
                                 /*ignore_errors_and_delete_documents=*/false),
         IsOkAndHolds(EqualsSetSchemaResult(result)));
 
-    ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+    ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                               schema_store->GetFileBackedSchemaProto());
     EXPECT_THAT(*actual_schema, EqualsProto(schema));
+    EXPECT_THAT(schema_store->GetFullSchemaProto(),
+                IsOkAndHolds(EqualsProto(schema)));
   } else {
     // Since we assign SchemaTypeIds based on order in the SchemaProto, this
     // will cause SchemaTypeIds to change
@@ -3029,8 +3140,11 @@ TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
         schema_store->SetSchema(reordered_schema,
                                 /*ignore_errors_and_delete_documents=*/false),
         IsOkAndHolds(EqualsSetSchemaResult(result)));
-    ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+    ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                               schema_store->GetFileBackedSchemaProto());
     EXPECT_THAT(*actual_schema, EqualsProto(reordered_schema));
+    EXPECT_THAT(schema_store->GetFullSchemaProto(),
+                IsOkAndHolds(EqualsProto(reordered_schema)));
   }
 }
 
@@ -3058,8 +3172,10 @@ TEST_F(SchemaStoreTest, IndexedPropertyChangeRequiresReindexingOk) {
                   schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 
   // Make a previously unindexed property indexed
   schema = SchemaBuilder()
@@ -3077,8 +3193,11 @@ TEST_F(SchemaStoreTest, IndexedPropertyChangeRequiresReindexingOk) {
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 }
 
 TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
@@ -3129,8 +3248,10 @@ TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
                               /*ignore_errors_and_delete_documents=*/false),
       IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(no_nested_index_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(no_nested_index_schema)));
 
   // Set schema with index_nested_properties=true and confirm that the change to
   // 'person' is index incompatible.
@@ -3141,8 +3262,11 @@ TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
       schema_store->SetSchema(nested_index_schema,
                               /*ignore_errors_and_delete_documents=*/false),
       IsOkAndHolds(EqualsSetSchemaResult(result)));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(nested_index_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(nested_index_schema)));
 
   // Set schema with index_nested_properties=false and confirm that the change
   // to 'person' is index incompatible.
@@ -3153,8 +3277,11 @@ TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
       schema_store->SetSchema(no_nested_index_schema,
                               /*ignore_errors_and_delete_documents=*/false),
       IsOkAndHolds(EqualsSetSchemaResult(result)));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(no_nested_index_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(no_nested_index_schema)));
 }
 
 TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
@@ -3181,8 +3308,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
                   schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId old_email_schema_type_id,
                              schema_store->GetSchemaTypeId("email"));
@@ -3218,8 +3347,11 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/true),
               IsOkAndHolds(EqualsSetSchemaResult(force_result)));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 }
 
 TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleNestedTypesOk) {
@@ -3279,8 +3411,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleNestedTypesOk) {
                               /*ignore_errors_and_delete_documents=*/false),
       IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(old_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(old_schema)));
 
   // 4. SetSchema should succeed with ignore_errors_and_delete_documents=true
   // and the new schema should be set
@@ -3289,8 +3423,11 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleNestedTypesOk) {
       schema_store->SetSchema(new_schema,
                               /*ignore_errors_and_delete_documents=*/true),
       IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(new_schema)));
 }
 
 TEST_F(SchemaStoreTest, SetSchemaWithIndexIncompatibleNestedTypesOk) {
@@ -3347,8 +3484,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithIndexIncompatibleNestedTypesOk) {
                               /*ignore_errors_and_delete_documents=*/false),
       IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(new_schema)));
 }
 
 TEST_F(SchemaStoreTest, SetSchemaWithCompatibleNestedTypesOk) {
@@ -3404,8 +3543,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithCompatibleNestedTypesOk) {
                   new_schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(new_schema)));
 }
 
 TEST_F(SchemaStoreTest, SetSchemaWithAddedIndexableNestedTypeOk) {
@@ -3469,8 +3610,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedIndexableNestedTypeOk) {
                   new_schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(new_schema)));
 }
 
 TEST_F(SchemaStoreTest, SetSchemaWithAddedJoinableNestedTypeOk) {
@@ -3533,8 +3676,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedJoinableNestedTypeOk) {
                   new_schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(new_schema)));
 }
 
 TEST_F(SchemaStoreTest, SetSchemaByUpdatingScorablePropertyOk) {
@@ -3574,8 +3719,10 @@ TEST_F(SchemaStoreTest, SetSchemaByUpdatingScorablePropertyOk) {
                   old_schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(old_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(old_schema)));
 
   // Set new schema.
   // The new schema adds "score" as scorable_type ENABLED from type "email".
@@ -3588,8 +3735,11 @@ TEST_F(SchemaStoreTest, SetSchemaByUpdatingScorablePropertyOk) {
   EXPECT_THAT(schema_store->SetSchema(
                   new_schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(new_expected_result)));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(new_schema)));
 }
 
 TEST_F(SchemaStoreTest,
@@ -3640,8 +3790,10 @@ TEST_F(SchemaStoreTest,
                   old_schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(old_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(old_schema)));
 
   // Set new schema.
   SchemaStore::SetSchemaResult new_expected_result;
@@ -3659,8 +3811,11 @@ TEST_F(SchemaStoreTest,
   EXPECT_THAT(schema_store->SetSchema(
                   new_schema, /*ignore_errors_and_delete_documents=*/true),
               IsOkAndHolds(EqualsSetSchemaResult(new_expected_result)));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(new_schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(new_schema)));
 }
 
 TEST_F(SchemaStoreTest, GetSchemaTypeId) {
@@ -3814,8 +3969,10 @@ TEST_F(SchemaStoreTest, UpdateChecksumAvoidsRecovery) {
   EXPECT_THAT(schema_store->GetChecksum(), IsOkAndHolds(crc));
 
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 
   // And we get the same schema back on reinitialization
   InitializeStatsProto initialize_stats;
@@ -3825,8 +3982,11 @@ TEST_F(SchemaStoreTest, UpdateChecksumAvoidsRecovery) {
                           feature_flags_.get(), &initialize_stats));
   EXPECT_THAT(initialize_stats.schema_store_recovery_cause(),
               Eq(InitializeStatsProto::NONE));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store_two->GetSchema());
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                             schema_store_two->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  EXPECT_THAT(schema_store_two->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 
   // The checksum should be the same.
   EXPECT_THAT(schema_store_two->GetChecksum(), IsOkAndHolds(crc));
@@ -3850,8 +4010,10 @@ TEST_F(SchemaStoreTest, PersistToDiskPreservesAcrossInstances) {
   ICING_EXPECT_OK(schema_store->PersistToDisk());
 
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
-                             schema_store->GetSchema());
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 
   // Modify the schema so that something different is persisted next time
   schema = SchemaBuilder(schema)
@@ -3871,8 +4033,11 @@ TEST_F(SchemaStoreTest, PersistToDiskPreservesAcrossInstances) {
                           feature_flags_.get(), &initialize_stats));
   EXPECT_THAT(initialize_stats.schema_store_recovery_cause(),
               Eq(InitializeStatsProto::NONE));
-  ICING_ASSERT_OK_AND_ASSIGN(actual_schema, schema_store->GetSchema());
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                             schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsProto(schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 }
 
 TEST_F(SchemaStoreTest, SchemaStoreStorageInfoProto) {
@@ -4944,7 +5109,7 @@ TEST_F(SchemaStoreTest, LoadsOverlaySchemaOnInit) {
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -4955,7 +5120,7 @@ TEST_F(SchemaStoreTest, LoadsOverlaySchemaOnInit) {
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                             feature_flags_.get()));
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
 
     // The overlay should exist
@@ -5015,7 +5180,7 @@ TEST_F(SchemaStoreTest, LoadsBaseSchemaWithNoOverlayOnInit) {
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5026,7 +5191,7 @@ TEST_F(SchemaStoreTest, LoadsBaseSchemaWithNoOverlayOnInit) {
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                             feature_flags_.get()));
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
 
     // Additionally, the overlay should not exist
@@ -5068,7 +5233,7 @@ TEST_F(SchemaStoreTest, LoadSchemaBackupSchemaMissing) {
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5118,7 +5283,7 @@ TEST_F(SchemaStoreTest, LoadSchemaOverlaySchemaMissing) {
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5168,7 +5333,7 @@ TEST_F(SchemaStoreTest, LoadSchemaHeaderMissing) {
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5217,7 +5382,7 @@ TEST_F(SchemaStoreTest, LoadSchemaNoOverlayHeaderMissing) {
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5258,7 +5423,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaCompatibleNoChange) {
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5273,7 +5438,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaCompatibleNoChange) {
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                             feature_flags_.get()));
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 }
@@ -5301,7 +5466,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaUpgradeNoChange) {
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5316,7 +5481,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaUpgradeNoChange) {
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                             feature_flags_.get()));
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 }
@@ -5344,7 +5509,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaVersionZeroUpgradeNoChange) {
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5360,7 +5525,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaVersionZeroUpgradeNoChange) {
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                             feature_flags_.get()));
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 }
@@ -5389,7 +5554,7 @@ TEST_F(SchemaStoreTest,
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5418,7 +5583,7 @@ TEST_F(SchemaStoreTest,
                              .SetDataType(TYPE_STRING))
             .Build();
     SchemaProto base_schema = SchemaBuilder().AddType(other_type_a).Build();
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(base_schema))));
   }
 }
@@ -5446,7 +5611,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollbackKeepsCompatibleOverlaySchema) {
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5464,7 +5629,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollbackKeepsCompatibleOverlaySchema) {
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                             feature_flags_.get()));
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 }
@@ -5489,7 +5654,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollforwardRetainsBaseSchema) {
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5519,7 +5684,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollforwardRetainsBaseSchema) {
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                             feature_flags_.get()));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(base_schema))));
   }
 
@@ -5536,7 +5701,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollforwardRetainsBaseSchema) {
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                             feature_flags_.get()));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(base_schema))));
   }
 }
@@ -5561,7 +5726,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollforwardRetainsOverlaySchema) {
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5580,7 +5745,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollforwardRetainsOverlaySchema) {
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                             feature_flags_.get()));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5597,7 +5762,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollforwardRetainsOverlaySchema) {
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                             feature_flags_.get()));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 }
@@ -5623,7 +5788,7 @@ TEST_F(SchemaStoreTest,
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5652,7 +5817,7 @@ TEST_F(SchemaStoreTest,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                             feature_flags_.get()));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(base_schema))));
   }
 }
@@ -5677,7 +5842,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaVersionUndeterminedDiscardsOverlaySchema) {
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema))));
   }
 
@@ -5706,7 +5871,7 @@ TEST_F(SchemaStoreTest, MigrateSchemaVersionUndeterminedDiscardsOverlaySchema) {
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
                             feature_flags_.get()));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(base_schema))));
   }
 }
@@ -6133,7 +6298,7 @@ TEST_P(SchemaStoreTestWithParam, MigrateSchemaWithDatabaseMigration) {
     ICING_ASSERT_OK(schema_store->SetSchema(
         schema_no_database, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(schema_no_database))));
   }
 
@@ -6190,7 +6355,7 @@ TEST_P(SchemaStoreTestWithParam, MigrateSchemaWithDatabaseMigration) {
       // For these cases, the overlay schema is discarded and we fall back to
       // the backup schema (no rfc version).
       EXPECT_THAT(
-          schema_store->GetSchema(),
+          schema_store->GetFileBackedSchemaProto(),
           IsOkAndHolds(Pointee(EqualsProto(full_schema_with_database_no_rfc))));
       EXPECT_THAT(schema_store->GetSchema("db1/"),
                   IsOkAndHolds(EqualsProto(db1_schema_no_rfc)));
@@ -6198,7 +6363,7 @@ TEST_P(SchemaStoreTestWithParam, MigrateSchemaWithDatabaseMigration) {
                   IsOkAndHolds(EqualsProto(db2_schema)));
     } else {
       EXPECT_THAT(
-          schema_store->GetSchema(),
+          schema_store->GetFileBackedSchemaProto(),
           IsOkAndHolds(Pointee(EqualsProto(full_schema_with_database_rfc))));
       EXPECT_THAT(schema_store->GetSchema("db1/"),
                   IsOkAndHolds(EqualsProto(db1_schema_rfc)));
@@ -6275,7 +6440,7 @@ TEST_P(SchemaStoreTestWithParam,
     ICING_ASSERT_OK(schema_store->SetSchema(
         original_schema, /*ignore_errors_and_delete_documents=*/false));
 
-    EXPECT_THAT(schema_store->GetSchema(),
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                 IsOkAndHolds(Pointee(EqualsProto(original_schema))));
   }
 
@@ -6298,12 +6463,12 @@ TEST_P(SchemaStoreTestWithParam,
         GetParam() == version_util::StateChange::kUndetermined) {
       // For these cases, the overlay schema is discarded and we fall back to
       // the backup schema (no rfc version).
-      EXPECT_THAT(schema_store->GetSchema(),
+      EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                   IsOkAndHolds(Pointee(EqualsProto(backup_schema))));
       EXPECT_THAT(schema_store->GetSchema("db"),
                   StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
     } else {
-      EXPECT_THAT(schema_store->GetSchema(),
+      EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
                   IsOkAndHolds(Pointee(EqualsProto(original_schema))));
       EXPECT_THAT(schema_store->GetSchema("db"),
                   StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));

@@ -35,6 +35,7 @@
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/feature-flags.h"
+#include "icing/file/database-stableness-log.h"
 #include "icing/file/derived-file-util.h"
 #include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
@@ -142,6 +143,9 @@ constexpr std::string_view kOptimizeStatusFilename = "optimize_status";
 // - In order to make the change compatible with old versions for possible
 //   AppSearch mainline rollback, let's keep the old marker file name.
 constexpr std::string_view kGeneralMarkerFilename = "set_schema_marker";
+
+constexpr std::string_view kDatabaseStablenessLogFilename =
+    "database_stableness_log";
 
 // The maximum number of unsuccessful initialization attempts from the current
 // state that we will tolerate before deleting all data and starting from a
@@ -379,6 +383,10 @@ std::string MakeGeneralMarkerFilePath(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kGeneralMarkerFilename);
 }
 
+std::string MakeDatabaseStablenessLogFilePath(const std::string& base_dir) {
+  return absl_ports::StrCat(base_dir, "/", kDatabaseStablenessLogFilename);
+}
+
 InitializeStatsProto::RecoveryCause TranslateMarkerProtoToRecoveryCause(
     const IcingSearchEngineMarkerProto& marker_proto) {
   switch (marker_proto.operation_type()) {
@@ -480,6 +488,95 @@ int64_t GetTimeSinceLastOptimizeMs(int64_t new_optimize_start_time_ms,
                   last_attemped_optimize_time);
 }
 
+PersistType::Code GetLastPersistToDiskType(
+    const IcingDatabaseStablenessProto& proto) {
+  PersistType::Code last_persist_type = PersistType::UNKNOWN;
+  int64_t largest_ts_ms = 0;
+
+  // LITE
+  if (proto.last_flush_lite_timestamp_ms() > largest_ts_ms) {
+    last_persist_type = PersistType::LITE;
+    largest_ts_ms = proto.last_flush_lite_timestamp_ms();
+  }
+
+  // FULL
+  if (proto.last_flush_full_timestamp_ms() > largest_ts_ms) {
+    last_persist_type = PersistType::FULL;
+    largest_ts_ms = proto.last_flush_full_timestamp_ms();
+  }
+
+  // RECOVERY_PROOF
+  if (proto.last_flush_recovery_proof_timestamp_ms() > largest_ts_ms) {
+    last_persist_type = PersistType::RECOVERY_PROOF;
+    largest_ts_ms = proto.last_flush_recovery_proof_timestamp_ms();
+  }
+
+  if (proto.last_flush_shutdown_timestamp_ms() > largest_ts_ms) {
+    last_persist_type = PersistType::SHUTDOWN;
+    largest_ts_ms = proto.last_flush_shutdown_timestamp_ms();
+  }
+
+  if (proto.last_flush_destructor_timestamp_ms() > largest_ts_ms) {
+    last_persist_type = PersistType::DESTRUCTOR;
+    largest_ts_ms = proto.last_flush_destructor_timestamp_ms();
+  }
+
+  return last_persist_type;
+}
+
+// Helper method to report database stableness stats to InitializeStatsProto.
+//
+// REQUIRES: initialize_stats is not nullptr.
+void ReportDatabaseStablenessStats(const IcingDatabaseStablenessProto& proto,
+                                   InitializeStatsProto* initialize_stats) {
+  initialize_stats->set_last_persist_to_disk_type(
+      GetLastPersistToDiskType(proto));
+
+  for (const auto& api_history : proto.api_history()) {
+    // Levels of flush guarantee (from the strongest to the weakest):
+    // - FULL: [FULL, DESTRUCTOR]
+    // - RECOVERY_PROOF: [RECOVERY_PROOF, SHUTDOWN]
+    // - LITE: [LITE]
+    //
+    // We need to report this API call for the missing flush level if:
+    // - The API call was made after all the last flush of the types in this
+    //   flush level.
+    // - No flush types with stronger level were made after this flush level.
+    int64_t last_full_level_ts_ms =
+        std::max(proto.last_flush_full_timestamp_ms(),
+                 proto.last_flush_destructor_timestamp_ms());
+    int64_t last_recovery_proof_level_ts_ms =
+        std::max(proto.last_flush_recovery_proof_timestamp_ms(),
+                 proto.last_flush_shutdown_timestamp_ms());
+    int64_t last_lite_level_ts_ms = proto.last_flush_lite_timestamp_ms();
+
+    // FULL level
+    if (api_history.last_call_timestamp_ms() > last_full_level_ts_ms) {
+      initialize_stats->add_after_last_flush_full_call_types(
+          api_history.call_type());
+    }
+
+    // RECOVERY_PROOF level
+    if (api_history.last_call_timestamp_ms() >
+            last_recovery_proof_level_ts_ms &&
+        last_recovery_proof_level_ts_ms >= last_full_level_ts_ms) {
+      initialize_stats->add_after_last_flush_recovery_proof_call_types(
+          api_history.call_type());
+    }
+
+    // LITE level
+    if (api_history.last_call_timestamp_ms() > last_lite_level_ts_ms &&
+        last_lite_level_ts_ms >=
+            std::max(last_full_level_ts_ms, last_recovery_proof_level_ts_ms)) {
+      initialize_stats->add_after_last_flush_lite_call_types(
+          api_history.call_type());
+    }
+  }
+
+  // No need to check SHUTDOWN and DESTRUCTOR because it is impossible to have
+  // any API calls after shutting down or Icing destructor.
+}
+
 }  // namespace
 
 IcingSearchEngine::IcingSearchEngine(const IcingSearchEngineOptions& options,
@@ -496,17 +593,14 @@ IcingSearchEngine::IcingSearchEngine(
     : options_(std::move(options)),
       feature_flags_(options_.allow_circular_schema_definitions(),
                      options_.enable_scorable_properties(),
-                     options_.enable_embedding_quantization(),
                      options_.enable_repeated_field_joins(),
                      options_.enable_embedding_backup_generation(),
                      options_.enable_schema_database(),
                      options_.release_backup_schema_file_if_overlay_present(),
                      options_.enable_strict_page_byte_size_limit(),
                      options_.enable_smaller_decompression_buffer_size(),
-                     options_.enable_eigen_embedding_scoring(),
                      options_.enable_passing_filter_to_children(),
                      options_.enable_proto_log_new_header_format(),
-                     options_.enable_embedding_iterator_v2(),
                      options_.enable_reusable_decompression_buffer(),
                      options_.enable_schema_type_id_optimization(),
                      options_.enable_optimize_improvements(),
@@ -526,8 +620,9 @@ IcingSearchEngine::~IcingSearchEngine() {
   // Stop all scheduled background tasks before persisting to disk.
   DestroyTaskScheduler();
 
-  if (initialized_) {
-    if (PersistToDisk(PersistType::FULL).status().code() != StatusProto::OK) {
+  if (initialized_ && !options_.enable_manual_persist_to_disk()) {
+    if (PersistToDisk(PersistType::DESTRUCTOR).status().code() !=
+        StatusProto::OK) {
       ICING_LOG(ERROR)
           << "Error persisting to disk in IcingSearchEngine destructor";
     } else {
@@ -570,6 +665,7 @@ InitializeResultProto IcingSearchEngine::Initialize() {
 void IcingSearchEngine::ResetMembersLocked() {
   // Reset all members in the reverse order of their initialization to ensure
   // the dependencies are not violated.
+  database_stableness_log_.reset();
   embedding_index_.reset();
   qualified_id_join_index_.reset();
   integer_index_.reset();
@@ -711,6 +807,11 @@ InitializeResultProto IcingSearchEngine::InitializeLocked() {
       }
     }
   }
+
+  // TODO(b/439850795): write database stableness log for INITIALIZE only if
+  //   the database has been changed.
+  WriteDatabaseStablenessLog(IcingApiCallType::INITIALIZE);
+
   TransformStatus(status, result_status);
   initialize_stats->set_latency_ms(initialize_timer->GetElapsedMilliseconds());
   return result_proto;
@@ -725,6 +826,26 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
         InitializeStatsProto::FailureStage::BASE_DIRECTORY_CREATION);
     return absl_ports::InternalError(absl_ports::StrCat(
         "Could not create directory: ", options_.base_dir()));
+  }
+
+  if (options_.enable_database_stableness_log()) {
+    // Initialize and inspect database stableness log. Log and skip the error.
+    auto database_stableness_log_or = DatabaseStablenessLog::Create(
+        filesystem_.get(),
+        MakeDatabaseStablenessLogFilePath(options_.base_dir()));
+    if (!database_stableness_log_or.ok()) {
+      ICING_LOG(WARNING)
+          << "Failed to initialize database stableness log. Error: "
+          << database_stableness_log_or.status().error_code() << ", message: "
+          << database_stableness_log_or.status().error_message();
+    } else {
+      database_stableness_log_ =
+          std::move(database_stableness_log_or).ValueOrDie();
+      if (initialize_stats != nullptr) {
+        ReportDatabaseStablenessStats(
+            database_stableness_log_->GetCachedProto(), initialize_stats);
+      }
+    }
   }
 
   // Check to see if the init marker file exists and if we've already passed our
@@ -873,7 +994,8 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   normalizer_ = std::move(normalizer_or).ValueOrDie();
 
   libtextclassifier3::Status index_init_status;
-  if (absl_ports::IsNotFound(schema_store_->GetSchema().status())) {
+  if (absl_ports::IsNotFound(
+          schema_store_->GetFileBackedSchemaProto().status())) {
     // Case 1: schema not found.
     //
     // - The schema was either lost or never set before.
@@ -1674,6 +1796,10 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
     result_status->set_message("Schema is incompatible.");
   }
 
+  // TODO(b/439850795): write database stableness log for SET_SCHEMA only if
+  //   the database has been changed.
+  WriteDatabaseStablenessLog(IcingApiCallType::SET_SCHEMA);
+
   return result_proto;
 }
 
@@ -1688,15 +1814,29 @@ GetSchemaResultProto IcingSearchEngine::GetSchema() {
     return result_proto;
   }
 
-  auto schema_or = schema_store_->GetSchema();
-  if (!schema_or.ok()) {
-    TransformStatus(schema_or.status(), result_status);
+  if (!feature_flags_.enable_schema_definition_deduping()) {
+    // When schema definition deduping is disabled, GetFileBackedSchemaProto
+    // returns the full schema proto with all the properties.
+    auto schema_or = schema_store_->GetFileBackedSchemaProto();
+    if (!schema_or.ok()) {
+      TransformStatus(schema_or.status(), result_status);
+      return result_proto;
+    }
+
+    result_status->set_code(StatusProto::OK);
+    *result_proto.mutable_schema() = *std::move(schema_or).ValueOrDie();
+    return result_proto;
+  } else {
+    auto schema_or = schema_store_->GetFullSchemaProto();
+    if (!schema_or.ok()) {
+      TransformStatus(schema_or.status(), result_status);
+      return result_proto;
+    }
+
+    result_status->set_code(StatusProto::OK);
+    *result_proto.mutable_schema() = std::move(schema_or).ValueOrDie();
     return result_proto;
   }
-
-  result_status->set_code(StatusProto::OK);
-  *result_proto.mutable_schema() = *std::move(schema_or).ValueOrDie();
-  return result_proto;
 }
 
 GetSchemaResultProto IcingSearchEngine::GetSchema(std::string_view database) {
@@ -1736,19 +1876,37 @@ GetSchemaTypeResultProto IcingSearchEngine::GetSchemaType(
     return result_proto;
   }
 
-  auto type_config_or = schema_store_->GetSchemaTypeConfig(schema_type);
-  if (!type_config_or.ok()) {
-    TransformStatus(type_config_or.status(), result_status);
+  if (!feature_flags_.enable_schema_definition_deduping()) {
+    auto type_config_or =
+        schema_store_->GetSchemaTypeConfigPointer(schema_type);
+    if (!type_config_or.ok()) {
+      TransformStatus(type_config_or.status(), result_status);
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return result_proto;
+    }
+
+    result_status->set_code(StatusProto::OK);
+    *result_proto.mutable_schema_type_config() = *(type_config_or.ValueOrDie());
+    result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
+    return result_proto;
+  } else {
+    auto type_config_or = schema_store_->GetSchemaTypeConfigHolder(schema_type);
+    if (!type_config_or.ok()) {
+      TransformStatus(type_config_or.status(), result_status);
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return result_proto;
+    }
+    result_status->set_code(StatusProto::OK);
+    *result_proto.mutable_schema_type_config() =
+        type_config_or.ValueOrDie().ToSchemaTypeConfigProto();
+    result_proto.mutable_schema_type_config()->clear_properties_digest();
     result_proto.set_vm_binder_transaction_latency_start_time_ms(
         clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
-
-  result_status->set_code(StatusProto::OK);
-  *result_proto.mutable_schema_type_config() = *(type_config_or.ValueOrDie());
-  result_proto.set_vm_binder_transaction_latency_start_time_ms(
-      clock_->GetSystemTimeMilliseconds());
-  return result_proto;
 }
 
 BatchPutResultProto IcingSearchEngine::BatchPut(
@@ -1783,6 +1941,8 @@ BatchPutResultProto IcingSearchEngine::BatchPut(
         PutLocked(std::move(document_proto),
                   current_time_ms));  // Call the locked version
   }
+
+  WriteDatabaseStablenessLog(IcingApiCallType::BATCH_PUT);
 
   if (put_document_request.persist_type() != PersistType::UNKNOWN) {
     // Measure the latency of the persist process.
@@ -1826,6 +1986,8 @@ PutResultProto IcingSearchEngine::Put(DocumentProto&& document) {
   int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
 
   PutResultProto result_proto = PutLocked(std::move(document), current_time_ms);
+
+  WriteDatabaseStablenessLog(IcingApiCallType::PUT);
   result_proto.set_vm_binder_transaction_latency_start_time_ms(
       clock_->GetSystemTimeMilliseconds());
   return result_proto;
@@ -2131,6 +2293,9 @@ ReportUsageResultProto IcingSearchEngine::ReportUsage(
 
   libtextclassifier3::Status status =
       document_store_->ReportUsage(usage_report);
+
+  WriteDatabaseStablenessLog(IcingApiCallType::REPORT_USAGE);
+
   TransformStatus(status, result_status);
   result_proto.set_vm_binder_transaction_latency_start_time_ms(
       clock_->GetSystemTimeMilliseconds());
@@ -2214,6 +2379,10 @@ DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
   delete_stats->set_num_documents_deleted(num_documents_deleted);
   delete_stats->set_latency_ms(delete_timer->GetElapsedMilliseconds());
 
+  if (num_documents_deleted > 0) {
+    WriteDatabaseStablenessLog(IcingApiCallType::DELETE);
+  }
+
   if (!status.ok()) {
     LogSeverity::Code severity = ERROR;
     if (absl_ports::IsNotFound(status)) {
@@ -2266,6 +2435,8 @@ DeleteByNamespaceResultProto IcingSearchEngine::DeleteByNamespace(
     return delete_result;
   }
 
+  WriteDatabaseStablenessLog(IcingApiCallType::DELETE_BY_NAMESPACE);
+
   result_status->set_code(StatusProto::OK);
   delete_stats->set_latency_ms(delete_timer->GetElapsedMilliseconds());
   delete_stats->set_num_documents_deleted(doc_store_result.num_docs_deleted);
@@ -2299,6 +2470,8 @@ DeleteBySchemaTypeResultProto IcingSearchEngine::DeleteBySchemaType(
     TransformStatus(doc_store_result.status, result_status);
     return delete_result;
   }
+
+  WriteDatabaseStablenessLog(IcingApiCallType::DELETE_BY_SCHEMA_TYPE);
 
   result_status->set_code(StatusProto::OK);
   delete_stats->set_latency_ms(delete_timer->GetElapsedMilliseconds());
@@ -2392,6 +2565,8 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
         TransformStatus(status, result_status);
         delete_stats->set_document_removal_latency_ms(
             component_timer->GetElapsedMilliseconds());
+        // TODO(b/439850795): handle WriteDatabaseStablenessLog for early
+        //   return.
         return result_proto;
       }
     }
@@ -2414,6 +2589,7 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
       TransformStatus(status, result_status);
       delete_stats->set_document_removal_latency_ms(
           component_timer->GetElapsedMilliseconds());
+      // TODO(b/439850795): handle WriteDatabaseStablenessLog for early return.
       return result_proto;
     }
   }
@@ -2428,10 +2604,15 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
     TransformStatus(propagated_child_docs_deleted_or.status(), result_status);
     delete_stats->set_document_removal_latency_ms(
         component_timer->GetElapsedMilliseconds());
+    // TODO(b/439850795): handle WriteDatabaseStablenessLog for early return.
     return result_proto;
   }
   num_deleted +=
       static_cast<int>(propagated_child_docs_deleted_or.ValueOrDie().size());
+
+  if (num_deleted > 0) {
+    WriteDatabaseStablenessLog(IcingApiCallType::DELETE_BY_QUERY);
+  }
 
   delete_stats->set_document_removal_latency_ms(
       component_timer->GetElapsedMilliseconds());
@@ -2816,6 +2997,9 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
                      << write_status.error_message();
   }
 
+  // TODO(b/439850795): handle WriteDatabaseStablenessLog for early return.
+  WriteDatabaseStablenessLog(IcingApiCallType::OPTIMIZE);
+
   // Flushes data to disk after doing optimization
   PersistToDiskStatsProto* after_optimize_persist_stats =
       optimize_stats->mutable_after_optimize_persist_stats();
@@ -3044,60 +3228,107 @@ libtextclassifier3::Status IcingSearchEngine::PersistToDiskLocked(
   persist_stats->set_document_store_total_persist_latency_ms(
       overall_timer->GetElapsedMilliseconds());
 
-  if (persist_type == PersistType::RECOVERY_PROOF) {
-    // Persist RECOVERY_PROOF will persist the ground truth and then update all
-    // checksums. There is no need to call document_store_->UpdateChecksum()
-    // because PersistToDisk(RECOVERY_PROOF) will update the checksum anyways.
-    overall_timer = clock_->GetNewTimer();
-    ICING_RETURN_IF_ERROR(schema_store_->UpdateChecksum());
-    persist_stats->set_schema_store_persist_latency_ms(
-        overall_timer->GetElapsedMilliseconds());
-
-    overall_timer = clock_->GetNewTimer();
-    index_->UpdateChecksum();
-    persist_stats->set_index_persist_latency_ms(
-        overall_timer->GetElapsedMilliseconds());
-
-    overall_timer = clock_->GetNewTimer();
-    ICING_RETURN_IF_ERROR(integer_index_->UpdateChecksums());
-    persist_stats->set_integer_index_persist_latency_ms(
-        overall_timer->GetElapsedMilliseconds());
-
-    overall_timer = clock_->GetNewTimer();
-    ICING_RETURN_IF_ERROR(qualified_id_join_index_->UpdateChecksums());
-    persist_stats->set_qualified_id_join_index_persist_latency_ms(
-        overall_timer->GetElapsedMilliseconds());
-
-    overall_timer = clock_->GetNewTimer();
-    ICING_RETURN_IF_ERROR(embedding_index_->UpdateChecksums());
-    persist_stats->set_embedding_index_persist_latency_ms(
-        overall_timer->GetElapsedMilliseconds());
-  } else if (persist_type == PersistType::FULL) {
-    overall_timer = clock_->GetNewTimer();
-    ICING_RETURN_IF_ERROR(schema_store_->PersistToDisk());
-    persist_stats->set_schema_store_persist_latency_ms(
-        overall_timer->GetElapsedMilliseconds());
-
-    overall_timer = clock_->GetNewTimer();
-    ICING_RETURN_IF_ERROR(index_->PersistToDisk());
-    persist_stats->set_index_persist_latency_ms(
-        overall_timer->GetElapsedMilliseconds());
-
-    overall_timer = clock_->GetNewTimer();
-    ICING_RETURN_IF_ERROR(integer_index_->PersistToDisk());
-    persist_stats->set_integer_index_persist_latency_ms(
-        overall_timer->GetElapsedMilliseconds());
-
-    overall_timer = clock_->GetNewTimer();
-    ICING_RETURN_IF_ERROR(qualified_id_join_index_->PersistToDisk());
-    persist_stats->set_qualified_id_join_index_persist_latency_ms(
-        overall_timer->GetElapsedMilliseconds());
-
-    overall_timer = clock_->GetNewTimer();
-    ICING_RETURN_IF_ERROR(embedding_index_->PersistToDisk());
-    persist_stats->set_embedding_index_persist_latency_ms(
-        overall_timer->GetElapsedMilliseconds());
+  switch (persist_type) {
+    case PersistType::RECOVERY_PROOF:
+      [[fallthrough]];
+    case PersistType::SHUTDOWN: {
+      ICING_RETURN_IF_ERROR(
+          PersistDerivedDataRecoveryProofLocked(persist_stats));
+      break;
+    }
+    case PersistType::FULL:
+      [[fallthrough]];
+    case PersistType::DESTRUCTOR: {
+      ICING_RETURN_IF_ERROR(PersistDerivedDataFullLocked(persist_stats));
+      break;
+    }
+    case PersistType::LITE: {
+      // No-op for derived files.
+      break;
+    }
+    case PersistType::UNKNOWN: {
+      ICING_LOG(WARNING) << "PersistToDisk with UNKNOWN persist type. This "
+                            "should not happen. Please check the call site to "
+                            "ensure the persist type is set correctly.";
+      break;
+    }
   }
+
+  if (options_.enable_database_stableness_log() &&
+      database_stableness_log_ != nullptr) {
+    auto log_status = database_stableness_log_->UpdatePersistToDiskHistory(
+        persist_type, clock_->GetSystemTimeMilliseconds());
+    if (!log_status.ok()) {
+      ICING_LOG(WARNING)
+          << "Failed to update database stableness log for PersistToDisk: "
+          << log_status.error_message();
+    }
+  }
+
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status
+IcingSearchEngine::PersistDerivedDataRecoveryProofLocked(
+    PersistToDiskStatsProto* persist_stats) {
+  // Persist RECOVERY_PROOF will persist the ground truth and then update
+  // all checksums. There is no need to call document_store_->UpdateChecksum()
+  // because PersistToDisk(RECOVERY_PROOF) will update the checksum anyways.
+
+  std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
+  ICING_RETURN_IF_ERROR(schema_store_->UpdateChecksum());
+  persist_stats->set_schema_store_persist_latency_ms(
+      static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
+
+  overall_timer = clock_->GetNewTimer();
+  index_->UpdateChecksum();
+  persist_stats->set_index_persist_latency_ms(
+      static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
+
+  overall_timer = clock_->GetNewTimer();
+  ICING_RETURN_IF_ERROR(integer_index_->UpdateChecksums());
+  persist_stats->set_integer_index_persist_latency_ms(
+      static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
+
+  overall_timer = clock_->GetNewTimer();
+  ICING_RETURN_IF_ERROR(qualified_id_join_index_->UpdateChecksums());
+  persist_stats->set_qualified_id_join_index_persist_latency_ms(
+      static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
+
+  overall_timer = clock_->GetNewTimer();
+  ICING_RETURN_IF_ERROR(embedding_index_->UpdateChecksums());
+  persist_stats->set_embedding_index_persist_latency_ms(
+      static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
+
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status IcingSearchEngine::PersistDerivedDataFullLocked(
+    PersistToDiskStatsProto* persist_stats) {
+  std::unique_ptr<Timer> overall_timer = clock_->GetNewTimer();
+  ICING_RETURN_IF_ERROR(schema_store_->PersistToDisk());
+  persist_stats->set_schema_store_persist_latency_ms(
+      static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
+
+  overall_timer = clock_->GetNewTimer();
+  ICING_RETURN_IF_ERROR(index_->PersistToDisk());
+  persist_stats->set_index_persist_latency_ms(
+      static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
+
+  overall_timer = clock_->GetNewTimer();
+  ICING_RETURN_IF_ERROR(integer_index_->PersistToDisk());
+  persist_stats->set_integer_index_persist_latency_ms(
+      static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
+
+  overall_timer = clock_->GetNewTimer();
+  ICING_RETURN_IF_ERROR(qualified_id_join_index_->PersistToDisk());
+  persist_stats->set_qualified_id_join_index_persist_latency_ms(
+      static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
+
+  overall_timer = clock_->GetNewTimer();
+  ICING_RETURN_IF_ERROR(embedding_index_->PersistToDisk());
+  persist_stats->set_embedding_index_persist_latency_ms(
+      static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
 
   return libtextclassifier3::Status::OK;
 }
@@ -3775,7 +4006,9 @@ BlobProto IcingSearchEngine::OpenWriteBlob(
         clock_->GetSystemTimeMilliseconds());
     return blob_proto;
   }
+
   blob_proto = blob_store_->OpenWrite(blob_handle);
+  WriteDatabaseStablenessLog(IcingApiCallType::OPEN_WRITE_BLOB);
   blob_proto.set_vm_binder_transaction_latency_start_time_ms(
       clock_->GetSystemTimeMilliseconds());
   return blob_proto;
@@ -3803,6 +4036,7 @@ BlobProto IcingSearchEngine::RemoveBlob(
     return blob_proto;
   }
   blob_proto = blob_store_->RemoveBlob(blob_handle);
+  WriteDatabaseStablenessLog(IcingApiCallType::REMOVE_BLOB);
   blob_proto.set_vm_binder_transaction_latency_start_time_ms(
       clock_->GetSystemTimeMilliseconds());
   return blob_proto;
@@ -3858,6 +4092,7 @@ BlobProto IcingSearchEngine::CommitBlob(
     return blob_proto;
   }
   blob_proto = blob_store_->CommitBlob(blob_handle);
+  WriteDatabaseStablenessLog(IcingApiCallType::COMMIT_BLOB);
   blob_proto.set_vm_binder_transaction_latency_start_time_ms(
       clock_->GetSystemTimeMilliseconds());
   return blob_proto;
@@ -3866,7 +4101,8 @@ BlobProto IcingSearchEngine::CommitBlob(
 BlobProto IcingSearchEngine::GetAllBlobInfos() {
   BlobProto blob_proto;
   StatusProto* status = blob_proto.mutable_status();
-  absl_ports::unique_lock l(&mutex_);
+  absl_ports::shared_lock l(&mutex_);
+
   if (blob_store_ == nullptr) {
     status->set_code(StatusProto::FAILED_PRECONDITION);
     status->set_message(
@@ -3913,6 +4149,7 @@ BlobProto IcingSearchEngine::PutBlobInfos(const BlobProto& blob_info_protos) {
   }
 
   result_blob_proto = blob_store_->PutBlobInfos(blob_info_protos);
+  WriteDatabaseStablenessLog(IcingApiCallType::PUT_BLOB_INFOS);
   result_blob_proto.set_vm_binder_transaction_latency_start_time_ms(
       clock_->GetSystemTimeMilliseconds());
   return result_blob_proto;
@@ -4201,7 +4438,7 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
 }
 
 libtextclassifier3::StatusOr<bool> IcingSearchEngine::LostPreviousSchema() {
-  auto status_or = schema_store_->GetSchema();
+  auto status_or = schema_store_->GetFileBackedSchemaProto();
   if (status_or.ok()) {
     // Found a schema.
     return false;
@@ -4253,10 +4490,24 @@ IcingSearchEngine::CreateDataIndexingHandlers() {
   // Embedding index handler
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<EmbeddingIndexingHandler> embedding_indexing_handler,
-      EmbeddingIndexingHandler::Create(clock_.get(), embedding_index_.get(),
-                                       options_.enable_embedding_index()));
+      EmbeddingIndexingHandler::Create(clock_.get(), embedding_index_.get()));
   handlers.push_back(std::move(embedding_indexing_handler));
   return handlers;
+}
+
+void IcingSearchEngine::WriteDatabaseStablenessLog(
+    IcingApiCallType::Code call_type) {
+  if (!options_.enable_database_stableness_log() ||
+      database_stableness_log_ == nullptr) {
+    return;
+  }
+
+  auto status = database_stableness_log_->UpdateApiHistory(
+      call_type, clock_->GetSystemTimeMilliseconds());
+  if (!status.ok()) {
+    ICING_LOG(WARNING) << "Failed to update database stableness log: "
+                       << status.error_message();
+  }
 }
 
 libtextclassifier3::StatusOr<IcingSearchEngine::TruncateIndexResult>

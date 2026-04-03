@@ -553,19 +553,16 @@ void AddEnabledFeatures(const IcingSearchEngineOptions& options,
         IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR));
   }
   // EmbeddingIndex feature
-  if (options.enable_embedding_index()) {
-    enabled_features->Add(GetFeatureInfoProto(
-        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX));
-  }
+  enabled_features->Add(GetFeatureInfoProto(
+      IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX));
+  // ScorableProperties feature
   if (options.enable_scorable_properties()) {
     enabled_features->Add(GetFeatureInfoProto(
         IcingSearchEngineFeatureInfoProto::FEATURE_SCORABLE_PROPERTIES));
   }
   // EmbeddingQuantization feature
-  if (options.enable_embedding_quantization()) {
-    enabled_features->Add(GetFeatureInfoProto(
-        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION));
-  }
+  enabled_features->Add(GetFeatureInfoProto(
+      IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION));
   // SchemaDatabase feature
   if (options.enable_schema_database()) {
     enabled_features->Add(GetFeatureInfoProto(

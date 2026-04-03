@@ -48,6 +48,7 @@ namespace icing {
 namespace lib {
 
 using ::testing::DoubleNear;
+using ::testing::EqualsProto;
 using ::testing::Matches;
 
 constexpr float kEps = 1e-6;
@@ -727,6 +728,28 @@ MATCHER_P(EqualsEmbeddingMatchSnippetProto, expected, "") {
              expected.embedding_query_vector_index() &&
          actual.embedding_query_metric_type() ==
              expected.embedding_query_metric_type();
+}
+
+// Used for matching SchemaUtil::TypeConfigInfoCache::TypeConfigHolder to a
+// SchemaTypeConfigProto.
+MATCHER_P(TypeConfigHolderEqualsProto, expected_proto, "") {
+  SchemaTypeConfigProto actual_proto = arg.base_type_config();
+  actual_proto.mutable_properties()->Clear();
+  for (const auto& property : arg.properties()) {
+    *actual_proto.add_properties() = property;
+  }
+  return Matches(EqualsProto(expected_proto))(actual_proto);
+}
+
+MATCHER_P(TypeConfigHolderEqualsProtoIgnorePropertiesDigest, expected_proto,
+          "") {
+  SchemaTypeConfigProto actual_proto = arg.base_type_config();
+  actual_proto.clear_properties_digest();
+  actual_proto.mutable_properties()->Clear();
+  for (const auto& property : arg.properties()) {
+    *actual_proto.add_properties() = property;
+  }
+  return Matches(EqualsProto(expected_proto))(actual_proto);
 }
 
 // TODO(tjbarron) Remove this once icing has switched to depend on TC3 Status
