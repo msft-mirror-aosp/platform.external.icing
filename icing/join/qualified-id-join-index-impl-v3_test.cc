@@ -25,18 +25,26 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/document-builder.h"
 #include "icing/feature-flags.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/file/persistent-storage.h"
+#include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/join/document-join-id-pair.h"
 #include "icing/join/qualified-id-join-index.h"
+#include "icing/join/qualified-id.h"
+#include "icing/portable/gzip_stream.h"
+#include "icing/schema-builder.h"
+#include "icing/schema/schema-store.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
-#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/clock.h"
 #include "icing/util/crc32.h"
+#include "icing/util/document-util.h"
 
 namespace icing {
 namespace lib {
@@ -63,36 +71,122 @@ using Crcs = PersistentStorage::Crcs;
 using Info = QualifiedIdJoinIndexImplV3::Info;
 using ArrayInfo = QualifiedIdJoinIndexImplV3::ArrayInfo;
 
-class QualifiedIdJoinIndexImplV3Test : public ::testing::Test {
+class QualifiedIdJoinIndexImplV3Test : public ::testing::TestWithParam<bool> {
  protected:
   void SetUp() override {
-    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+    feature_flags_ = std::make_unique<FeatureFlags>(
+        /*enable_circular_schema_definitions=*/true,
+        /*enable_scorable_properties=*/true,
+        /*enable_embedding_quantization=*/true,
+        /*enable_repeated_field_joins=*/true,
+        /*enable_embedding_backup_generation=*/true,
+        /*enable_schema_database=*/true,
+        /*release_backup_schema_file_if_overlay_present=*/true,
+        /*enable_strict_page_byte_size_limit=*/true,
+        /*enable_smaller_decompression_buffer_size=*/true,
+        /*enable_eigen_embedding_scoring=*/true,
+        /*enable_passing_filter_to_children=*/true,
+        /*enable_proto_log_new_header_format=*/true,
+        /*enable_embedding_iterator_v2=*/true,
+        /*enable_reusable_decompression_buffer=*/true,
+        /*enable_schema_type_id_optimization=*/true,
+        /*enable_optimize_improvements=*/true,
+        /*expired_document_purge_threshold_ms=*/0,
+        /*enable_non_existent_qualified_id_join=*/GetParam(),
+        /*enable_skip_set_schema_type_equality_check=*/true,
+        /*enable_embed_query_optimization=*/true,
+        /*enable_schema_definition_deduping=*/true);
 
     base_dir_ = GetTestTempDir() + "/icing";
+    working_path_ = base_dir_ + "/qualified_id_join_index_impl_v3";
+    document_store_dir_ = base_dir_ + "/document_store";
+    schema_store_dir_ = base_dir_ + "/schema_store";
     ASSERT_THAT(filesystem_.CreateDirectoryRecursively(base_dir_.c_str()),
                 IsTrue());
+    filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+    ICING_ASSERT_OK_AND_ASSIGN(
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &clock_, feature_flags_.get()));
+    ICING_ASSERT_OK(schema_store_->SetSchema(
+        SchemaBuilder()
+            .AddType(SchemaTypeConfigBuilder().SetType("type"))
+            .Build(),
+        /*ignore_errors_and_delete_documents=*/false));
+    ASSERT_NO_FATAL_FAILURE(CreateDocumentStore());
+  }
 
-    working_path_ = base_dir_ + "/qualified_id_join_index_impl_v3";
+  void CreateDocumentStore() {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
+    document_store_ = std::move(create_result.document_store);
+  }
+
+  void OptimizeDocumentStore() {
+    std::string optimized_document_store_dir =
+        base_dir_ + "/document_store_optimized";
+    ASSERT_THAT(filesystem_.CreateDirectoryRecursively(
+                    optimized_document_store_dir.c_str()),
+                IsTrue());
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::OptimizeResult optimize_result,
+        document_store_->OptimizeInto(
+            optimized_document_store_dir, /*lang_segmenter=*/nullptr,
+            /*potentially_optimizable_blob_handles=*/{}));
+    document_store_.reset();
+    ASSERT_THAT(filesystem_.SwapFiles(document_store_dir_.c_str(),
+                                      optimized_document_store_dir.c_str()),
+                IsTrue());
+    ASSERT_NO_FATAL_FAILURE(CreateDocumentStore());
+  }
+
+  void FillDocumentStore(int num_documents) {
+    for (int i = 0; i < num_documents; ++i) {
+      ICING_ASSERT_OK(document_store_->Put(document_util::CreateDocumentWrapper(
+          DocumentBuilder()
+              .SetKey("ns", absl_ports::StrCat("uri", std::to_string(i)))
+              .SetSchema("type")
+              .Build())));
+    }
   }
 
   void TearDown() override {
+    document_store_.reset();
+    schema_store_.reset();
     filesystem_.DeleteDirectoryRecursively(base_dir_.c_str());
   }
 
   std::unique_ptr<FeatureFlags> feature_flags_;
+  Clock clock_;
   Filesystem filesystem_;
   std::string base_dir_;
   std::string working_path_;
+  std::string document_store_dir_;
+  std::string schema_store_dir_;
+  std::unique_ptr<SchemaStore> schema_store_;
+  std::unique_ptr<DocumentStore> document_store_;
 };
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, InvalidWorkingPath) {
+TEST_P(QualifiedIdJoinIndexImplV3Test, InvalidWorkingPath) {
   EXPECT_THAT(QualifiedIdJoinIndexImplV3::Create(
                   filesystem_, "/dev/null/qualified_id_join_index_impl_v3",
                   *feature_flags_),
               StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, InitializeNewFiles) {
+TEST_P(QualifiedIdJoinIndexImplV3Test, InitializeNewFiles) {
   {
     // Create new qualified id join index
     ASSERT_FALSE(filesystem_.DirectoryExists(working_path_.c_str()));
@@ -129,8 +223,10 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, InitializeNewFiles) {
   const Crcs* crcs = reinterpret_cast<const Crcs*>(
       metadata_buffer.get() +
       QualifiedIdJoinIndexImplV3::kCrcsMetadataFileOffset);
-  // There are no data in FileBackedVectors, so storages_crc should be zero.
-  EXPECT_THAT(crcs->component_crcs.storages_crc, Eq(0));
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    // There are no data in FileBackedVectors, so storages_crc should be zero.
+    EXPECT_THAT(crcs->component_crcs.storages_crc, Eq(0));
+  }
   EXPECT_THAT(crcs->component_crcs.info_crc,
               Eq(Crc32(std::string_view(reinterpret_cast<const char*>(info),
                                         sizeof(Info)))
@@ -142,7 +238,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, InitializeNewFiles) {
                      .Get()));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        InitializationShouldFailIfMissingMetadataFile) {
   {
     DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
@@ -183,7 +279,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
           HasSubstr("Inconsistent state of qualified id join index (v3)")));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        InitializationShouldFailIfMissingParentDocumentIdToChildArrayInfoFile) {
   {
     DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
@@ -224,7 +320,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
           HasSubstr("Inconsistent state of qualified id join index (v3)")));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        InitializationShouldFailIfMissingChildDocumentJoinIdPairArrayFile) {
   {
     DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
@@ -265,7 +361,45 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
           HasSubstr("Inconsistent state of qualified id join index (v3)")));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
+       InitializationShouldFailIfMissingQualifiedIdMapperFile) {
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    return;  // This test is only relevant when the feature is enabled.
+  }
+
+  {
+    // Create new qualified id join index
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+        QualifiedIdJoinIndexImplV3::Create(filesystem_, working_path_,
+                                           *feature_flags_));
+
+    // Insert some data with a qualified id.
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(),
+        DocumentJoinIdPair(/*document_id=*/100, /*joinable_property_id=*/20),
+        /*parent_qualified_ids=*/
+        std::vector<QualifiedId>{QualifiedId("namespace", "uri")}));
+    ASSERT_THAT(index, Pointee(SizeIs(1)));
+
+    ICING_ASSERT_OK(index->PersistToDisk());
+  }
+
+  // Manually delete the parent_qualified_id_to_child_array_info directory.
+  const std::string dir_path = absl_ports::StrCat(
+      working_path_, "/parent_qualified_id_to_child_array_info");
+  ASSERT_THAT(filesystem_.DeleteDirectoryRecursively(dir_path.c_str()),
+              IsTrue());
+
+  // Attempt to create the qualified id join index. This should fail because of
+  // checksum mismatch.
+  EXPECT_THAT(QualifiedIdJoinIndexImplV3::Create(filesystem_, working_path_,
+                                                 *feature_flags_),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION,
+                       HasSubstr("Invalid storages crc")));
+}
+
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        InitializationShouldFailWithoutPersistToDiskOrDestruction) {
   DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
                                          /*joinable_property_id=*/20);
@@ -296,7 +430,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        InitializationShouldSucceedWithUpdateChecksums) {
   DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
                                          /*joinable_property_id=*/20);
@@ -334,7 +468,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
               IsOkAndHolds(ElementsAre(child_join_id_pair2)));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        InitializationShouldSucceedWithPersistToDisk) {
   DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
                                          /*joinable_property_id=*/20);
@@ -370,7 +504,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
               IsOkAndHolds(ElementsAre(child_join_id_pair2)));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        InitializationShouldSucceedAfterDestruction) {
   DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
                                          /*joinable_property_id=*/20);
@@ -411,7 +545,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
   }
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        InitializeExistingFilesWithDifferentMagicShouldFail) {
   {
     // Create new qualified id join index
@@ -465,7 +599,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
           HasSubstr("Invalid header magic for QualifiedIdJoinIndexImplV3")));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        InitializeExistingFilesWithWrongAllCrcShouldFail) {
   {
     // Create new qualified id join index
@@ -513,7 +647,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
                        HasSubstr("Invalid all crc")));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        InitializeExistingFilesWithCorruptedInfoShouldFail) {
   {
     // Create new qualified id join index
@@ -562,7 +696,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
                        HasSubstr("Invalid info crc")));
 }
 
-TEST_F(
+TEST_P(
     QualifiedIdJoinIndexImplV3Test,
     InitializeExistingFilesWithCorruptedParentDocumentIdToChildArrayInfoShouldFail) {
   {
@@ -605,7 +739,7 @@ TEST_F(
                        HasSubstr("Invalid storages crc")));
 }
 
-TEST_F(
+TEST_P(
     QualifiedIdJoinIndexImplV3Test,
     InitializeExistingFilesWithCorruptedChildDocumentJoinIdPairArrayShouldFail) {
   {
@@ -647,7 +781,7 @@ TEST_F(
                        HasSubstr("Invalid storages crc")));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, Put) {
+TEST_P(QualifiedIdJoinIndexImplV3Test, Put) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
@@ -703,7 +837,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Put) {
               IsOkAndHolds(ElementsAre(child_join_id_pair6)));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        Put_multipleParentsInASingleJoinableProperty) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
@@ -762,7 +896,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
               IsOkAndHolds(ElementsAre(child_join_id_pair1)));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        Put_multipleParentsInMultipleJoinableProperties) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
@@ -822,7 +956,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
               IsOkAndHolds(ElementsAre(child_join_id_pair1)));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        PutShouldResizeParentDocumentIdToChildArrayInfo) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
@@ -854,7 +988,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
               IsOkAndHolds(ElementsAre(child_join_id_pair)));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        PutShouldExtendChildDocumentJoinIdPairArray) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
@@ -904,7 +1038,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
               IsOkAndHolds(ElementsAre(child_join_id_pair2)));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        PutLargeParentShouldHandleAddressCorrectlyForRemap) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
@@ -946,7 +1080,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
   EXPECT_THAT(file_size_after, Gt(file_size_before));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        PutLargeNumberOfDataShouldHandleRemapAddressCorrectly) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
@@ -988,7 +1122,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
   EXPECT_THAT(index, Pointee(SizeIs(kNumChildrenToFillFbv + 1)));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, PutShouldSkipInvalidParentDocumentId) {
+TEST_P(QualifiedIdJoinIndexImplV3Test, PutShouldSkipInvalidParentDocumentId) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
@@ -1017,7 +1151,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, PutShouldSkipInvalidParentDocumentId) {
               IsOkAndHolds(ElementsAre(child_join_id_pair)));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        PutShouldReturnInvalidArgumentErrorForInvalidChild) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
@@ -1034,7 +1168,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
   EXPECT_THAT(index, Pointee(IsEmpty()));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, DocumentJoinIdPairArrayView) {
+TEST_P(QualifiedIdJoinIndexImplV3Test, DocumentJoinIdPairArrayView) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
@@ -1086,7 +1220,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, DocumentJoinIdPairArrayView) {
                                        child_join_id_pair3));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, EmptyDocumentJoinIdPairArrayView) {
+TEST_P(QualifiedIdJoinIndexImplV3Test, EmptyDocumentJoinIdPairArrayView) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
@@ -1108,7 +1242,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, EmptyDocumentJoinIdPairArrayView) {
   }
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        GetDocumentJoinIdPairArrayView_emptyIndex) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
@@ -1130,7 +1264,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
               IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(
+TEST_P(
     QualifiedIdJoinIndexImplV3Test,
     GetDocumentJoinIdPairArrayView_shouldReturnEmptyArrayViewForNonExistingLargeParent) {
   // Create new qualified id join index
@@ -1161,7 +1295,7 @@ TEST_F(
               IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(
+TEST_P(
     QualifiedIdJoinIndexImplV3Test,
     GetDocumentJoinIdPairArrayView_shouldReturnEmptyArrayViewForParentWithNoChildren) {
   // Create new qualified id join index
@@ -1188,7 +1322,7 @@ TEST_F(
               IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(
+TEST_P(
     QualifiedIdJoinIndexImplV3Test,
     GetDocumentJoinIdPairArrayView_shouldReturnInvalidArgumentErrorForInvalidParentDocumentId) {
   // Create new qualified id join index
@@ -1202,7 +1336,7 @@ TEST_F(
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, MigrateParent) {
+TEST_P(QualifiedIdJoinIndexImplV3Test, MigrateParent) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
@@ -1240,7 +1374,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, MigrateParent) {
       IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test,
+TEST_P(QualifiedIdJoinIndexImplV3Test,
        MigrateParentToLargeIdShouldHandleAddressCorrectlyForRemap) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
@@ -1293,7 +1427,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test,
   EXPECT_THAT(file_size_after, Gt(file_size_before));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, MigrateParentShouldSetDirty) {
+TEST_P(QualifiedIdJoinIndexImplV3Test, MigrateParentShouldSetDirty) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
@@ -1345,7 +1479,74 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, MigrateParentShouldSetDirty) {
   EXPECT_THAT(crc3, Eq(crc2));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, SetLastAddedDocumentId) {
+TEST_P(QualifiedIdJoinIndexImplV3Test, PutAndMigrateQualifiedId) {
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  DocumentJoinIdPair child_join_id_pair1(/*document_id=*/100,
+                                         /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair2(/*document_id=*/101,
+                                         /*joinable_property_id=*/0);
+  QualifiedId parent_qualified_id1("namespace", "uri1");
+  QualifiedId parent_qualified_id2("namespace", "uri2");
+  DocumentId parent_doc_id1 = 1;
+  DocumentId parent_doc_id2 = 2;
+  DocumentId parent_doc_id3 = 3;
+
+  auto put_status1 = index->Put(
+      document_store_.get(), child_join_id_pair1,
+      /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qualified_id1});
+  auto put_status2 = index->Put(
+      document_store_.get(), child_join_id_pair2,
+      /*parent_qualified_ids=*/
+      std::vector<QualifiedId>{parent_qualified_id1, parent_qualified_id2});
+
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    // If the flag is not enabled, Put should fail.
+    EXPECT_THAT(put_status1,
+                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+    EXPECT_THAT(put_status2,
+                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+    EXPECT_THAT(index, Pointee(IsEmpty()));
+    return;
+  }
+
+  ICING_ASSERT_OK(put_status1);
+  ICING_ASSERT_OK(put_status2);
+
+  // Sanity check after Put.
+  EXPECT_THAT(index, Pointee(SizeIs(3)));
+
+  // Migrate parent_qualified_id1 to parent_doc_id1.
+  ICING_ASSERT_OK(index->MigrateParent(parent_qualified_id1, parent_doc_id1));
+
+  // Verify that children are migrated to parent_doc_id1.
+  EXPECT_THAT(
+      index->GetDocumentJoinIdPairArrayView(parent_doc_id1),
+      IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
+
+  // Migrate parent_qualified_id2 to parent_doc_id2.
+  ICING_ASSERT_OK(index->MigrateParent(parent_qualified_id2, parent_doc_id2));
+
+  // Verify that children are migrated to parent_doc_id2.
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(parent_doc_id2),
+              IsOkAndHolds(ElementsAre(child_join_id_pair2)));
+
+  // parent_qualified_id1 and parent_qualified_id2 should still exist in the
+  // qualified id mapper. Migrating them again to another parent_doc_id should
+  // succeed.
+  ICING_ASSERT_OK(index->MigrateParent(parent_qualified_id1, parent_doc_id3));
+  EXPECT_THAT(
+      index->GetDocumentJoinIdPairArrayView(parent_doc_id3),
+      IsOkAndHolds(ElementsAre(child_join_id_pair1, child_join_id_pair2)));
+  ICING_ASSERT_OK(index->MigrateParent(parent_qualified_id2, parent_doc_id3));
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(parent_doc_id3),
+              IsOkAndHolds(ElementsAre(child_join_id_pair2)));
+}
+
+TEST_P(QualifiedIdJoinIndexImplV3Test, SetLastAddedDocumentId) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
                                  filesystem_, working_path_, *feature_flags_));
@@ -1361,7 +1562,7 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, SetLastAddedDocumentId) {
   EXPECT_THAT(index->last_added_document_id(), Eq(kNextDocumentId));
 }
 
-TEST_F(
+TEST_P(
     QualifiedIdJoinIndexImplV3Test,
     SetLastAddedDocumentIdShouldIgnoreNewDocumentIdNotGreaterThanTheCurrent) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
@@ -1379,11 +1580,14 @@ TEST_F(
   EXPECT_THAT(index->last_added_document_id(), Eq(kDocumentId));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, Optimize) {
+TEST_P(QualifiedIdJoinIndexImplV3Test, Optimize) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
                                  filesystem_, working_path_, *feature_flags_));
+
+  // Add documents for parent doc ids to the document store.
+  ASSERT_NO_FATAL_FAILURE(FillDocumentStore(/*num_documents=*/5));
 
   // Create 4 parent and 7 child documents (with N to N joins):
   // - Document 1: 101, 103, 104, 105, 107
@@ -1405,27 +1609,62 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Optimize) {
                                          /*joinable_property_id=*/0);
   DocumentJoinIdPair child_join_id_pair7(/*document_id=*/107,
                                          /*joinable_property_id=*/0);
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair1,
-                 /*parent_document_ids=*/std::vector<DocumentId>{1, 3}));
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair2,
-                 /*parent_document_ids=*/std::vector<DocumentId>{2}));
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair3,
-                 /*parent_document_ids=*/std::vector<DocumentId>{1, 2, 4}));
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair4,
-                 /*parent_document_ids=*/std::vector<DocumentId>{1}));
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair5,
-                 /*parent_document_ids=*/std::vector<DocumentId>{1, 2}));
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair6,
-                 /*parent_document_ids=*/std::vector<DocumentId>{3}));
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair7,
-                 /*parent_document_ids=*/std::vector<DocumentId>{1}));
+
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair1,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1, 3}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair2,
+                   /*parent_document_ids=*/std::vector<DocumentId>{2}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair3,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1, 2, 4}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair4,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair5,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1, 2}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair6,
+                   /*parent_document_ids=*/std::vector<DocumentId>{3}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair7,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1}));
+  } else {
+    // With the dual-tracking implementation, we need to use the Put overload
+    // that takes qualified ids to populate the qualified id mapper, which is
+    // the source of truth during Optimize().
+    QualifiedId parent_qid1("ns", "uri1");
+    QualifiedId parent_qid2("ns", "uri2");
+    QualifiedId parent_qid3("ns", "uri3");
+    QualifiedId parent_qid4("ns", "uri4");
+    ICING_ASSERT_OK(
+        index->Put(document_store_.get(), child_join_id_pair1,
+                   /*parent_qualified_ids=*/
+                   std::vector<QualifiedId>{parent_qid1, parent_qid3}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair2,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid2}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair3,
+        /*parent_qualified_ids=*/
+        std::vector<QualifiedId>{parent_qid1, parent_qid2, parent_qid4}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair4,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid1}));
+    ICING_ASSERT_OK(
+        index->Put(document_store_.get(), child_join_id_pair5,
+                   /*parent_qualified_ids=*/
+                   std::vector<QualifiedId>{parent_qid1, parent_qid2}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair6,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid3}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair7,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid1}));
+  }
 
   ASSERT_THAT(index, Pointee(SizeIs(11)));
   index->set_last_added_document_id(107);
@@ -1443,14 +1682,25 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Optimize) {
   document_id_old_to_new[105] = 14;
   document_id_old_to_new[106] = 15;
 
+  // Update the document store so that Join index can get the correct document
+  // ids for parents.
+  ICING_ASSERT_OK(document_store_->Delete("ns", "uri0", /*current_time_ms=*/0));
+  ICING_ASSERT_OK(document_store_->Delete("ns", "uri3", /*current_time_ms=*/0));
+  ASSERT_NO_FATAL_FAILURE(OptimizeDocumentStore());
+
   // Note: namespace_id_old_to_new is not used in
   // QualifiedIdJoinIndexImplV3::Optimize.
   DocumentId new_last_added_document_id = 15;
-  EXPECT_THAT(
-      index->Optimize(document_id_old_to_new, /*namespace_id_old_to_new=*/{},
-                      new_last_added_document_id),
-      IsOk());
-  EXPECT_THAT(index, Pointee(SizeIs(5)));
+  EXPECT_THAT(index->Optimize(document_store_.get(), document_id_old_to_new,
+                              /*namespace_id_old_to_new=*/{},
+                              new_last_added_document_id),
+              IsOk());
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    EXPECT_THAT(index, Pointee(SizeIs(5)));
+  } else {
+    // Join index will no longer drop join relations for non-existent parents.
+    EXPECT_THAT(index, Pointee(SizeIs(7)));
+  }
   EXPECT_THAT(index->last_added_document_id(), Eq(new_last_added_document_id));
 
   // Verify document 0 (originally document 1)
@@ -1494,7 +1744,12 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Optimize) {
       IsOk());
   index->set_last_added_document_id(16);
 
-  EXPECT_THAT(index, Pointee(SizeIs(8)));
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    EXPECT_THAT(index, Pointee(SizeIs(8)));
+  } else {
+    // Join index will no longer drop join relations for non-existent parents.
+    EXPECT_THAT(index, Pointee(SizeIs(10)));
+  }
   EXPECT_THAT(index->last_added_document_id(), Eq(16));
   EXPECT_THAT(
       index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
@@ -1511,7 +1766,15 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Optimize) {
               IsOkAndHolds(ElementsAre(another_child_join_id_pair)));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeOutOfRangeParentDocumentId) {
+TEST_P(QualifiedIdJoinIndexImplV3Test, OptimizeOutOfRangeParentDocumentId) {
+  if (feature_flags_->enable_non_existent_qualified_id_join()) {
+    // Not applicable for the dual-tracking implementation. Optimize() will use
+    // the qualified id mapper as the source of truth, and parent document ids
+    // will be read from the document store directly using qualified ids,
+    // instead of document_id_old_to_new.
+    return;
+  }
+
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
@@ -1555,18 +1818,22 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeOutOfRangeParentDocumentId) {
   // QualifiedIdJoinIndexImplV3::Optimize.
   DocumentId new_last_added_document_id = 12;
   EXPECT_THAT(
-      index->Optimize(document_id_old_to_new, /*namespace_id_old_to_new=*/{},
+      index->Optimize(document_store_.get(), document_id_old_to_new,
+                      /*namespace_id_old_to_new=*/{},
                       new_last_added_document_id),
       StatusIs(libtextclassifier3::StatusCode::INTERNAL,
                HasSubstr("Qualified id join index data parent document id is "
                          "out of range. The index may have been corrupted.")));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeOutOfRangeChildDocumentId) {
+TEST_P(QualifiedIdJoinIndexImplV3Test, OptimizeOutOfRangeChildDocumentId) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
                                  filesystem_, working_path_, *feature_flags_));
+
+  // Add documents for parent doc ids to the document store.
+  ASSERT_NO_FATAL_FAILURE(FillDocumentStore(/*num_documents=*/3));
 
   // Create 2 parent and 3 child documents (with N to N joins):
   // - Document 1: 101, 106, 108
@@ -1578,15 +1845,30 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeOutOfRangeChildDocumentId) {
                                          /*joinable_property_id=*/0);
   DocumentJoinIdPair child_join_id_pair3(/*document_id=*/108,
                                          /*joinable_property_id=*/0);
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair1,
-                 /*parent_document_ids=*/std::vector<DocumentId>{1, 2}));
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair2,
-                 /*parent_document_ids=*/std::vector<DocumentId>{1}));
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair3,
-                 /*parent_document_ids=*/std::vector<DocumentId>{1}));
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair1,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1, 2}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair2,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair3,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1}));
+  } else {
+    QualifiedId parent_qid1("ns", "uri1");
+    QualifiedId parent_qid2("ns", "uri2");
+    ICING_ASSERT_OK(
+        index->Put(document_store_.get(), child_join_id_pair1,
+                   /*parent_qualified_ids=*/
+                   std::vector<QualifiedId>{parent_qid1, parent_qid2}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair2,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid1}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair3,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid1}));
+  }
 
   ASSERT_THAT(index, Pointee(SizeIs(4)));
   index->set_last_added_document_id(120);
@@ -1602,22 +1884,31 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeOutOfRangeChildDocumentId) {
   document_id_old_to_new[101] = 11;
   document_id_old_to_new[106] = 12;
 
+  // Update the document store so that Join index can get the correct document
+  // ids for parents.
+  ICING_ASSERT_OK(document_store_->Delete("ns", "uri0", /*current_time_ms=*/0));
+  ASSERT_NO_FATAL_FAILURE(OptimizeDocumentStore());
+
   // Note: namespace_id_old_to_new is not used in
   // QualifiedIdJoinIndexImplV3::Optimize.
   DocumentId new_last_added_document_id = 12;
   EXPECT_THAT(
-      index->Optimize(document_id_old_to_new, /*namespace_id_old_to_new=*/{},
+      index->Optimize(document_store_.get(), document_id_old_to_new,
+                      /*namespace_id_old_to_new=*/{},
                       new_last_added_document_id),
       StatusIs(libtextclassifier3::StatusCode::INTERNAL,
                HasSubstr("Qualified id join index data child document id is "
                          "out of range. The index may have been corrupted.")));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeDeleteAllDocuments) {
+TEST_P(QualifiedIdJoinIndexImplV3Test, OptimizeDeleteAllDocuments) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
                                  filesystem_, working_path_, *feature_flags_));
+
+  // Add documents for parent doc ids to the document store.
+  ASSERT_NO_FATAL_FAILURE(FillDocumentStore(/*num_documents=*/5));
 
   // Create 4 parent and 7 child documents (with N to N joins):
   // - Document 1: 101, 103, 104, 105, 107
@@ -1639,27 +1930,59 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeDeleteAllDocuments) {
                                          /*joinable_property_id=*/0);
   DocumentJoinIdPair child_join_id_pair7(/*document_id=*/107,
                                          /*joinable_property_id=*/0);
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair1,
-                 /*parent_document_ids=*/std::vector<DocumentId>{1, 3}));
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair2,
-                 /*parent_document_ids=*/std::vector<DocumentId>{2}));
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair3,
-                 /*parent_document_ids=*/std::vector<DocumentId>{1, 2, 4}));
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair4,
-                 /*parent_document_ids=*/std::vector<DocumentId>{1}));
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair5,
-                 /*parent_document_ids=*/std::vector<DocumentId>{1, 2}));
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair6,
-                 /*parent_document_ids=*/std::vector<DocumentId>{3}));
-  ICING_ASSERT_OK(
-      index->Put(child_join_id_pair7,
-                 /*parent_document_ids=*/std::vector<DocumentId>{1}));
+
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair1,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1, 3}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair2,
+                   /*parent_document_ids=*/std::vector<DocumentId>{2}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair3,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1, 2, 4}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair4,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair5,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1, 2}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair6,
+                   /*parent_document_ids=*/std::vector<DocumentId>{3}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair7,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1}));
+  } else {
+    QualifiedId parent_qid1("ns", "uri1");
+    QualifiedId parent_qid2("ns", "uri2");
+    QualifiedId parent_qid3("ns", "uri3");
+    QualifiedId parent_qid4("ns", "uri4");
+    ICING_ASSERT_OK(
+        index->Put(document_store_.get(), child_join_id_pair1,
+                   /*parent_qualified_ids=*/
+                   std::vector<QualifiedId>{parent_qid1, parent_qid3}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair2,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid2}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair3,
+        /*parent_qualified_ids=*/
+        std::vector<QualifiedId>{parent_qid1, parent_qid2, parent_qid4}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair4,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid1}));
+    ICING_ASSERT_OK(
+        index->Put(document_store_.get(), child_join_id_pair5,
+                   /*parent_qualified_ids=*/
+                   std::vector<QualifiedId>{parent_qid1, parent_qid2}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair6,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid3}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair7,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid1}));
+  }
 
   ASSERT_THAT(index, Pointee(SizeIs(11)));
   index->set_last_added_document_id(107);
@@ -1668,13 +1991,22 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeDeleteAllDocuments) {
   // Delete all documents.
   std::vector<DocumentId> document_id_old_to_new(108, kInvalidDocumentId);
 
+  // Update the document store so that Join index can get the correct document
+  // ids for parents.
+  ICING_ASSERT_OK(document_store_->Delete("ns", "uri0", /*current_time_ms=*/0));
+  ICING_ASSERT_OK(document_store_->Delete("ns", "uri1", /*current_time_ms=*/0));
+  ICING_ASSERT_OK(document_store_->Delete("ns", "uri2", /*current_time_ms=*/0));
+  ICING_ASSERT_OK(document_store_->Delete("ns", "uri3", /*current_time_ms=*/0));
+  ICING_ASSERT_OK(document_store_->Delete("ns", "uri4", /*current_time_ms=*/0));
+  ASSERT_NO_FATAL_FAILURE(OptimizeDocumentStore());
+
   // Note: namespace_id_old_to_new is not used in
   // QualifiedIdJoinIndexImplV3::Optimize.
   DocumentId new_last_added_document_id = kInvalidDocumentId;
-  EXPECT_THAT(
-      index->Optimize(document_id_old_to_new, /*namespace_id_old_to_new=*/{},
-                      new_last_added_document_id),
-      IsOk());
+  EXPECT_THAT(index->Optimize(document_store_.get(), document_id_old_to_new,
+                              /*namespace_id_old_to_new=*/{},
+                              new_last_added_document_id),
+              IsOk());
   EXPECT_THAT(index, Pointee(IsEmpty()));
   EXPECT_THAT(index->last_added_document_id(), Eq(new_last_added_document_id));
   EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
@@ -1687,7 +2019,234 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, OptimizeDeleteAllDocuments) {
               IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(QualifiedIdJoinIndexImplV3Test, Clear) {
+TEST_P(QualifiedIdJoinIndexImplV3Test, OptimizeWithMissingParents) {
+  // Create new qualified id join index
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  // Add a document for the existing parent.
+  // Doc id 0: dummy
+  ICING_ASSERT_OK(document_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build())));
+  // Doc id 1
+  ICING_ASSERT_OK(document_store_->Put(
+      document_util::CreateDocumentWrapper(DocumentBuilder()
+                                               .SetKey("ns", "uri1_existing")
+                                               .SetSchema("type")
+                                               .Build())));
+
+  // Add join data with both regular and missing parents.
+  DocumentId parent_doc_id1 = 1;
+  QualifiedId parent_qid1("ns", "uri1_existing");
+  QualifiedId missing_parent_qualified_id1("namespace", "uri1_missing");
+  QualifiedId missing_parent_qualified_id2("namespace", "uri2_missing");
+
+  DocumentJoinIdPair child_join_id_pair1(/*document_id=*/101,
+                                         /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair2(/*document_id=*/102,
+                                         /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair3(/*document_id=*/103,
+                                         /*joinable_property_id=*/0);
+
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    ICING_ASSERT_OK(index->Put(
+        child_join_id_pair1,
+        /*parent_document_ids=*/std::vector<DocumentId>{parent_doc_id1}));
+  } else {
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair1,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid1}));
+  }
+  auto missing_parent1_put_status =
+      index->Put(document_store_.get(), child_join_id_pair2,
+                 /*parent_qualified_ids=*/
+                 std::vector<QualifiedId>{missing_parent_qualified_id1});
+  auto missing_parent2_put_status =
+      index->Put(document_store_.get(), child_join_id_pair3,
+                 /*parent_qualified_ids=*/
+                 std::vector<QualifiedId>{missing_parent_qualified_id1,
+                                          missing_parent_qualified_id2});
+
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    // If the flag is not enabled, put should fail.
+    EXPECT_THAT(missing_parent1_put_status,
+                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+    EXPECT_THAT(missing_parent2_put_status,
+                StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+    ASSERT_THAT(index, Pointee(SizeIs(1)));
+  } else {
+    ICING_ASSERT_OK(missing_parent1_put_status);
+    ICING_ASSERT_OK(missing_parent2_put_status);
+    ASSERT_THAT(index, Pointee(SizeIs(4)));
+  }
+  index->set_last_added_document_id(103);
+  ASSERT_THAT(index->last_added_document_id(), Eq(103));
+
+  // Remap doc ids. Delete child 102.
+  std::vector<DocumentId> document_id_old_to_new(104, kInvalidDocumentId);
+  document_id_old_to_new[1] = 0;     // parent_doc_id1 -> 0
+  document_id_old_to_new[101] = 11;  // child_join_id_pair1 -> 11
+  document_id_old_to_new[103] = 13;  // child_join_id_pair3 -> 13
+
+  // Update the document store so that Join index can get the correct document
+  // ids for parents.
+  ICING_ASSERT_OK(document_store_->Delete("ns", "uri0", /*current_time_ms=*/0));
+  ASSERT_NO_FATAL_FAILURE(OptimizeDocumentStore());
+
+  DocumentId new_last_added_document_id = 13;
+  ICING_ASSERT_OK(index->Optimize(document_store_.get(), document_id_old_to_new,
+                                  /*namespace_id_old_to_new=*/{},
+                                  new_last_added_document_id));
+
+  // Verify parent_doc_id1 (now 0).
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/0),
+              IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
+                  /*document_id=*/11, /*joinable_property_id=*/0))));
+
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    // Nothing more to check if the flag is disabled.
+    EXPECT_THAT(index, Pointee(SizeIs(1)));
+    return;
+  }
+
+  EXPECT_THAT(index, Pointee(SizeIs(3)));  // 1 from regular, 2 from missing
+
+  // Migrate missing parents and verify.
+  DocumentId new_parent_doc_id1 = 1;
+  DocumentId new_parent_doc_id2 = 2;
+  ICING_ASSERT_OK(
+      index->MigrateParent(missing_parent_qualified_id1, new_parent_doc_id1));
+  ICING_ASSERT_OK(
+      index->MigrateParent(missing_parent_qualified_id2, new_parent_doc_id2));
+
+  // child 102 was deleted, so missing_parent1 should only have child 103 (now
+  // 13).
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(new_parent_doc_id1),
+              IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
+                  /*document_id=*/13, /*joinable_property_id=*/0))));
+  // missing_parent2 had child 103 (now 13).
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(new_parent_doc_id2),
+              IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
+                  /*document_id=*/13, /*joinable_property_id=*/0))));
+}
+
+TEST_P(QualifiedIdJoinIndexImplV3Test,
+       OptimizeShouldKeepJoinDataOfDeletedParents) {
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    return;
+  }
+
+  // Index a parent document.
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  QualifiedId parent_qualified_id("ns", "uri0");
+  // Doc id 0
+  ICING_ASSERT_OK(document_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build())));
+  // Doc id 1
+  ICING_ASSERT_OK(document_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder().SetKey("ns", "uri1").SetSchema("type").Build())));
+
+  auto doc_id_or = document_store_->GetDocumentId("ns", "uri0");
+  ASSERT_THAT(doc_id_or, IsOk());
+  DocumentId parent_doc_id = doc_id_or.ValueOrDie();
+  ASSERT_THAT(parent_doc_id, Eq(0));
+
+  // Index a join relation.
+  DocumentJoinIdPair child_join_id_pair(/*document_id=*/100,
+                                        /*joinable_property_id=*/0);
+  ICING_ASSERT_OK(index->Put(
+      document_store_.get(), child_join_id_pair,
+      /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qualified_id}));
+
+  // Verify the join relation.
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(parent_doc_id),
+              IsOkAndHolds(ElementsAre(child_join_id_pair)));
+
+  // Delete the parent document.
+  ICING_ASSERT_OK(document_store_->Delete("ns", "uri0", /*current_time_ms=*/0));
+
+  // Run Optimize.
+  // After optimize, doc "ns", "uri1" will be doc 0.
+  std::vector<DocumentId> document_id_old_to_new(101, kInvalidDocumentId);
+  document_id_old_to_new[1] = 0;     // "ns", "uri1" moved to docid 0.
+  document_id_old_to_new[100] = 99;  // child doc 100 becomes 99.
+  ASSERT_NO_FATAL_FAILURE(OptimizeDocumentStore());
+
+  DocumentId new_last_added_document_id = 99;
+  ICING_ASSERT_OK(index->Optimize(document_store_.get(), document_id_old_to_new,
+                                  /*namespace_id_old_to_new=*/{},
+                                  new_last_added_document_id));
+
+  // The new document with docid 0 is the old document 1, which was not a
+  // parent.
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(0),
+              IsOkAndHolds(IsEmpty()));
+
+  // Migrating the parent to a new doc id and check the child is still there.
+  DocumentId new_parent_doc_id = 1;
+  ICING_ASSERT_OK(index->MigrateParent(parent_qualified_id, new_parent_doc_id));
+  DocumentJoinIdPair new_child_join_id_pair(/*document_id=*/99,
+                                            /*joinable_property_id=*/0);
+  EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(new_parent_doc_id),
+              IsOkAndHolds(ElementsAre(new_child_join_id_pair)));
+}
+
+TEST_P(QualifiedIdJoinIndexImplV3Test,
+       OptimizeShouldAllowAddingChildrenToDeletedParents) {
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    return;
+  }
+
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  QualifiedId parent_qualified_id("ns", "uri0");
+  // Doc id 0
+  ICING_ASSERT_OK(document_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder().SetKey("ns", "uri0").SetSchema("type").Build())));
+  ASSERT_THAT(document_store_->GetDocumentId("ns", "uri0"), IsOkAndHolds(0));
+
+  // Index a join relation.
+  DocumentJoinIdPair child1(/*document_id=*/100, /*joinable_property_id=*/0);
+  ICING_ASSERT_OK(index->Put(
+      document_store_.get(), child1,
+      /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qualified_id}));
+
+  // Delete the parent document.
+  ICING_ASSERT_OK(document_store_->Delete("ns", "uri0", /*current_time_ms=*/0));
+
+  // Run Optimize.
+  std::vector<DocumentId> document_id_old_to_new(101, kInvalidDocumentId);
+  document_id_old_to_new[100] = 99;  // child doc 100 becomes 99.
+  ASSERT_NO_FATAL_FAILURE(OptimizeDocumentStore());
+
+  DocumentId new_last_added_document_id = 99;
+  ICING_ASSERT_OK(index->Optimize(document_store_.get(), document_id_old_to_new,
+                                  /*namespace_id_old_to_new=*/{},
+                                  new_last_added_document_id));
+
+  // Index a new child for the deleted parent.
+  DocumentJoinIdPair child2(/*document_id=*/101, /*joinable_property_id=*/0);
+  ICING_ASSERT_OK(index->Put(
+      document_store_.get(), child2,
+      /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qualified_id}));
+
+  // Migrating the parent to a new doc id and check both children are there.
+  DocumentId new_parent_doc_id = 1;
+  ICING_ASSERT_OK(index->MigrateParent(parent_qualified_id, new_parent_doc_id));
+  DocumentJoinIdPair remapped_child1(/*document_id=*/99,
+                                     /*joinable_property_id=*/0);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto view, index->GetDocumentJoinIdPairArrayView(new_parent_doc_id));
+  EXPECT_THAT(view, ElementsAre(remapped_child1, child2));
+}
+
+TEST_P(QualifiedIdJoinIndexImplV3Test, Clear) {
   // Create new qualified id join index
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
                              QualifiedIdJoinIndexImplV3::Create(
@@ -1754,6 +2313,26 @@ TEST_F(QualifiedIdJoinIndexImplV3Test, Clear) {
   EXPECT_THAT(index->GetDocumentJoinIdPairArrayView(/*parent_document_id=*/5),
               IsOkAndHolds(ElementsAre(child_join_id_pair4)));
 }
+
+TEST_P(QualifiedIdJoinIndexImplV3Test, V2ApiShouldBeUnimplemented) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  EXPECT_THAT(
+      index->Put(/*schema_type_id=*/0, /*joinable_property_id=*/0,
+                 /*document_id=*/0, /*ref_namespace_id_uri_fingerprints=*/{}),
+      StatusIs(libtextclassifier3::StatusCode::UNIMPLEMENTED));
+
+  EXPECT_THAT(index->GetIterator(/*schema_type_id=*/0,
+                                 /*joinable_property_id=*/0),
+              StatusIs(libtextclassifier3::StatusCode::UNIMPLEMENTED));
+}
+
+INSTANTIATE_TEST_SUITE_P(QualifiedIdJoinIndexImplV3Test,
+                         QualifiedIdJoinIndexImplV3Test,
+                         // Parameter: enable_non_existent_qualified_id_join
+                         testing::Values(true, false));
 
 }  // namespace
 
