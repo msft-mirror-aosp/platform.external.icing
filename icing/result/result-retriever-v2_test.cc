@@ -1345,7 +1345,11 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_reusable_decompression_buffer=*/true,
                         /*enable_schema_type_id_optimization=*/true,
                         /*enable_optimize_improvements=*/true,
-                        /*expired_document_purge_threshold_ms=*/0),
+                        /*expired_document_purge_threshold_ms=*/0,
+                        /*enable_non_existent_qualified_id_join=*/true,
+                        /*enable_skip_set_schema_type_equality_check=*/true,
+                        /*enable_embed_query_optimization=*/true,
+                        /*enable_schema_definition_deduping=*/true),
                     FeatureFlags(
                         /*allow_circular_schema_definitions=*/true,
                         /*enable_scorable_properties=*/true,
@@ -1363,7 +1367,11 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_reusable_decompression_buffer=*/true,
                         /*enable_schema_type_id_optimization=*/true,
                         /*enable_optimize_improvements=*/true,
-                        /*expired_document_purge_threshold_ms=*/0)));
+                        /*expired_document_purge_threshold_ms=*/0,
+                        /*enable_non_existent_qualified_id_join=*/true,
+                        /*enable_skip_set_schema_type_equality_check=*/true,
+                        /*enable_embed_query_optimization=*/true,
+                        /*enable_schema_definition_deduping=*/true)));
 
 }  // namespace
 

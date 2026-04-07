@@ -354,8 +354,18 @@ void nativeInvalidateNextPageToken(JNIEnv* env, jclass clazz, jobject object,
       GetIcingSearchEnginePointer(env, object);
 
   icing->InvalidateNextPageToken(next_page_token);
+}
 
-  return;
+// TODO(b/384947619) - pre-register this method.
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeHandleExpiredDocuments(
+    JNIEnv* env, jclass clazz, jobject object) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::HandleExpiredDocumentsResultProto result_proto =
+      icing->HandleExpiredDocuments();
+  return SerializeProtoToJniByteArray(env, result_proto);
 }
 
 // TODO(b/273591938): Change this API back to the pre-registered API.

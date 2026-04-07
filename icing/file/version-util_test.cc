@@ -1119,6 +1119,49 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_term_index_rebuild_in=*/false,
                 /*needs_integer_index_rebuild_in=*/false,
                 /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features = {}
+        // - Current version = 5
+        // - Current enabled features = {FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN}
+        //
+        // - Result: rebuild qualified id join index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/{},
+            /*curr_version_in=*/5, /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN},
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features =
+        //   {FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN}
+        // - Current version = 5
+        // - Current enabled features = {}
+        //
+        // - Result: rebuild qualified id join index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN},
+            /*curr_version_in=*/5, /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
                 /*needs_embedding_index_rebuild_in=*/false))));
 
 TEST(VersionUtilTest, ShouldRebuildDerivedFilesUndeterminedVersion) {
@@ -1350,6 +1393,20 @@ TEST(VersionUtilTest,
           /*needs_embedding_index_rebuild_in=*/false)));
 }
 
+TEST(VersionUtilTest,
+     GetFeatureDerivedFilesRebuildInfo_featureNonExistentQualifiedIdJoin) {
+  EXPECT_THAT(GetFeatureDerivedFilesRebuildInfo(
+                  IcingSearchEngineFeatureInfoProto::
+                      FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN),
+              Eq(DerivedFilesRebuildInfo(
+                  /*needs_document_store_derived_files_rebuild_in=*/false,
+                  /*needs_schema_store_derived_files_rebuild_in=*/false,
+                  /*needs_term_index_rebuild_in=*/false,
+                  /*needs_integer_index_rebuild_in=*/false,
+                  /*needs_qualified_id_join_index_rebuild_in=*/true,
+                  /*needs_embedding_index_rebuild_in=*/false)));
+}
+
 TEST(VersionUtilTest, SchemaDatabaseMigrationRequired) {
   // Migration is required if the previous version is less than the version at
   // which the database field is introduced.
@@ -1488,7 +1545,9 @@ INSTANTIATE_TEST_SUITE_P(
         IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION,
         IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE,
         IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3,
-        IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM));
+        IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM,
+        IcingSearchEngineFeatureInfoProto::
+            FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN));
 
 }  // namespace
 

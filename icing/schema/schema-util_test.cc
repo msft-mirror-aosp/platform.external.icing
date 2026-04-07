@@ -2438,6 +2438,55 @@ TEST_P(SchemaUtilTest, NewSchemaMissingPropertyIsIncompatible) {
               Eq(schema_delta));
 }
 
+TEST_P(SchemaUtilTest, PropertyConfigReorderingIsCompatible) {
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataType(TYPE_INT64)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop3")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema with the properties in a different order
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataType(TYPE_INT64)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop3")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  if (feature_flags_->enable_schema_definition_deduping()) {
+    schema_delta.schema_types_changed_fully_compatible.insert(kEmailType);
+  }
+  SchemaUtil::DependentMap no_dependents_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema, no_dependents_map, *feature_flags_),
+              Eq(schema_delta));
+}
+
 TEST_P(SchemaUtilTest, CompatibilityOfDifferentCardinalityOk) {
   // Configure less restrictive schema based on cardinality
   SchemaProto less_restrictive_schema =
@@ -4457,7 +4506,11 @@ TEST_P(SchemaUtilTest,
       /*enable_reusable_decompression_buffer=*/true,
       /*enable_schema_type_id_optimization=*/true,
       /*enable_optimize_improvements=*/true,
-      /*expired_document_purge_threshold_ms=*/0);
+      /*expired_document_purge_threshold_ms=*/0,
+      /*enable_non_existent_qualified_id_join=*/true,
+      /*enable_skip_set_schema_type_equality_check=*/true,
+      /*enable_embed_query_optimization=*/true,
+      /*enable_schema_definition_deduping=*/true);
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -4529,7 +4582,11 @@ TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
       /*enable_reusable_decompression_buffer=*/true,
       /*enable_schema_type_id_optimization=*/true,
       /*enable_optimize_improvements=*/true,
-      /*expired_document_purge_threshold_ms=*/0);
+      /*expired_document_purge_threshold_ms=*/0,
+      /*enable_non_existent_qualified_id_join=*/true,
+      /*enable_skip_set_schema_type_equality_check=*/true,
+      /*enable_embed_query_optimization=*/true,
+      /*enable_schema_definition_deduping=*/true);
 
   SchemaProto schema =
       SchemaBuilder()
@@ -5866,7 +5923,11 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_reusable_decompression_buffer=*/true,
                         /*enable_schema_type_id_optimization=*/true,
                         /*enable_optimize_improvements=*/true,
-                        /*expired_document_purge_threshold_ms=*/0),
+                        /*expired_document_purge_threshold_ms=*/0,
+                        /*enable_non_existent_qualified_id_join=*/true,
+                        /*enable_skip_set_schema_type_equality_check=*/true,
+                        /*enable_embed_query_optimization=*/true,
+                        /*enable_schema_definition_deduping=*/false),
                     FeatureFlags(
                         /*enable_circular_schema_definitions=*/true,
                         /*enable_scorable_properties=*/true,
@@ -5884,7 +5945,11 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_reusable_decompression_buffer=*/true,
                         /*enable_schema_type_id_optimization=*/true,
                         /*enable_optimize_improvements=*/true,
-                        /*expired_document_purge_threshold_ms=*/0)));
+                        /*expired_document_purge_threshold_ms=*/0,
+                        /*enable_non_existent_qualified_id_join=*/true,
+                        /*enable_skip_set_schema_type_equality_check=*/true,
+                        /*enable_embed_query_optimization=*/true,
+                        /*enable_schema_definition_deduping=*/true)));
 
 struct IsIndexedPropertyTestParam {
   PropertyConfigProto property_config;

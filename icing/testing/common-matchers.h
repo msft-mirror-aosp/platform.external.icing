@@ -640,6 +640,7 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   SearchResultProto actual_copy = arg;
   actual_copy.clear_query_stats();
   actual_copy.clear_debug_info();
+  actual_copy.clear_vm_binder_transaction_latency_start_time_ms();
   for (SearchResultProto::ResultProto& result :
        *actual_copy.mutable_results()) {
     // Joined results
@@ -653,6 +654,7 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   SearchResultProto expected_copy = expected;
   expected_copy.clear_query_stats();
   expected_copy.clear_debug_info();
+  actual_copy.clear_vm_binder_transaction_latency_start_time_ms();
   for (SearchResultProto::ResultProto& result :
        *expected_copy.mutable_results()) {
     // Joined results
