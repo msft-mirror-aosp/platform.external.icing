@@ -74,16 +74,13 @@ class Index {
  public:
   struct Options {
     explicit Options(const std::string& base_dir, uint32_t index_merge_size,
-                     bool lite_index_sort_at_indexing,
                      uint32_t lite_index_sort_size)
         : base_dir(base_dir),
           index_merge_size(index_merge_size),
-          lite_index_sort_at_indexing(lite_index_sort_at_indexing),
           lite_index_sort_size(lite_index_sort_size) {}
 
     std::string base_dir;
     int32_t index_merge_size;
-    bool lite_index_sort_at_indexing;
     int32_t lite_index_sort_size;
   };
 
@@ -322,8 +319,7 @@ class Index {
   // Icing has enabled sorting during indexing time, and the HitBuffer's
   // unsorted tail has exceeded the lite_index_sort_size.
   bool LiteIndexNeedSort() const {
-    return options_.lite_index_sort_at_indexing &&
-           lite_index_->HasUnsortedHitsExceedingSortThreshold();
+    return lite_index_->HasUnsortedHitsExceedingSortThreshold();
   }
 
   // Sorts the LiteIndex HitBuffer.

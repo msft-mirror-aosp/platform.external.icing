@@ -57,6 +57,7 @@
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
+#include "icing/util/sha256.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -148,27 +149,47 @@ std::string GetDatabaseFromSchemaType(const std::string& schema_type,
   return database;
 }
 
-// For each schema type in the schema proto, parses out the database from the
-// type name, and sets it as the database field in the input proto in
-// place. The schema_type name field itself is not modified.
+// For each schema type in the schema proto, updates fields in the proto in
+// place depending on the value of the input parameters.
 //
-// If the schema type name does not contain an AppSearch database, then
-// SchemaTypeConfigProto is not modified.
+// If `populate_database_field` is true, parses out the database from the
+// type name, and sets it as the `database` field in the input proto in
+// place. The schema_type name field itself is not modified.
+// - If the schema type name does not contain an AppSearch database, then
+//     SchemaTypeConfigProto is not modified.
+//
+// If `recompute_properties_digest` is true, recomputes and rewrites the
+// `properties_digest` field in the input proto in place.
 //
 // Returns:
 //   - True if any SchemaTypeConfigProto in the schema proto is rewritten.
 //   - False otherwise.
-bool ParseAndPopulateAppSearchDatabaseField(SchemaProto& schema_proto) {
-  bool populated_database_field = false;
+bool UpdateSchemaProtoMetadata(bool populate_database_field,
+                               bool recompute_properties_digest,
+                               SchemaProto& schema_proto) {
+  bool fields_populated = false;
   for (auto& type : *schema_proto.mutable_types()) {
-    std::string database = GetDatabaseFromSchemaType(
-        type.schema_type(), kAppSearchDatabaseDelimiter);
-    if (type.database() != database) {
-      type.set_database(std::move(database));
-      populated_database_field = true;
+    if (populate_database_field) {
+      std::string database = GetDatabaseFromSchemaType(
+          type.schema_type(), kAppSearchDatabaseDelimiter);
+      if (type.database() != database) {
+        type.set_database(std::move(database));
+        fields_populated = true;
+      }
+    }
+
+    if (recompute_properties_digest) {
+      std::optional<Sha256Digest> properties_digest =
+          SchemaUtil::GetSchemaPropertiesDigest(type);
+      Sha256Digest new_properties_digest =
+          SchemaUtil::PopulatePropertiesDigestField(type);
+      if (!properties_digest.has_value() ||
+          properties_digest.value() != new_properties_digest) {
+        fields_populated = true;
+      }
     }
   }
-  return populated_database_field;
+  return fields_populated;
 }
 
 // Compares the schema types list defined in two schemas, ignoring order.
@@ -329,8 +350,13 @@ libtextclassifier3::StatusOr<std::unique_ptr<SchemaStore>> SchemaStore::Create(
 }
 
 /* static */ libtextclassifier3::Status
-SchemaStore::PopulateSchemaDatabaseFieldForSchemaFile(
+SchemaStore::RewriteSchemaFileMetadataFields(
+    bool update_database_field, bool update_properties_digest_field,
     const Filesystem* filesystem, const std::string& schema_filename) {
+  if (!update_database_field && !update_properties_digest_field) {
+    return libtextclassifier3::Status::OK;
+  }
+
   FileBackedProto<SchemaProto> schema_file(*filesystem, schema_filename);
   auto schema_proto_or = schema_file.Read();
   if (absl_ports::IsNotFound(schema_proto_or.status())) {
@@ -342,8 +368,8 @@ SchemaStore::PopulateSchemaDatabaseFieldForSchemaFile(
   }
 
   SchemaProto schema_proto_copy = *schema_proto_or.ValueOrDie();
-  bool schema_changed =
-      ParseAndPopulateAppSearchDatabaseField(schema_proto_copy);
+  bool schema_changed = UpdateSchemaProtoMetadata(
+      update_database_field, update_properties_digest_field, schema_proto_copy);
   if (!schema_changed) {
     // Nothing to do if the schema is not changed.
     return libtextclassifier3::Status::OK;
@@ -401,7 +427,8 @@ SchemaStore::PopulateSchemaDatabaseFieldForSchemaFile(
 /* static */ libtextclassifier3::Status SchemaStore::MigrateSchema(
     const Filesystem* filesystem, const std::string& base_dir,
     version_util::StateChange version_state_change, int32_t new_version,
-    bool perform_schema_database_migration) {
+    bool perform_schema_database_migration,
+    bool recalculate_properties_digests) {
   if (!filesystem->DirectoryExists(base_dir.c_str())) {
     // Situations when schema store directory doesn't exist:
     // - Initializing new Icing instance: don't have to do anything now. The
@@ -416,19 +443,24 @@ SchemaStore::PopulateSchemaDatabaseFieldForSchemaFile(
   ICING_RETURN_IF_ERROR(HandleOverlaySchemaForVersionChange(
       filesystem, base_dir, version_state_change, new_version));
 
-  // Perform schema database migration if needed.
-  // - This populates the the database field in the schema proto and writes it
-  //   to the schema file.
-  // - If the overlay schema file exists at this point, does the same for the
-  //   overlay schema.
-  if (perform_schema_database_migration) {
+  // Migrate schema file metadata fields if needed.
+  //  1. Recomputes and updates the `database` field within the schema proto if
+  //     perform_schema_database_migration is true.
+  //  2. Recomputes and updates the `properties_digest` field if
+  //     recalculate_properties_digests is true.
+  //
+  // The rewrite is performed on both the base schema file and, if present, the
+  // and overlay schema file.
+  if (perform_schema_database_migration || recalculate_properties_digests) {
     std::string base_schema_filename = MakeSchemaFilename(base_dir);
-    ICING_RETURN_IF_ERROR(PopulateSchemaDatabaseFieldForSchemaFile(
+    ICING_RETURN_IF_ERROR(RewriteSchemaFileMetadataFields(
+        perform_schema_database_migration, recalculate_properties_digests,
         filesystem, base_schema_filename));
 
     std::string overlay_schema_filename = MakeOverlaySchemaFilename(base_dir);
     if (filesystem->FileExists(overlay_schema_filename.c_str())) {
-      ICING_RETURN_IF_ERROR(PopulateSchemaDatabaseFieldForSchemaFile(
+      ICING_RETURN_IF_ERROR(RewriteSchemaFileMetadataFields(
+          perform_schema_database_migration, recalculate_properties_digests,
           filesystem, overlay_schema_filename));
     }
   }
@@ -674,18 +706,16 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
 
   if (create_overlay_if_necessary) {
     BackupSchemaProducer producer(feature_flags_);
-    // TODO: b/448166747 - Handle deduped schema types in the backup schema
-    // producer.
     ICING_ASSIGN_OR_RETURN(
         BackupSchemaProducer::BackupSchemaResult backup_result,
-        producer.Produce(*schema_proto,
-                         schema_type_manager_->section_manager()));
+        producer.Produce(*schema_proto, schema_type_manager_->section_manager(),
+                         type_config_info_cache_));
 
     if (backup_result.backup_schema_produced) {
       // The overlay schema should be written to the overlay file location.
       overlay_schema_file_ = std::make_unique<FileBackedProto<SchemaProto>>(
           *filesystem_, MakeOverlaySchemaFilename(base_dir_));
-      auto schema_ptr = std::make_unique<SchemaProto>(std::move(*schema_proto));
+      auto schema_ptr = std::make_unique<SchemaProto>(*schema_proto);
       ICING_RETURN_IF_ERROR(overlay_schema_file_->Write(std::move(schema_ptr)));
 
       // The base schema should be written to the original file
@@ -694,9 +724,10 @@ libtextclassifier3::Status SchemaStore::RegenerateDerivedFiles(
       ICING_RETURN_IF_ERROR(schema_file_.Write(std::move(base_schema_ptr)));
 
       // LINT.IfChange(min_overlay_version_compatibility)
-      // Although the current version is 5, the schema is compatible with
-      // version 1, so min_overlay_version_compatibility should be 1.
-      int32_t min_overlay_version_compatibility = version_util::kVersionOne;
+      // After introducing schema property definition deduplication, the overlay
+      // schema is no longer compatible with older versions.
+      int32_t min_overlay_version_compatibility =
+          version_util::kSchemaDefinitionDedupingVersion;
       // LINT.ThenChange(//depot/google3/icing/file/version-util.h:kVersion)
       header_->SetOverlayInfo(
           /*overlay_created=*/true, min_overlay_version_compatibility);
@@ -738,7 +769,8 @@ libtextclassifier3::Status SchemaStore::BuildInMemoryCache() {
     database_type_map_[database].push_back(type_name);
 
     // Build type_config_info_cache_
-    ICING_RETURN_IF_ERROR(type_config_info_cache_.AddTypeConfig(type_config));
+    ICING_RETURN_IF_ERROR(type_config_info_cache_.AddTypeConfig(
+        SchemaTypeConfigProto(type_config)));
 
     // Build schema_subtype_id_map_
     std::unordered_set<SchemaTypeId>& subtype_id_set =
@@ -964,7 +996,7 @@ SchemaStore::SetSchema(SetSchemaRequestProto&& set_schema_request) {
       // Case 1: No preexisting schema for this database.
       return SetInitialSchemaForDatabase(
           std::move(*set_schema_request.mutable_schema()),
-          set_schema_request.database(), ignore_errors_and_delete_documents);
+          set_schema_request.database());
     }
 
     if (!schema_proto.ok()) {
@@ -986,7 +1018,7 @@ SchemaStore::SetSchema(SetSchemaRequestProto&& set_schema_request) {
     // Case 1: No preexisting schema
     return SetInitialSchemaForDatabase(
         std::move(*set_schema_request.mutable_schema()),
-        set_schema_request.database(), ignore_errors_and_delete_documents);
+        set_schema_request.database());
   }
 
   if (!schema_proto.ok()) {
@@ -1002,9 +1034,8 @@ SchemaStore::SetSchema(SetSchemaRequestProto&& set_schema_request) {
 }
 
 libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
-SchemaStore::SetInitialSchemaForDatabase(
-    SchemaProto new_schema, const std::string& database,
-    bool ignore_errors_and_delete_documents) {
+SchemaStore::SetInitialSchemaForDatabase(SchemaProto new_schema,
+                                         const std::string& database) {
   SetSchemaResult result;
 
   ICING_RETURN_IF_ERROR(SchemaUtil::Validate(new_schema, *feature_flags_));
@@ -1018,9 +1049,14 @@ SchemaStore::SetInitialSchemaForDatabase(
   // schema file.
   SchemaProto full_new_schema;
   if (feature_flags_->enable_schema_type_id_optimization()) {
-    ICING_ASSIGN_OR_RETURN(
-        full_new_schema,
-        GetFullOptimizedSchemaProto(std::move(new_schema), database));
+    // Create the schema delta. This is an initial schema, so all types are new.
+    SchemaUtil::SchemaDelta schema_delta;
+    for (const SchemaTypeConfigProto& type_config : new_schema.types()) {
+      schema_delta.schema_types_new.insert(type_config.schema_type());
+    }
+    ICING_ASSIGN_OR_RETURN(full_new_schema,
+                           GetFullOptimizedSchemaProto(std::move(new_schema),
+                                                       database, schema_delta));
   } else {
     ICING_ASSIGN_OR_RETURN(
         full_new_schema,
@@ -1080,16 +1116,6 @@ SchemaStore::SetSchemaWithDatabaseOverride(
   SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, new_dependent_map, *feature_flags_);
 
-  result.schema_types_new_by_name = std::move(schema_delta.schema_types_new);
-  result.schema_types_changed_fully_compatible_by_name =
-      std::move(schema_delta.schema_types_changed_fully_compatible);
-  result.schema_types_index_incompatible_by_name =
-      std::move(schema_delta.schema_types_index_incompatible);
-  result.schema_types_join_incompatible_by_name =
-      std::move(schema_delta.schema_types_join_incompatible);
-  result.schema_types_scorable_property_inconsistent_by_name =
-      std::move(schema_delta.schema_types_scorable_property_inconsistent);
-
   for (const std::string& schema_type : schema_delta.schema_types_deleted) {
     // We currently don't support deletions, so mark this as not possible.
     // This will change once we allow force-set schemas.
@@ -1115,14 +1141,32 @@ SchemaStore::SetSchemaWithDatabaseOverride(
     result.schema_types_incompatible_by_id.emplace(schema_type_id);
   }
 
+  // We can force set the schema if the caller has told us to ignore any errors
+  result.success = result.success || ignore_errors_and_delete_documents;
+  if (!result.success) {
+    // Otherwise we can't set an incompatible schema. Construct the result
+    // proto and return early.
+    result.schema_types_new_by_name = std::move(schema_delta.schema_types_new);
+    result.schema_types_changed_fully_compatible_by_name =
+        std::move(schema_delta.schema_types_changed_fully_compatible);
+    result.schema_types_index_incompatible_by_name =
+        std::move(schema_delta.schema_types_index_incompatible);
+    result.schema_types_join_incompatible_by_name =
+        std::move(schema_delta.schema_types_join_incompatible);
+    result.schema_types_scorable_property_inconsistent_by_name =
+        std::move(schema_delta.schema_types_scorable_property_inconsistent);
+
+    return result;
+  }
+
   // Get the full new SchemaProto that is a combination of the existing schema
   // and new_schema. This is needed to calculate the updated SchemaTypeIds, and
   // for writing the full proto to the schema file.
   SchemaProto full_new_schema;
   if (feature_flags_->enable_schema_type_id_optimization()) {
-    ICING_ASSIGN_OR_RETURN(
-        full_new_schema,
-        GetFullOptimizedSchemaProto(std::move(new_schema), database));
+    ICING_ASSIGN_OR_RETURN(full_new_schema,
+                           GetFullOptimizedSchemaProto(std::move(new_schema),
+                                                       database, schema_delta));
   } else {
     ICING_ASSIGN_OR_RETURN(
         full_new_schema,
@@ -1139,9 +1183,6 @@ SchemaStore::SetSchemaWithDatabaseOverride(
   result.old_schema_type_ids_changed =
       SchemaTypeIdsChanged(*full_old_schema, full_new_schema);
 
-  // We can force set the schema if the caller has told us to ignore any errors
-  result.success = result.success || ignore_errors_and_delete_documents;
-
   // Step 3: Apply the schema change if success. This updates persisted files
   // and derived data structures.
   if (result.success) {
@@ -1150,21 +1191,31 @@ SchemaStore::SetSchemaWithDatabaseOverride(
     ResetSchemaFileIfNeeded();
   }
 
+  // Populate the result with the schema delta.
+  result.schema_types_new_by_name = std::move(schema_delta.schema_types_new);
+  result.schema_types_changed_fully_compatible_by_name =
+      std::move(schema_delta.schema_types_changed_fully_compatible);
+  result.schema_types_index_incompatible_by_name =
+      std::move(schema_delta.schema_types_index_incompatible);
+  result.schema_types_join_incompatible_by_name =
+      std::move(schema_delta.schema_types_join_incompatible);
+  result.schema_types_scorable_property_inconsistent_by_name =
+      std::move(schema_delta.schema_types_scorable_property_inconsistent);
+
   // Convert schema types to SchemaTypeIds after the new schema is applied.
-  if (feature_flags_->enable_scorable_properties()) {
-    for (const std::string& schema_type :
-         result.schema_types_scorable_property_inconsistent_by_name) {
-      libtextclassifier3::StatusOr<SchemaTypeId> schema_type_id_or =
-          GetSchemaTypeId(schema_type);
-      if (!schema_type_id_or.ok()) {
-        if (absl_ports::IsNotFound(schema_type_id_or.status())) {
-          continue;
-        }
-        return schema_type_id_or.status();
+  // The scorable properties feature has been fully rolled out.
+  for (const std::string& schema_type :
+       result.schema_types_scorable_property_inconsistent_by_name) {
+    libtextclassifier3::StatusOr<SchemaTypeId> schema_type_id_or =
+        GetSchemaTypeId(schema_type);
+    if (!schema_type_id_or.ok()) {
+      if (absl_ports::IsNotFound(schema_type_id_or.status())) {
+        continue;
       }
-      result.schema_types_scorable_property_inconsistent_by_id.insert(
-          schema_type_id_or.ValueOrDie());
+      return schema_type_id_or.status();
     }
+    result.schema_types_scorable_property_inconsistent_by_id.insert(
+        schema_type_id_or.ValueOrDie());
   }
 
   return result;
@@ -1325,9 +1376,7 @@ libtextclassifier3::StatusOr<std::optional<int>>
 SchemaStore::GetScorablePropertyIndex(SchemaTypeId schema_type_id,
                                       std::string_view property_path) const {
   ICING_RETURN_IF_ERROR(CheckSchemaSet());
-  if (!feature_flags_->enable_scorable_properties()) {
-    return std::nullopt;
-  }
+  // The scorable properties feature has been fully rolled out.
   return scorable_property_manager_->GetScorablePropertyIndex(
       schema_type_id, property_path, type_config_info_cache_,
       reverse_schema_type_mapper_);
@@ -1337,9 +1386,7 @@ libtextclassifier3::StatusOr<
     const std::vector<ScorablePropertyManager::ScorablePropertyInfo>*>
 SchemaStore::GetOrderedScorablePropertyInfo(SchemaTypeId schema_type_id) const {
   ICING_RETURN_IF_ERROR(CheckSchemaSet());
-  if (!feature_flags_->enable_scorable_properties()) {
-    return nullptr;
-  }
+  // The scorable properties feature has been fully rolled out.
   return scorable_property_manager_->GetOrderedScorablePropertyInfo(
       schema_type_id, type_config_info_cache_, reverse_schema_type_mapper_);
 }
@@ -1573,16 +1620,28 @@ libtextclassifier3::Status SchemaStore::ValidateSchemaDatabase(
 
 libtextclassifier3::StatusOr<SchemaProto>
 SchemaStore::GetFullOptimizedSchemaProto(
-    SchemaProto input_database_schema,
-    const std::string& database_to_update) const {
+    SchemaProto input_database_schema, const std::string& database_to_update,
+    const SchemaUtil::SchemaDelta& schema_delta) const {
   // Ok to use file-backed schema proto here because we don't need to check
   // property definitions.
   libtextclassifier3::StatusOr<const SchemaProto*> schema_proto =
       GetFileBackedSchemaProto();
+
+  // No pre-existing schema
   if (absl_ports::IsNotFound(schema_proto.status())) {
-    // We don't have a pre-existing schema -- we can return the input database
-    // schema as it's already the full schema.
-    return input_database_schema;
+    if (!feature_flags_->enable_schema_definition_deduping()) {
+      // We don't have a pre-existing schema and we don't need to dedupe -- we
+      // can return the input database schema as it's already the full schema.
+      return input_database_schema;
+    }
+
+    // No pre-existing schema, but we need to dedupe the input schema.
+    std::vector<SchemaTypeConfigProto> types_vec;
+    types_vec.reserve(input_database_schema.types().size());
+    for (auto& type_config : *input_database_schema.mutable_types()) {
+      types_vec.push_back(std::move(type_config));
+    }
+    return BuildDedupedSchemaProto(std::move(types_vec), schema_delta);
   }
 
   if (!schema_proto.ok()) {
@@ -1694,14 +1753,20 @@ SchemaStore::GetFullOptimizedSchemaProto(
     full_schema_types.resize(full_schema_types.size() - num_unfilled_types);
   }
 
-  SchemaProto full_schema;
-  full_schema.mutable_types()->Reserve(
-      static_cast<int>(full_schema_types.size()));
-  for (SchemaTypeConfigProto& type_config : full_schema_types) {
-    *full_schema.add_types() = std::move(type_config);
+  if (!feature_flags_->enable_schema_definition_deduping()) {
+    // We don't need to dedupe -- build the full schema proto from the
+    // processed types vector directly.
+    SchemaProto full_schema;
+    full_schema.mutable_types()->Reserve(
+        static_cast<int>(full_schema_types.size()));
+    for (SchemaTypeConfigProto& type_config : full_schema_types) {
+      *full_schema.add_types() = std::move(type_config);
+    }
+
+    return full_schema;
   }
 
-  return full_schema;
+  return BuildDedupedSchemaProto(std::move(full_schema_types), schema_delta);
 }
 
 libtextclassifier3::StatusOr<SchemaProto>
@@ -1787,6 +1852,103 @@ SchemaStore::GetFullSchemaProtoWithUpdatedDb(
     if (existing_schema->types(existing_schema_index).database() !=
         database_to_update) {
       *full_schema.add_types() = existing_schema->types(existing_schema_index);
+    }
+  }
+
+  return full_schema;
+}
+
+libtextclassifier3::StatusOr<SchemaProto> SchemaStore::BuildDedupedSchemaProto(
+    std::vector<SchemaTypeConfigProto>&& new_types_vector,
+    const SchemaUtil::SchemaDelta& schema_delta) const {
+  // Store the order of type names in the input types vector.
+  std::vector<std::string> ordered_type_names;
+  ordered_type_names.reserve(new_types_vector.size());
+  for (const SchemaTypeConfigProto& type_config : new_types_vector) {
+    ordered_type_names.push_back(type_config.schema_type());
+  }
+
+  std::unordered_set<std::string_view> changed_types;
+  changed_types.reserve(
+      schema_delta.schema_types_changed_fully_compatible.size() +
+      schema_delta.schema_types_incompatible.size() +
+      schema_delta.schema_types_index_incompatible.size() +
+      schema_delta.schema_types_join_incompatible.size() +
+      schema_delta.schema_types_scorable_property_inconsistent.size());
+  changed_types.insert(
+      schema_delta.schema_types_changed_fully_compatible.begin(),
+      schema_delta.schema_types_changed_fully_compatible.end());
+  changed_types.insert(schema_delta.schema_types_incompatible.begin(),
+                       schema_delta.schema_types_incompatible.end());
+  changed_types.insert(schema_delta.schema_types_index_incompatible.begin(),
+                       schema_delta.schema_types_index_incompatible.end());
+  changed_types.insert(schema_delta.schema_types_join_incompatible.begin(),
+                       schema_delta.schema_types_join_incompatible.end());
+  changed_types.insert(
+      schema_delta.schema_types_scorable_property_inconsistent.begin(),
+      schema_delta.schema_types_scorable_property_inconsistent.end());
+
+  // Collect the type names that need to be removed from the cache. This is
+  // the union of deleted types and changed types.
+  std::unordered_set<std::string_view> types_to_remove;
+  types_to_remove.reserve(schema_delta.schema_types_deleted.size() +
+                          changed_types.size());
+  for (std::string_view schema_type : schema_delta.schema_types_deleted) {
+    types_to_remove.insert(schema_type);
+  }
+  types_to_remove.insert(changed_types.begin(), changed_types.end());
+
+  // Collect the type configs that need to be added to the cache. This is
+  // the union of new types and changed types. We need to look up their new type
+  // config definitions from the input types vector.
+  std::vector<SchemaTypeConfigProto> types_to_add;
+  if (!changed_types.empty() || !schema_delta.schema_types_new.empty()) {
+    types_to_add.reserve(changed_types.size() +
+                         schema_delta.schema_types_new.size());
+    // Create a lookup map of input schema type name to type config.
+    std::unordered_map<std::string, SchemaTypeConfigProto*>
+        new_schema_lookup_map;
+    new_schema_lookup_map.reserve(new_types_vector.size());
+    for (SchemaTypeConfigProto& type_config : new_types_vector) {
+      new_schema_lookup_map[type_config.schema_type()] = &type_config;
+    }
+
+    for (std::string_view schema_type : schema_delta.schema_types_new) {
+      auto it = new_schema_lookup_map.find(std::string(schema_type));
+      if (it != new_schema_lookup_map.end()) {
+        types_to_add.push_back(std::move(*it->second));
+      }
+    }
+    for (std::string_view schema_type : changed_types) {
+      auto it = new_schema_lookup_map.find(std::string(schema_type));
+      if (it != new_schema_lookup_map.end()) {
+        types_to_add.push_back(std::move(*it->second));
+      }
+    }
+  }
+
+  ICING_ASSIGN_OR_RETURN(
+      SchemaUtil::TypeConfigMap schema_update_plan,
+      type_config_info_cache_.CalculateSchemaUpdatePlan(
+          std::move(types_to_add), std::move(types_to_remove)));
+
+  // Finally, construct the full schema proto from the deduped type config info
+  // cache, in the order of the input types vector.
+  SchemaProto full_schema;
+  for (const std::string& type_name : ordered_type_names) {
+    auto deduped_type_config_itr = schema_update_plan.find(type_name);
+    if (deduped_type_config_itr == schema_update_plan.end()) {
+      // The type is not a part of the update plan. This is the case when using
+      // db-scoped set schema and the type is not a part of the db being
+      // modified.
+      //
+      // Get the type config from the original schema cache.
+      ICING_ASSIGN_OR_RETURN(
+          SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_holder,
+          type_config_info_cache_.GetFullSchemaTypeConfigHolder(type_name));
+      *full_schema.add_types() = type_holder.base_type_config();
+    } else {
+      *full_schema.add_types() = std::move(deduped_type_config_itr->second);
     }
   }
 

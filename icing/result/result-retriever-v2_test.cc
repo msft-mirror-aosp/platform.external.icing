@@ -1330,7 +1330,6 @@ INSTANTIATE_TEST_SUITE_P(
     ResultRetrieverV2Test, ResultRetrieverV2Test,
     testing::Values(FeatureFlags(
                         /*allow_circular_schema_definitions=*/true,
-                        /*enable_scorable_properties=*/true,
                         /*enable_repeated_field_joins=*/true,
                         /*enable_embedding_backup_generation=*/true,
                         /*enable_schema_database=*/true,
@@ -1349,7 +1348,6 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_schema_definition_deduping=*/true),
                     FeatureFlags(
                         /*allow_circular_schema_definitions=*/true,
-                        /*enable_scorable_properties=*/true,
                         /*enable_repeated_field_joins=*/true,
                         /*enable_embedding_backup_generation=*/true,
                         /*enable_schema_database=*/true,

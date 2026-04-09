@@ -26,6 +26,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-abstract-query-node.h"
 #include "icing/monkey_test/monkey-test-util.h"
 #include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/proto/document.pb.h"
@@ -124,6 +125,11 @@ class InMemoryIcingSearchEngine {
   // Section restrictions are also recognized.
   libtextclassifier3::StatusOr<std::vector<DocumentProto>> Search(
       const SearchSpecProto &search_spec) const;
+
+  // Variation of Search() that takes a MonkeyAbstractQueryNode, which is a
+  // structured representation of a query.
+  libtextclassifier3::StatusOr<std::vector<DocumentProto>> Search(
+      const MonkeyAbstractQueryNode* node) const;
 
  private:
   // Finds and returns the internal document id for the document identified by

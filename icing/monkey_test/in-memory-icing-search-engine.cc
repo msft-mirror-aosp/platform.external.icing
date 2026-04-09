@@ -31,6 +31,7 @@
 #include "icing/absl_ports/str_join.h"
 #include "icing/index/embed/embedding-scorer.h"
 #include "icing/index/embed/quantizer.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-abstract-query-node.h"
 #include "icing/monkey_test/monkey-test-util.h"
 #include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/proto/document.pb.h"
@@ -464,6 +465,18 @@ libtextclassifier3::StatusOr<std::vector<DocumentProto>>
 InMemoryIcingSearchEngine::Search(const SearchSpecProto &search_spec) const {
   ICING_ASSIGN_OR_RETURN(std::vector<DocumentId> matched_doc_ids,
                          InternalSearch(search_spec));
+  std::vector<DocumentProto> result;
+  result.reserve(matched_doc_ids.size());
+  for (DocumentId doc_id : matched_doc_ids) {
+    result.push_back(documents_[doc_id].document);
+  }
+  return result;
+}
+
+libtextclassifier3::StatusOr<std::vector<DocumentProto>>
+InMemoryIcingSearchEngine::Search(const MonkeyAbstractQueryNode* node) const {
+  ICING_ASSIGN_OR_RETURN(std::vector<DocumentId> matched_doc_ids,
+                         node->EvaluateQuery(this));
   std::vector<DocumentProto> result;
   result.reserve(matched_doc_ids.size());
   for (DocumentId doc_id : matched_doc_ids) {

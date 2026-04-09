@@ -44,7 +44,7 @@ using ::testing::HasSubstr;
 
 // type and property names of EmailMessage and EmailMessageWithNote
 constexpr char kTypeEmail[] = "EmailMessage";
-constexpr char kTypeDedupedEmailCopy[] = "EmailMessageCopy";
+constexpr char kTypeEmailCopy[] = "EmailMessageCopy";
 constexpr char kTypeEmailWithNote[] = "EmailMessageWithNote";
 constexpr char kPropertySubject[] = "subject";
 constexpr char kPropertyText[] = "text";
@@ -67,23 +67,30 @@ class DocumentValidatorTest : public ::testing::Test {
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
 
+    SchemaTypeConfigProto email_type =
+        SchemaTypeConfigBuilder()
+            .SetType(kTypeEmail)
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertySubject)
+                             .SetDataType(TYPE_STRING)
+                             .SetCardinality(CARDINALITY_REQUIRED))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertyText)
+                             .SetDataType(TYPE_STRING)
+                             .SetCardinality(CARDINALITY_OPTIONAL))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertyRecipients)
+                             .SetDataType(TYPE_STRING)
+                             .SetCardinality(CARDINALITY_REPEATED))
+            .Build();
+    SchemaTypeConfigProto email_type_copy =
+        SchemaTypeConfigBuilder(email_type)
+            .SetType(kTypeEmailCopy)
+            .Build();
     SchemaProto schema =
         SchemaBuilder()
-            .AddType(
-                SchemaTypeConfigBuilder()
-                    .SetType(kTypeEmail)
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kPropertySubject)
-                                     .SetDataType(TYPE_STRING)
-                                     .SetCardinality(CARDINALITY_REQUIRED))
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kPropertyText)
-                                     .SetDataType(TYPE_STRING)
-                                     .SetCardinality(CARDINALITY_OPTIONAL))
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kPropertyRecipients)
-                                     .SetDataType(TYPE_STRING)
-                                     .SetCardinality(CARDINALITY_REPEATED)))
+            .AddType(email_type)
+            .AddType(email_type_copy)
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType(kTypeEmailWithNote)
@@ -136,25 +143,6 @@ class DocumentValidatorTest : public ::testing::Test {
                                      .SetCardinality(CARDINALITY_REPEATED)))
             .Build();
 
-    SchemaTypeConfigProto deduped_email_type_copy =
-        SchemaTypeConfigBuilder()
-            .SetType(kTypeDedupedEmailCopy)
-            .AddProperty(PropertyConfigBuilder()
-                             .SetName(kPropertySubject)
-                             .SetDataType(TYPE_STRING)
-                             .SetCardinality(CARDINALITY_REQUIRED))
-            .AddProperty(PropertyConfigBuilder()
-                             .SetName(kPropertyText)
-                             .SetDataType(TYPE_STRING)
-                             .SetCardinality(CARDINALITY_OPTIONAL))
-            .AddProperty(PropertyConfigBuilder()
-                             .SetName(kPropertyRecipients)
-                             .SetDataType(TYPE_STRING)
-                             .SetCardinality(CARDINALITY_REPEATED))
-            .BuildAndPopulatePropertiesDigest();
-    deduped_email_type_copy.clear_properties();
-    schema.mutable_types()->Add(std::move(deduped_email_type_copy));
-
     schema_dir_ = GetTestTempDir() + "/schema_store";
     ASSERT_TRUE(filesystem_.CreateDirectory(schema_dir_.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -181,7 +169,7 @@ class DocumentValidatorTest : public ::testing::Test {
   static DocumentBuilder SimpleEmailCopyBuilder() {
     return DocumentBuilder()
         .SetKey(kDefaultNamespace, "email/1")
-        .SetSchema(kTypeDedupedEmailCopy)
+        .SetSchema(kTypeEmailCopy)
         .AddStringProperty(kPropertySubject, kDefaultString)
         .AddStringProperty(kPropertyText, kDefaultString)
         .AddStringProperty(kPropertyRecipients, kDefaultString, kDefaultString,
@@ -232,7 +220,7 @@ TEST_F(DocumentValidatorTest, ValidateSimpleSchemasOk) {
   EXPECT_THAT(document_validator_->Validate(conversation), IsOk());
 }
 
-TEST_F(DocumentValidatorTest, ValidateDedupedSchemaTypeOk) {
+TEST_F(DocumentValidatorTest, ValidateDuplicateSchemaTypeOk) {
   DocumentProto email = SimpleEmailCopyBuilder().Build();
   EXPECT_THAT(document_validator_->Validate(email), IsOk());
 }

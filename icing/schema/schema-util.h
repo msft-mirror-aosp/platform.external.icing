@@ -17,6 +17,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -28,6 +29,7 @@
 #include "icing/feature-flags.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/util/sha256.h"
+#include <google/protobuf/repeated_field.h>
 
 namespace icing {
 namespace lib {
@@ -79,8 +81,7 @@ class SchemaUtil {
       SchemaTypeConfigProto ToSchemaTypeConfigProto() const {
         SchemaTypeConfigProto type_config = type_config_;
         if (type_config.properties().empty()) {
-          type_config.mutable_properties()->Add(properties_.begin(),
-                                                properties_.end());
+          *type_config.mutable_properties() = properties_;
         }
         return type_config;
       }
@@ -125,14 +126,26 @@ class SchemaUtil {
       return AddTypeConfig(SchemaTypeConfigProto(type_config));
     }
 
-    // Removes the type config from the cache. This is a no-op if the type
-    // config does not exist in the cache.
+    // Calculates the set of SchemaTypeConfigProtos that must be updated or
+    // added to the cache to perform the update given by `types_to_add` and
+    // `types_to_remove`.
+    // - Returns a map of schema type names to their updated raw
+    //   SchemaTypeConfigProtos, which may or may not have the properties field
+    //   populated.
+    // - The returned map does not contain the entries in 'types_to_remove' as
+    //   they are assumed to be removed completely from the cache.
+    //
+    // This method does NOT actually perform the update -- the internal state of
+    // the cache is not modified by this method.
     //
     // Returns:
-    //   - OK on success
-    //   - INTERNAL_ERROR for any IO or deserialization errors.
-    libtextclassifier3::Status RemoveTypeConfig(
-        std::string_view type_to_remove);
+    //   - On success, a map of schema type names to their updated
+    //     SchemaTypeConfigProtos.
+    //   - INTERNAL_ERROR for any deserialization errors or if there are
+    //     inconsistencies in the cache.
+    libtextclassifier3::StatusOr<TypeConfigMap> CalculateSchemaUpdatePlan(
+        std::vector<SchemaTypeConfigProto>&& types_to_add,
+        std::unordered_set<std::string_view>&& types_to_remove) const;
 
     // Fetches a TypeConfigHolder with a unified view of the base
     // SchemaTypeConfigProto and its full properties definitions.
@@ -160,6 +173,16 @@ class SchemaUtil {
     //   - NOT_FOUND if schema type name doesn't exist in the cache
     libtextclassifier3::StatusOr<const SchemaTypeConfigProto*>
     GetRawSchemaTypeConfigPointer(std::string_view schema_type) const;
+
+    // Returns whether a type config has been deduped in the cache.
+    //
+    // Returns:
+    //   - On success, true if the type config has been deduped and false
+    //     otherwise.
+    //   - NOT_FOUND if schema type name doesn't exist in the cache
+    //   - INTERNAL on any I/O errors
+    libtextclassifier3::StatusOr<bool> IsSchemaTypeConfigDeduped(
+        std::string_view schema_type) const;
 
     void Clear() {
       properties_sha256_digest_map_.clear();
@@ -493,7 +516,7 @@ class SchemaUtil {
   //   - The Sha256 properties digest on success.
   //   - INTERNAL_ERROR if deserialization fails because the digest is empty or
   //     invalid.
-  static libtextclassifier3::StatusOr<Sha256Digest> GetSchemaPropertiesDigest(
+  static std::optional<Sha256Digest> GetSchemaPropertiesDigest(
       const SchemaTypeConfigProto& type_config);
 
   // Validates the 'property_name' field.

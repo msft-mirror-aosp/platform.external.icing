@@ -475,14 +475,12 @@ int LiteIndex::FetchHits(
                        << status.error_message();
     }
 
-    if (options_.hit_buffer_sort_at_indexing) {
-      // This is the second case for sort. Log as this should be a very rare
-      // occasion.
-      ICING_LOG(WARNING) << "Sorting HitBuffer at querying time when "
-                            "hit_buffer_sort_at_indexing is enabled. Sort and "
-                            "merge HitBuffer in "
-                         << timer.Elapsed() * 1000 << " ms.";
-    }
+    // This is the second case for sort. Log as this should be a very rare
+    // occasion.
+    ICING_LOG(WARNING) << "Sorting HitBuffer at querying time when "
+                          "hit_buffer_sort_at_indexing is enabled. Sort and "
+                          "merge HitBuffer in "
+                       << timer.Elapsed() * 1000 << " ms.";
   }
 
   // This downgrade from an unique_lock to a shared_lock is safe because we're
@@ -513,25 +511,19 @@ int LiteIndex::FetchHits(
   int total_score = 0;
 
   // Linear search over unsorted tail in reverse iteration order.
-  // This should only be performed when hit_buffer_sort_at_indexing is enabled.
-  // When disabled, the entire HitBuffer should be sorted already and only
-  // binary search is needed.
-  if (options_.hit_buffer_sort_at_indexing) {
-    uint32_t unsorted_length = GetHitBufferUnsortedSizeImpl();
-    for (uint32_t i = 1; i <= unsorted_length; ++i) {
-      TermIdHitPair term_id_hit_pair = array[header_->cur_size() - i];
-      if (term_id_hit_pair.term_id() == term_id) {
-        // We've found a matched hit.
-        const Hit& matched_hit = term_id_hit_pair.hit();
-        // Score the hit and add to total_score. Also add the hits and its term
-        // frequency info to hits_out and term_frequency_out if the two vectors
-        // are non-null.
-        ScoreAndAppendFetchedHit(matched_hit, section_id_mask,
-                                 only_from_prefix_sections, score_by,
-                                 suggestion_result_checker, last_document_id,
-                                 is_last_document_desired, total_score,
-                                 hits_out, term_frequency_out);
-      }
+  uint32_t unsorted_length = GetHitBufferUnsortedSizeImpl();
+  for (uint32_t i = 1; i <= unsorted_length; ++i) {
+    TermIdHitPair term_id_hit_pair = array[header_->cur_size() - i];
+    if (term_id_hit_pair.term_id() == term_id) {
+      // We've found a matched hit.
+      const Hit& matched_hit = term_id_hit_pair.hit();
+      // Score the hit and add to total_score. Also add the hits and its term
+      // frequency info to hits_out and term_frequency_out if the two vectors
+      // are non-null.
+      ScoreAndAppendFetchedHit(
+          matched_hit, section_id_mask, only_from_prefix_sections, score_by,
+          suggestion_result_checker, last_document_id, is_last_document_desired,
+          total_score, hits_out, term_frequency_out);
     }
   }
 

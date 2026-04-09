@@ -84,6 +84,13 @@ message IcingSearchEngineFeatureInfoProto {
     // This feature enables handling of cases where a child document is indexed
     // before its join parent document.
     FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN = 8;
+
+    // Feature for flag
+    // IcingSearchEngineOptions::enable_schema_definition_deduping.
+    //
+    // This feature enables deduplication of schema property definitions in
+    // SchemaStore's internal storage.
+    FEATURE_SCHEMA_DEFINITION_DEDUPLICATION = 9;
   }
 
   // Whether the feature requires the document store to be rebuilt.
@@ -247,8 +254,8 @@ message IcingSearchEngineOptions {
   // querying time, before the first query after inserting new elements into the
   // HitBuffer.
   //
-  // The default value is false.
-  optional bool lite_index_sort_at_indexing = 12;
+  // The default value is true.
+  optional bool lite_index_sort_at_indexing = 12 [default = true];
 
   // Size (in bytes) at which Icing's lite index should sort and merge the
   // HitBuffer's unsorted tail into the sorted head for sorting at indexing
@@ -268,7 +275,7 @@ message IcingSearchEngineOptions {
 
   // Whether to enable blob store.
   // If set to true, the BlobStore will be created to store and retrieve blobs.
-  optional bool enable_blob_store = 16;
+  optional bool enable_blob_store = 16 [default = true];
 
   // The time to live for an orphan blob. If the blob has no reference document
   // for this amount of time, it will be deleted.
@@ -492,6 +499,9 @@ message IcingSearchEngineOptions {
   // Once enabled, type configs with the same property definitions will be
   // deduped, and only one of the types will be stored with full property
   // definitions.
+  //
+  // NOTE: Deduping will only take effect if enable_schema_type_id_optimization
+  // is also enabled.
   optional bool enable_schema_definition_deduping = 53;
 
   // Whether to enable database stableness logging.

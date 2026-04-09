@@ -137,7 +137,6 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_document_store_namespace_id_fingerprint(true);
   icing_options.set_enable_schema_database(true);
-  icing_options.set_enable_scorable_properties(true);
   icing_options.set_enable_repeated_field_joins(true);
   icing_options.set_enable_soft_index_restoration(true);
   icing_options.set_enable_qualified_id_join_index_v3(true);
@@ -10278,53 +10277,6 @@ TEST_F(IcingSearchEngineSearchTest,
               ElementsAre(expected_score));
 }
 
-TEST_F(IcingSearchEngineSearchTest,
-       SearchWithRankingByScorableProperty_ScorablePropertyDisabled) {
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder()
-                  .SetType("Person")
-                  .AddProperty(
-                      PropertyConfigBuilder()
-                          .SetName("name")
-                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-                          .SetCardinality(CARDINALITY_OPTIONAL))
-                  .AddProperty(
-                      PropertyConfigBuilder()
-                          .SetName("income")
-                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
-                          .SetScorableType(SCORABLE_TYPE_ENABLED)
-                          .SetCardinality(CARDINALITY_REPEATED)))
-          .Build();
-  DocumentProto document0 = DocumentBuilder()
-                                .SetKey("icing", "person0")
-                                .SetSchema("Person")
-                                .SetScore(10)
-                                .SetCreationTimestampMs(1)
-                                .AddStringProperty("name", "John")
-                                .AddDoubleProperty("income", 10000, 20000)
-                                .Build();
-  IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_scorable_properties(false);
-  IcingSearchEngine icing(options, GetTestJniCache());
-  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
-  EXPECT_THAT(icing.Put(document0).status(), ProtoIsOk());
-
-  SearchSpecProto search_spec;
-  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
-  scoring_spec.set_rank_by(
-      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
-  scoring_spec.set_advanced_scoring_expression(
-      "this.documentScore() + sum(getScorableProperty(\"Person\", "
-      "\"not_exist\"))");
-  AddSchemaTypeAliasMap(&scoring_spec, "Person", {"Person"});
-
-  SearchResultProto results = icing.Search(search_spec, scoring_spec,
-                                           ResultSpecProto::default_instance());
-  EXPECT_THAT(results.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-}
 
 TEST_F(IcingSearchEngineSearchTest, JoinSearchWithRankingByScorableProperty) {
   SchemaProto schema =
@@ -10545,98 +10497,6 @@ TEST_F(IcingSearchEngineSearchTest, JoinSearchWithRankingByScorableProperty) {
                   person_tim_expected_score));
 }
 
-TEST_F(IcingSearchEngineSearchTest,
-       JoinSearchWithRankingByScorableProperty_ScorablePropertyDisabled) {
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
-              PropertyConfigBuilder()
-                  .SetName("name")
-                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
-          .AddType(
-              SchemaTypeConfigBuilder()
-                  .SetType("CallLogSignalDoc")
-                  .AddProperty(PropertyConfigBuilder()
-                                   .SetName("personQualifiedId")
-                                   .SetDataTypeJoinableString(
-                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID)
-                                   .SetCardinality(CARDINALITY_OPTIONAL))
-                  .AddProperty(
-                      PropertyConfigBuilder()
-                          .SetName("rfsScore")
-                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
-                          .SetScorableType(SCORABLE_TYPE_ENABLED)
-                          .SetCardinality(CARDINALITY_REPEATED)))
-          .Build();
-
-  // John has 2 call logs and 1 sms log to join.
-  DocumentProto person_john_doc =
-      DocumentBuilder()
-          .SetKey("namespace", "person_john_id")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .SetSchema("Person")
-          .SetScore(10)
-          .AddStringProperty("name", "John")
-          .Build();
-  DocumentProto john_call_log_doc1 =
-      DocumentBuilder()
-          .SetKey("namespace", "call_log_id1")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .SetSchema("CallLogSignalDoc")
-          .SetScore(5)
-          .AddDoubleProperty("rfsScore", 100, 200)
-          .AddStringProperty("personQualifiedId", "namespace#person_john_id")
-          .Build();
-
-  IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_scorable_properties(false);
-  IcingSearchEngine icing(options, GetTestJniCache());
-  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
-  EXPECT_THAT(icing.Put(person_john_doc).status(), ProtoIsOk());
-  EXPECT_THAT(icing.Put(john_call_log_doc1).status(), ProtoIsOk());
-
-  // all people will be matched.
-  SearchSpecProto parent_search_spec;
-  parent_search_spec.add_schema_type_filters("Person");
-
-  // Child scoring spec: ranking by call logs and sms logs' rfsScore.
-  ScoringSpecProto child_scoring_spec = GetDefaultScoringSpec();
-  child_scoring_spec.set_rank_by(
-      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
-  child_scoring_spec.set_advanced_scoring_expression(
-      "sum(getScorableProperty(\"CallLogSignalDoc\", \"rfsScore\"))");
-  AddSchemaTypeAliasMap(&child_scoring_spec, "Person", {"Person"});
-  AddSchemaTypeAliasMap(&child_scoring_spec, "CallLogSignalDoc",
-                        {"CallLogSignalDoc"});
-
-  JoinSpecProto* join_spec = parent_search_spec.mutable_join_spec();
-  join_spec->set_parent_property_expression(
-      std::string(JoinProcessor::kQualifiedIdExpr));
-  join_spec->set_child_property_expression("personQualifiedId");
-  JoinSpecProto::NestedSpecProto* nested_spec =
-      join_spec->mutable_nested_spec();
-  *nested_spec->mutable_scoring_spec() = child_scoring_spec;
-  nested_spec->mutable_search_spec()->add_schema_type_filters(
-      "CallLogSignalDoc");
-
-  // Parent ScoringSpec
-  ScoringSpecProto parent_scoring_spec = GetDefaultScoringSpec();
-  parent_scoring_spec.set_rank_by(
-      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
-  parent_scoring_spec.set_advanced_scoring_expression(
-      "this.documentScore() + "
-      "maxOrDefault(this.childrenRankingSignals(), 0)");
-  AddSchemaTypeAliasMap(&parent_scoring_spec, "Person", {"Person"});
-  AddSchemaTypeAliasMap(&parent_scoring_spec, "CallLogSignalDoc",
-                        {"CallLogSignalDoc"});
-
-  SearchResultProto results =
-      icing.Search(parent_search_spec, parent_scoring_spec,
-                   ResultSpecProto::default_instance());
-  EXPECT_THAT(results.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-}
 
 TEST_F(IcingSearchEngineSearchTest,
        SearchWithScorableProperty_DocumentsFromMultipleMatchedSchemaTypes) {

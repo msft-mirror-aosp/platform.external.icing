@@ -592,7 +592,6 @@ IcingSearchEngine::IcingSearchEngine(
     std::unique_ptr<Clock> clock, std::unique_ptr<const JniCache> jni_cache)
     : options_(std::move(options)),
       feature_flags_(options_.allow_circular_schema_definitions(),
-                     options_.enable_scorable_properties(),
                      options_.enable_repeated_field_joins(),
                      options_.enable_embedding_backup_generation(),
                      options_.enable_schema_database(),
@@ -902,10 +901,14 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   bool perform_schema_database_migration =
       version_util::SchemaDatabaseMigrationRequired(stored_version_proto) &&
       options_.enable_schema_database();
+  bool recalculate_schema_properties_digests =
+      version_util::ShouldRecalculatePropertiesDigestsForDeduping(
+          stored_version_proto) &&
+      options_.enable_schema_definition_deduping();
   auto migrate_status = SchemaStore::MigrateSchema(
       filesystem_.get(), MakeSchemaDirectoryPath(options_.base_dir()),
       version_state_change, version_util::kVersion,
-      perform_schema_database_migration);
+      perform_schema_database_migration, recalculate_schema_properties_digests);
   if (!migrate_status.ok()) {
     initialize_stats->set_failure_stage(
         InitializeStatsProto::FailureStage::MIGRATE_SCHEMA);
@@ -1029,16 +1032,14 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     }
 
     // Initialize (empty) blob store.
-    if (options_.enable_blob_store()) {
-      auto blob_store_init_status =
-          InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
-                              options_.blob_store_compression_level(),
-                              options_.blob_store_compression_mem_level());
-      if (!blob_store_init_status.ok()) {
-        initialize_stats->set_failure_stage(
-            InitializeStatsProto::FailureStage::BLOB_STORE_INSTANTIATION);
-        return blob_store_init_status;
-      }
+    auto blob_store_init_status =
+        InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
+                            options_.blob_store_compression_level(),
+                            options_.blob_store_compression_mem_level());
+    if (!blob_store_init_status.ok()) {
+      initialize_stats->set_failure_stage(
+          InitializeStatsProto::FailureStage::BLOB_STORE_INSTANTIATION);
+      return blob_store_init_status;
     }
 
     // Initialize (empty) document store.
@@ -1070,16 +1071,14 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     // In either case, related derived files have already been discarded above.
     // We just need to re-initialize each component here.
 
-    if (options_.enable_blob_store()) {
-      auto blob_store_init_status =
-          InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
-                              options_.blob_store_compression_level(),
-                              options_.blob_store_compression_mem_level());
-      if (!blob_store_init_status.ok()) {
-        initialize_stats->set_failure_stage(
-            InitializeStatsProto::FailureStage::BLOB_STORE_INSTANTIATION);
-        return blob_store_init_status;
-      }
+    auto blob_store_init_status =
+        InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
+                            options_.blob_store_compression_level(),
+                            options_.blob_store_compression_mem_level());
+    if (!blob_store_init_status.ok()) {
+      initialize_stats->set_failure_stage(
+          InitializeStatsProto::FailureStage::BLOB_STORE_INSTANTIATION);
+      return blob_store_init_status;
     }
 
     // Initialize document store. This also rebuilds all derived files in the
@@ -1119,16 +1118,14 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
     //   need to re-initialize each component here.
 
     // Initialize blob store.
-    if (options_.enable_blob_store()) {
-      auto blob_store_init_status =
-          InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
-                              options_.blob_store_compression_level(),
-                              options_.blob_store_compression_mem_level());
-      if (!blob_store_init_status.ok()) {
-        initialize_stats->set_failure_stage(
-            InitializeStatsProto::FailureStage::BLOB_STORE_INSTANTIATION);
-        return blob_store_init_status;
-      }
+    auto blob_store_init_status =
+        InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
+                            options_.blob_store_compression_level(),
+                            options_.blob_store_compression_mem_level());
+    if (!blob_store_init_status.ok()) {
+      initialize_stats->set_failure_stage(
+          InitializeStatsProto::FailureStage::BLOB_STORE_INSTANTIATION);
+      return blob_store_init_status;
     }
 
     // Initialize document store. This also rebuilds all derived files in the
@@ -1311,7 +1308,6 @@ libtextclassifier3::Status IcingSearchEngine::InitializeIndex(
         absl_ports::StrCat("Could not create directory: ", index_dir));
   }
   Index::Options index_options(index_dir, options_.index_merge_size(),
-                               /*lite_index_sort_at_indexing=*/true,
                                options_.lite_index_sort_size());
 
   // Term index
@@ -1744,31 +1740,29 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
       }
     }
 
-    if (feature_flags_.enable_scorable_properties()) {
-      if (!set_schema_result.schema_types_scorable_property_inconsistent_by_id
-               .empty()) {
-        needs_flush_derived_files = true;
+    if (!set_schema_result.schema_types_scorable_property_inconsistent_by_id
+             .empty()) {
+      needs_flush_derived_files = true;
 
-        ScopedTimer scorable_property_cache_regeneration_timer(
-            clock_->GetNewTimer(), [&set_schema_stats](int64_t t) {
-              set_schema_stats
-                  ->set_scorable_property_cache_regeneration_latency_ms(t);
-            });
-        for (const std::string& scorable_property_incompatible_type :
-             set_schema_result
-                 .schema_types_scorable_property_inconsistent_by_name) {
-          result_proto.add_scorable_property_incompatible_changed_schema_types(
-              scorable_property_incompatible_type);
-        }
-        status = document_store_->RegenerateScorablePropertyCache(
-            set_schema_result
-                .schema_types_scorable_property_inconsistent_by_id);
-        if (!status.ok()) {
-          TransformStatus(status, result_status);
-          return result_proto;
-        }
+      ScopedTimer scorable_property_cache_regeneration_timer(
+          clock_->GetNewTimer(), [&set_schema_stats](int64_t t) {
+            set_schema_stats
+                ->set_scorable_property_cache_regeneration_latency_ms(t);
+          });
+      for (const std::string& scorable_property_incompatible_type :
+           set_schema_result
+               .schema_types_scorable_property_inconsistent_by_name) {
+        result_proto.add_scorable_property_incompatible_changed_schema_types(
+            scorable_property_incompatible_type);
+      }
+      status = document_store_->RegenerateScorablePropertyCache(
+          set_schema_result.schema_types_scorable_property_inconsistent_by_id);
+      if (!status.ok()) {
+        TransformStatus(status, result_status);
+        return result_proto;
       }
     }
+
     result_status->set_code(StatusProto::OK);
     if (needs_flush_derived_files) {
       // If derived files need to be flushed, then we need RECOVERY_PROOF which:
@@ -1915,15 +1909,27 @@ BatchPutResultProto IcingSearchEngine::BatchPut(
 
   absl_ports::unique_lock l(&mutex_);  // Acquire lock once for the batch
 
-  if (!initialized_) {
-    // Handle not initialized case for all documents
-    for (const DocumentProto& document_proto :
-         put_document_request.documents()) {
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+
+  for (DocumentProto& document_proto :
+       *(put_document_request.mutable_documents())) {
+    // Check `initialized_` inside the loop because a previous iteration's
+    // PutLocked() can invalidate the Icing search engine. For example, a
+    // catastrophic error (e.g. out of storage space) can trigger a Database
+    // Wipeout via ResetLocked().
+    if (!initialized_) {
       PutResultProto* put_result =
           batch_put_result_proto.mutable_put_result_protos()->Add();
       put_result->set_uri(document_proto.uri());
       put_result->mutable_status()->set_code(StatusProto::FAILED_PRECONDITION);
+    } else {
+      batch_put_result_proto.mutable_put_result_protos()->Add(
+          PutLocked(std::move(document_proto),
+                    current_time_ms));  // Call the locked version
     }
+  }
+
+  if (!initialized_) {
     batch_put_result_proto.mutable_status()->set_message(
         "IcingSearchEngine has not been initialized!");
     batch_put_result_proto.mutable_status()->set_code(
@@ -1931,15 +1937,6 @@ BatchPutResultProto IcingSearchEngine::BatchPut(
     batch_put_result_proto.set_vm_binder_transaction_latency_start_time_ms(
         clock_->GetSystemTimeMilliseconds());
     return batch_put_result_proto;
-  }
-
-  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
-
-  for (DocumentProto& document_proto :
-       *(put_document_request.mutable_documents())) {
-    batch_put_result_proto.mutable_put_result_protos()->Add(
-        PutLocked(std::move(document_proto),
-                  current_time_ms));  // Call the locked version
   }
 
   WriteDatabaseStablenessLog(IcingApiCallType::BATCH_PUT);

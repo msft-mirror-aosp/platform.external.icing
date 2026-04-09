@@ -225,12 +225,9 @@ CreateUriMapper(const Filesystem& filesystem, const std::string& base_dir,
   }
 }
 
-// Find the existing blob handles in the given document and remove them from the
-// dead_blob_handles set. Those are the blob handles that are still in use.
-//
-// This method is flag-guarded by the flag enable_blob_store. If the flag is
-// disabled, the dead_blob_handles must be empty and this method will be a
-// no-op.
+// RemoveAliveBlobHandles find the existing blob handles in the given document
+// and remove them from the dead_blob_handles set. Those are the blob handles
+// that are still in use.
 //
 // The type_blob_map is a map from schema type to a set of blob property names.
 void RemoveAliveBlobHandles(
@@ -1334,9 +1331,7 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
 
 std::unique_ptr<ScorablePropertySet> DocumentStore::GetScorablePropertySet(
     DocumentId document_id, int64_t current_time_ms) const {
-  if (!feature_flags_.enable_scorable_properties()) {
-    return nullptr;
-  }
+  // The scorable properties feature has been fully rolled out.
 
   // Get scorable property cache index from the score_cache_
   libtextclassifier3::StatusOr<const DocumentAssociatedScoreData*>
@@ -2716,9 +2711,7 @@ DocumentStore::GetDebugInfo(int verbosity) const {
 
 libtextclassifier3::StatusOr<int> DocumentStore::UpdateScorablePropertyCache(
     const DocumentProto& document, SchemaTypeId schema_type_id) {
-  if (!feature_flags_.enable_scorable_properties()) {
-    return kInvalidScorablePropertyCacheIndex;
-  }
+  // The scorable properties feature has been fully rolled out.
   ICING_ASSIGN_OR_RETURN(
       const std::vector<ScorablePropertyManager::ScorablePropertyInfo>*
           ordered_scorable_property_info,

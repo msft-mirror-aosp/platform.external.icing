@@ -23,7 +23,6 @@ namespace lib {
 class FeatureFlags {
  public:
   explicit FeatureFlags(bool allow_circular_schema_definitions,
-                        bool enable_scorable_properties,
                         bool enable_repeated_field_joins,
                         bool enable_embedding_backup_generation,
                         bool enable_schema_database,
@@ -41,7 +40,6 @@ class FeatureFlags {
                         bool enable_embed_query_optimization,
                         bool enable_schema_definition_deduping)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
-        enable_scorable_properties_(enable_scorable_properties),
         enable_repeated_field_joins_(enable_repeated_field_joins),
         enable_embedding_backup_generation_(enable_embedding_backup_generation),
         enable_schema_database_(enable_schema_database),
@@ -67,10 +65,6 @@ class FeatureFlags {
 
   bool allow_circular_schema_definitions() const {
     return allow_circular_schema_definitions_;
-  }
-
-  bool enable_scorable_properties() const {
-    return enable_scorable_properties_;
   }
 
   bool enable_repeated_field_joins() const {
@@ -140,7 +134,6 @@ class FeatureFlags {
   // added in the Android U timeline and is not a trunk-stable flag.
   bool allow_circular_schema_definitions_;
 
-  bool enable_scorable_properties_;
 
   bool enable_repeated_field_joins_;
 

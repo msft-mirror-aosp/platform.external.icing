@@ -669,6 +669,21 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
                             actual_copy, result_listener);
 }
 
+MATCHER_P(EqualsSchemaProtoIgnorePropertiesDigest, expected, "") {
+  SchemaProto actual_copy = arg;
+  for (SchemaTypeConfigProto& type_config : *actual_copy.mutable_types()) {
+    type_config.clear_properties_digest();
+  }
+
+  SchemaProto expected_copy = expected;
+  for (SchemaTypeConfigProto& type_config : *expected_copy.mutable_types()) {
+    type_config.clear_properties_digest();
+  }
+
+  return ExplainMatchResult(portable_equals_proto::EqualsProto(expected_copy),
+                            actual_copy, result_listener);
+}
+
 MATCHER_P4(EqualsCharacterIterator, expected_text, expected_utf8_index,
            expected_utf16_index, expected_utf32_index, "") {
   const CharacterIterator& actual = arg;

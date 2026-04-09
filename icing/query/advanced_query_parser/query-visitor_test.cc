@@ -217,7 +217,6 @@ class QueryVisitorTest
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(
         FeatureFlags(/*enable_circular_schema_definitions=*/true,
-                     /*enable_scorable_properties=*/true,
                      /*enable_repeated_field_joins=*/true,
                      /*enable_embedding_backup_generation=*/true,
                      /*enable_schema_database=*/true,
@@ -281,7 +280,6 @@ class QueryVisitorTest
 
     Index::Options options(index_dir_.c_str(),
                            /*index_merge_size=*/1024 * 1024,
-                           /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_,

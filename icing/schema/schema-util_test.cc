@@ -4491,7 +4491,6 @@ TEST_P(SchemaUtilTest,
   // We need to explicitly override enable_repeated_field_joins to false.
   feature_flags_ = std::make_unique<FeatureFlags>(
       GetParam().allow_circular_schema_definitions(),
-      /*enable_scorable_properties=*/true,
       /*enable_repeated_field_joins=*/false,
       /*enable_embedding_backup_generation=*/true,
       /*enable_schema_database=*/true,
@@ -4564,7 +4563,6 @@ TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
   // We need to explicitly override enable_repeated_field_joins to true.
   feature_flags_ = std::make_unique<FeatureFlags>(
       GetParam().allow_circular_schema_definitions(),
-      /*enable_scorable_properties=*/true,
       /*enable_repeated_field_joins=*/true,
       /*enable_embedding_backup_generation=*/true,
       /*enable_schema_database=*/true,
@@ -5902,7 +5900,6 @@ INSTANTIATE_TEST_SUITE_P(
     SchemaUtilTest, SchemaUtilTest,
     testing::Values(FeatureFlags(
                         /*enable_circular_schema_definitions=*/false,
-                        /*enable_scorable_properties=*/true,
                         /*enable_repeated_field_joins=*/true,
                         /*enable_embedding_backup_generation=*/true,
                         /*enable_schema_database=*/true,
@@ -5921,7 +5918,6 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_schema_definition_deduping=*/false),
                     FeatureFlags(
                         /*enable_circular_schema_definitions=*/true,
-                        /*enable_scorable_properties=*/true,
                         /*enable_repeated_field_joins=*/true,
                         /*enable_embedding_backup_generation=*/true,
                         /*enable_schema_database=*/true,

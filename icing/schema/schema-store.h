@@ -282,7 +282,8 @@ class SchemaStore {
   static libtextclassifier3::Status MigrateSchema(
       const Filesystem* filesystem, const std::string& base_dir,
       version_util::StateChange version_state_change, int32_t new_version,
-      bool perform_schema_database_migration);
+      bool perform_schema_database_migration,
+      bool recalculate_properties_digests);
 
   // Discards all derived data in the schema store.
   //
@@ -688,13 +689,18 @@ class SchemaStore {
       const Filesystem* filesystem, const std::string& base_dir,
       version_util::StateChange version_state_change, int32_t new_version);
 
-  // Populates the schema database field in the schema proto that is stored in
-  // the input schema file.
+  // Rewrites the schema file on disk by recomputing and updating its metadata
+  // fields as specified.
+  //
+  // Currently, the metadata fields that can be updated are:
+  //  - `database` field: if `update_database_field` is true.
+  //  - `properties_digest` field: if `update_properties_digest` is true.
   //
   // Returns:
   //   OK on success or nothing to migrate
   //   INTERNAL_ERROR on IO error
-  static libtextclassifier3::Status PopulateSchemaDatabaseFieldForSchemaFile(
+  static libtextclassifier3::Status RewriteSchemaFileMetadataFields(
+      bool update_database_field, bool update_properties_digest_field,
       const Filesystem* filesystem, const std::string& schema_filename);
 
   // Verifies that there is no error retrieving a previously set schema. Then
@@ -819,8 +825,7 @@ class SchemaStore {
   //   - INVALID_ARGUMENT_ERROR if the new schema is invalid.
   libtextclassifier3::StatusOr<SchemaStore::SetSchemaResult>
   SetInitialSchemaForDatabase(SchemaProto new_schema,
-                              const std::string& database,
-                              bool ignore_errors_and_delete_documents);
+                              const std::string& database);
 
   // Sets the schema for a database, overriding any existing schema for that
   // database.
@@ -907,8 +912,13 @@ class SchemaStore {
   // - If input_database_schema is an empty proto, then all types from
   //   database_to_update are deleted.
   //
+  // If `enable_schema_definition_deduping` is true, then the returned
+  // SchemaProto's type configs will be deduped.
+  //
   // Requires:
   //   - input_database_schema is valid according to `ValidateSchemaDatabase`.
+  //   - `schema_delta` is the real schema delta between the existing schema and
+  //     the input schema computed using `SchemaUtil::ComputeSchemaDelta`.
   //
   // Returns:
   //   - SchemaProto on success
@@ -917,8 +927,8 @@ class SchemaStore {
   //   - INVALID_ARGUMENT_ERROR if the input schema does not match
   //     database_to_update.
   libtextclassifier3::StatusOr<SchemaProto> GetFullOptimizedSchemaProto(
-      SchemaProto input_database_schema,
-      const std::string& database_to_update) const;
+      SchemaProto input_database_schema, const std::string& database_to_update,
+      const SchemaUtil::SchemaDelta& schema_delta) const;
 
   // TODO: b/434218554 - Remove this method once schema type id optimization is
   // fully rolled out.
@@ -957,6 +967,25 @@ class SchemaStore {
   libtextclassifier3::StatusOr<SchemaProto> GetFullSchemaProtoWithUpdatedDb(
       SchemaProto input_database_schema,
       const std::string& database_to_update) const;
+
+  // Merges new types into the existing schema and returns a deduped
+  // SchemaProto.
+  //
+  // Requires:
+  //   - `new_types_vector` is type config vector constructed from a schema
+  //     that is valid according to `ValidateSchemaDatabase` and
+  //     `SchemaUtil::Validate`.
+  //   - `schema_delta` is the real schema delta between the existing schema and
+  //     the schema represented by `new_types_vector` computed using
+  //     `SchemaUtil::ComputeSchemaDelta`.
+  //
+  // Returns:
+  //   - SchemaProto on success
+  //   - INTERNAL_ERROR on any IO errors, or if the schema store was not
+  //     previously initialized properly.
+  libtextclassifier3::StatusOr<SchemaProto> BuildDedupedSchemaProto(
+      std::vector<SchemaTypeConfigProto>&& new_types_vector,
+      const SchemaUtil::SchemaDelta& schema_delta) const;
 
   const Filesystem* filesystem_;
   std::string base_dir_;

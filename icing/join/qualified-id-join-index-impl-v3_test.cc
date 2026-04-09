@@ -75,8 +75,7 @@ class QualifiedIdJoinIndexImplV3Test : public ::testing::TestWithParam<bool> {
  protected:
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(
-        /*enable_circular_schema_definitions=*/true,
-        /*enable_scorable_properties=*/true,
+        /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
         /*enable_schema_database=*/true,
