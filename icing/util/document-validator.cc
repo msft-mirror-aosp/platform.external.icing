@@ -77,19 +77,22 @@ libtextclassifier3::Status DocumentValidator::Validate(
 
   // TODO(b/144458732): Implement a more robust version of
   // ICING_ASSIGN_OR_RETURN that can support error logging.
-  auto type_config_or = schema_store_->GetSchemaTypeConfig(document.schema());
+  libtextclassifier3::StatusOr<
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder>
+      type_config_or =
+          schema_store_->GetSchemaTypeConfigHolder(document.schema());
   if (!type_config_or.ok()) {
     ICING_LOG(ERROR) << type_config_or.status().error_message()
                      << " Error while validating document ("
                      << document.namespace_() << ", " << document.uri() << ")";
     return type_config_or.status();
   }
-  const SchemaTypeConfigProto* type_config =
+  SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config =
       std::move(type_config_or).ValueOrDie();
 
   int32_t num_required_properties_actual = 0;
   SchemaUtil::ParsedPropertyConfigs parsed_property_configs =
-      SchemaUtil::ParsePropertyConfigs(*type_config);
+      SchemaUtil::ParsePropertyConfigs(type_config.properties());
   std::unordered_set<std::string_view> unique_properties;
 
   for (const PropertyProto& property : document.properties()) {

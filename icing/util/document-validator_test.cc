@@ -18,6 +18,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
@@ -43,6 +44,7 @@ using ::testing::HasSubstr;
 
 // type and property names of EmailMessage and EmailMessageWithNote
 constexpr char kTypeEmail[] = "EmailMessage";
+constexpr char kTypeEmailCopy[] = "EmailMessageCopy";
 constexpr char kTypeEmailWithNote[] = "EmailMessageWithNote";
 constexpr char kPropertySubject[] = "subject";
 constexpr char kPropertyText[] = "text";
@@ -65,23 +67,30 @@ class DocumentValidatorTest : public ::testing::Test {
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
 
+    SchemaTypeConfigProto email_type =
+        SchemaTypeConfigBuilder()
+            .SetType(kTypeEmail)
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertySubject)
+                             .SetDataType(TYPE_STRING)
+                             .SetCardinality(CARDINALITY_REQUIRED))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertyText)
+                             .SetDataType(TYPE_STRING)
+                             .SetCardinality(CARDINALITY_OPTIONAL))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertyRecipients)
+                             .SetDataType(TYPE_STRING)
+                             .SetCardinality(CARDINALITY_REPEATED))
+            .Build();
+    SchemaTypeConfigProto email_type_copy =
+        SchemaTypeConfigBuilder(email_type)
+            .SetType(kTypeEmailCopy)
+            .Build();
     SchemaProto schema =
         SchemaBuilder()
-            .AddType(
-                SchemaTypeConfigBuilder()
-                    .SetType(kTypeEmail)
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kPropertySubject)
-                                     .SetDataType(TYPE_STRING)
-                                     .SetCardinality(CARDINALITY_REQUIRED))
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kPropertyText)
-                                     .SetDataType(TYPE_STRING)
-                                     .SetCardinality(CARDINALITY_OPTIONAL))
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kPropertyRecipients)
-                                     .SetDataType(TYPE_STRING)
-                                     .SetCardinality(CARDINALITY_REPEATED)))
+            .AddType(email_type)
+            .AddType(email_type_copy)
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType(kTypeEmailWithNote)
@@ -147,7 +156,7 @@ class DocumentValidatorTest : public ::testing::Test {
         std::make_unique<DocumentValidator>(schema_store_.get());
   }
 
-  DocumentBuilder SimpleEmailBuilder() {
+  static DocumentBuilder SimpleEmailBuilder() {
     return DocumentBuilder()
         .SetKey(kDefaultNamespace, "email/1")
         .SetSchema(kTypeEmail)
@@ -157,7 +166,17 @@ class DocumentValidatorTest : public ::testing::Test {
                            kDefaultString);
   }
 
-  DocumentBuilder SimpleEmailWithNoteBuilder() {
+  static DocumentBuilder SimpleEmailCopyBuilder() {
+    return DocumentBuilder()
+        .SetKey(kDefaultNamespace, "email/1")
+        .SetSchema(kTypeEmailCopy)
+        .AddStringProperty(kPropertySubject, kDefaultString)
+        .AddStringProperty(kPropertyText, kDefaultString)
+        .AddStringProperty(kPropertyRecipients, kDefaultString, kDefaultString,
+                           kDefaultString);
+  }
+
+  static DocumentBuilder SimpleEmailWithNoteBuilder() {
     PropertyProto::VectorProto vector;
     vector.add_values(0.1);
     vector.add_values(0.2);
@@ -175,7 +194,7 @@ class DocumentValidatorTest : public ::testing::Test {
         .AddVectorProperty(kPropertyNoteEmbedding, vector);
   }
 
-  DocumentBuilder SimpleConversationBuilder() {
+  static DocumentBuilder SimpleConversationBuilder() {
     return DocumentBuilder()
         .SetKey(kDefaultNamespace, "conversation/1")
         .SetSchema(kTypeConversation)
@@ -199,6 +218,11 @@ TEST_F(DocumentValidatorTest, ValidateSimpleSchemasOk) {
 
   DocumentProto conversation = SimpleConversationBuilder().Build();
   EXPECT_THAT(document_validator_->Validate(conversation), IsOk());
+}
+
+TEST_F(DocumentValidatorTest, ValidateDuplicateSchemaTypeOk) {
+  DocumentProto email = SimpleEmailCopyBuilder().Build();
+  EXPECT_THAT(document_validator_->Validate(email), IsOk());
 }
 
 TEST_F(DocumentValidatorTest, ValidateEmptyNamespaceInvalid) {
