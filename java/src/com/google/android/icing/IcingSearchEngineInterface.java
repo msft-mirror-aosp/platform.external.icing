@@ -1,5 +1,6 @@
 package com.google.android.icing;
 
+import com.google.android.icing.proto.BatchGetResultProto;
 import com.google.android.icing.proto.BatchPutResultProto;
 import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
@@ -10,11 +11,13 @@ import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
 import com.google.android.icing.proto.GetAllNamespacesResultProto;
+import com.google.android.icing.proto.GetNextPageRequestProto;
 import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
+import com.google.android.icing.proto.HandleExpiredDocumentsResultProto;
 import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
@@ -105,6 +108,13 @@ public interface IcingSearchEngineInterface extends Closeable {
    */
   GetResultProto get(String namespace, String uri, GetResultSpecProto getResultSpec);
 
+  /**
+   * Gets a list of documents.
+   *
+   * @param getResultSpec the spec for getting the documents.
+   */
+  BatchGetResultProto batchGet(GetResultSpecProto getResultSpec);
+
   /** Reports usage. */
   ReportUsageResultProto reportUsage(UsageReport usageReport);
 
@@ -120,11 +130,45 @@ public interface IcingSearchEngineInterface extends Closeable {
   SearchResultProto search(
       SearchSpecProto searchSpec, ScoringSpecProto scoringSpec, ResultSpecProto resultSpec);
 
-  /** Gets the next page. */
+  /**
+   * Gets the next page.
+   *
+   * <p>Note: This method is deprecated. Please use {@link #getNextPage(GetNextPageRequestProto)}
+   * instead.
+   */
   SearchResultProto getNextPage(long nextPageToken);
+
+  /**
+   * Gets the next page.
+   *
+   * @param getNextPageRequest the request proto for getting the next page.
+   */
+  SearchResultProto getNextPage(GetNextPageRequestProto getNextPageRequest);
 
   /** Invalidates the next page token. */
   void invalidateNextPageToken(long nextPageToken);
+
+  /**
+   * Handles expired documents. The operation includes:
+   *
+   * <ul>
+   *   <li>Zero out bytes for all expired documents.
+   *   <li>Propagate delete to child documents with delete propagation enabled. Zero out bytes for
+   *       all propagated documents.
+   * </ul>
+   *
+   * <p>For Icing direct clients, there is no need to call this API since Icing already has a native
+   * background thread for scheduling tasks to call it. This API is exposed only for AppSearch
+   * system service (in Android) since native background thread is not recommended in system
+   * service, and tasks should be scheduled at AppSearch level instead.
+   *
+   * <p>Note: {@link #optimize()} also zeros out bytes for non-alive (delete, expired) documents,
+   * but it also additionally reclaims disk space for storage and rebuilds indices by rearranging
+   * alive documents. On the other hand, {@link #handleExpiredDocuments()} is a cheaper API that
+   * only deals with expired documents and delete propagation for child documents, without
+   * reclaiming disk space or rebuilding indices which requires additional disk I/O.
+   */
+  HandleExpiredDocumentsResultProto handleExpiredDocuments();
 
   /** Gets a file descriptor to write blob data. */
   BlobProto openWriteBlob(PropertyProto.BlobHandleProto blobHandle);
@@ -137,6 +181,12 @@ public interface IcingSearchEngineInterface extends Closeable {
 
   /** Marks the blob is committed. */
   BlobProto commitBlob(PropertyProto.BlobHandleProto blobHandle);
+
+  /** Gets all the blob info from the blob store. */
+  BlobProto getAllBlobInfos();
+
+  /** Puts the blob info protos from the blob proto to the blob info proto log file. */
+  BlobProto putBlobInfos(BlobProto blobProto);
 
   /**
    * Deletes the document.
@@ -184,6 +234,9 @@ public interface IcingSearchEngineInterface extends Closeable {
 
   /** Clears all data from the current icing instance, and reinitializes it. */
   ResetResultProto reset();
+
+  /** Clears all data from the current icing instance. */
+  ResetResultProto clearAndDestroy();
 
   /** Closes the current icing instance. */
   @Override

@@ -132,6 +132,12 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @Nullable
+  public byte[] batchGet(@NonNull byte[] getResultSpecBytes) {
+    throwIfClosed();
+    return nativeBatchGet(this, getResultSpecBytes);
+  }
+
+  @Nullable
   public byte[] reportUsage(@NonNull byte[] usageReportBytes) {
     throwIfClosed();
     return nativeReportUsage(this, usageReportBytes);
@@ -168,9 +174,22 @@ public class IcingSearchEngineImpl implements Closeable {
     return nativeGetNextPage(this, nextPageToken, System.currentTimeMillis());
   }
 
+  @Nullable
+  public byte[] getNextPageWithRequestProto(@NonNull byte[] getNextPageRequestBytes) {
+    throwIfClosed();
+    return nativeGetNextPageWithRequestProto(
+        this, getNextPageRequestBytes, System.currentTimeMillis());
+  }
+
   public void invalidateNextPageToken(long nextPageToken) {
     throwIfClosed();
     nativeInvalidateNextPageToken(this, nextPageToken);
+  }
+
+  @Nullable
+  public byte[] handleExpiredDocuments() {
+    throwIfClosed();
+    return nativeHandleExpiredDocuments(this);
   }
 
   @NonNull
@@ -195,6 +214,18 @@ public class IcingSearchEngineImpl implements Closeable {
   public byte[] commitBlob(@NonNull byte[] blobHandleBytes) {
     throwIfClosed();
     return nativeCommitBlob(this, blobHandleBytes);
+  }
+
+  @NonNull
+  public byte[] getAllBlobInfos() {
+    throwIfClosed();
+    return nativeGetAllBlobInfos(this);
+  }
+
+  @NonNull
+  public byte[] putBlobInfos(@NonNull byte[] blobProtoBytes) {
+    throwIfClosed();
+    return nativePutBlobInfos(this, blobProtoBytes);
   }
 
   @Nullable
@@ -268,6 +299,12 @@ public class IcingSearchEngineImpl implements Closeable {
     return nativeReset(this);
   }
 
+  @Nullable
+  public byte[] clearAndDestroy() {
+    throwIfClosed();
+    return nativeClearAndDestroy(this);
+  }
+
   public static boolean shouldLog(short severity) {
     return shouldLog(severity, (short) 0);
   }
@@ -321,6 +358,9 @@ public class IcingSearchEngineImpl implements Closeable {
   private static native byte[] nativeGet(
       IcingSearchEngineImpl instance, String namespace, String uri, byte[] getResultSpecBytes);
 
+  private static native byte[] nativeBatchGet(
+      IcingSearchEngineImpl instance, byte[] getResultSpecBytes);
+
   private static native byte[] nativeReportUsage(
       IcingSearchEngineImpl instance, byte[] usageReportBytes);
 
@@ -336,8 +376,15 @@ public class IcingSearchEngineImpl implements Closeable {
   private static native byte[] nativeGetNextPage(
       IcingSearchEngineImpl instance, long nextPageToken, long javaToNativeStartTimestampMs);
 
+  private static native byte[] nativeGetNextPageWithRequestProto(
+      IcingSearchEngineImpl instance,
+      byte[] getNextPageRequestBytes,
+      long javaToNativeStartTimestampMs);
+
   private static native void nativeInvalidateNextPageToken(
       IcingSearchEngineImpl instance, long nextPageToken);
+
+  private static native byte[] nativeHandleExpiredDocuments(IcingSearchEngineImpl instance);
 
   private static native byte[] nativeOpenWriteBlob(
       IcingSearchEngineImpl instance, byte[] blobHandleBytes);
@@ -350,6 +397,11 @@ public class IcingSearchEngineImpl implements Closeable {
 
   private static native byte[] nativeCommitBlob(
       IcingSearchEngineImpl instance, byte[] blobHandleBytes);
+
+  private static native byte[] nativeGetAllBlobInfos(IcingSearchEngineImpl instance);
+
+  private static native byte[] nativePutBlobInfos(
+      IcingSearchEngineImpl instance, byte[] blobProtoBytes);
 
   private static native byte[] nativeDelete(
       IcingSearchEngineImpl instance, String namespace, String uri);
@@ -372,6 +424,8 @@ public class IcingSearchEngineImpl implements Closeable {
   private static native byte[] nativeGetStorageInfo(IcingSearchEngineImpl instance);
 
   private static native byte[] nativeReset(IcingSearchEngineImpl instance);
+
+  private static native byte[] nativeClearAndDestroy(IcingSearchEngineImpl instance);
 
   private static native byte[] nativeSearchSuggestions(
       IcingSearchEngineImpl instance, byte[] suggestionSpecBytes);

@@ -52,6 +52,9 @@ class ICING_SCOPED_LOCKABLE unique_lock {
       : lock_(*mu) {}
   ~unique_lock() ICING_UNLOCK_FUNCTION() = default;
 
+  // For fine-grained locking if necessary.
+  void unlock() ICING_UNLOCK_FUNCTION() { lock_.unlock(); }
+  void lock() ICING_EXCLUSIVE_LOCK_FUNCTION() { lock_.lock(); }
  private:
   std::unique_lock<shared_mutex> lock_;
 };

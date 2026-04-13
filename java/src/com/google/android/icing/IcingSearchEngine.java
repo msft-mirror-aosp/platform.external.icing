@@ -14,6 +14,7 @@
 
 package com.google.android.icing;
 
+import com.google.android.icing.proto.BatchGetResultProto;
 import com.google.android.icing.proto.BatchPutResultProto;
 import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
@@ -24,11 +25,13 @@ import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
 import com.google.android.icing.proto.GetAllNamespacesResultProto;
+import com.google.android.icing.proto.GetNextPageRequestProto;
 import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
+import com.google.android.icing.proto.HandleExpiredDocumentsResultProto;
 import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.LogSeverity;
@@ -135,7 +138,7 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
 
   @Override
   public @NonNull BatchPutResultProto batchPut(@NonNull PutDocumentRequest documents) {
-    return IcingSearchEngineUtils.byteArrayToPutResultProtos(
+    return IcingSearchEngineUtils.byteArrayToBatchPutResultProto(
         icingSearchEngineImpl.batchPut(documents.toByteArray()));
   }
 
@@ -144,6 +147,12 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
       @NonNull String namespace, @NonNull String uri, @NonNull GetResultSpecProto getResultSpec) {
     return IcingSearchEngineUtils.byteArrayToGetResultProto(
         icingSearchEngineImpl.get(namespace, uri, getResultSpec.toByteArray()));
+  }
+
+  @Override
+  public @NonNull BatchGetResultProto batchGet(@NonNull GetResultSpecProto getResultSpec) {
+    return IcingSearchEngineUtils.byteArrayToBatchGetResultProto(
+        icingSearchEngineImpl.batchGet(getResultSpec.toByteArray()));
   }
 
   @Override
@@ -175,8 +184,21 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   }
 
   @Override
+  public @NonNull SearchResultProto getNextPage(
+      @NonNull GetNextPageRequestProto getNextPageRequest) {
+    return IcingSearchEngineUtils.byteArrayToSearchResultProto(
+        icingSearchEngineImpl.getNextPageWithRequestProto(getNextPageRequest.toByteArray()));
+  }
+
+  @Override
   public void invalidateNextPageToken(long nextPageToken) {
     icingSearchEngineImpl.invalidateNextPageToken(nextPageToken);
+  }
+
+  @Override
+  public @NonNull HandleExpiredDocumentsResultProto handleExpiredDocuments() {
+    return IcingSearchEngineUtils.byteArrayToHandleExpiredDocumentsResultProto(
+        icingSearchEngineImpl.handleExpiredDocuments());
   }
 
   @Override
@@ -201,6 +223,17 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   public @NonNull BlobProto commitBlob(PropertyProto.@NonNull BlobHandleProto blobHandle) {
     return IcingSearchEngineUtils.byteArrayToBlobProto(
         icingSearchEngineImpl.commitBlob(blobHandle.toByteArray()));
+  }
+
+  @Override
+  public @NonNull BlobProto getAllBlobInfos() {
+    return IcingSearchEngineUtils.byteArrayToBlobProto(icingSearchEngineImpl.getAllBlobInfos());
+  }
+
+  @Override
+  public @NonNull BlobProto putBlobInfos(@NonNull BlobProto blobProto) {
+    return IcingSearchEngineUtils.byteArrayToBlobProto(
+        icingSearchEngineImpl.putBlobInfos(blobProto.toByteArray()));
   }
 
   @Override
@@ -273,6 +306,12 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   @Override
   public @NonNull ResetResultProto reset() {
     return IcingSearchEngineUtils.byteArrayToResetResultProto(icingSearchEngineImpl.reset());
+  }
+
+  @Override
+  public @NonNull ResetResultProto clearAndDestroy() {
+    return IcingSearchEngineUtils.byteArrayToResetResultProto(
+        icingSearchEngineImpl.clearAndDestroy());
   }
 
   public static boolean shouldLog(LogSeverity.Code severity) {

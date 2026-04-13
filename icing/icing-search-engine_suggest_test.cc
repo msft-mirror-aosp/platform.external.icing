@@ -144,7 +144,14 @@ SchemaProto CreatePersonAndEmailSchema() {
                                .SetName("sender")
                                .SetDataTypeDocument(
                                    "Person", /*index_nested_properties=*/true)
-                               .SetCardinality(CARDINALITY_OPTIONAL)))
+                               .SetCardinality(CARDINALITY_OPTIONAL))
+              .AddProperty(
+                  PropertyConfigBuilder()
+                      .SetName("embed")
+                      .SetDataTypeVector(
+                          EmbeddingIndexingConfig_EmbeddingIndexingType::
+                              LINEAR_SEARCH)
+                      .SetCardinality(CARDINALITY_OPTIONAL)))
       .Build();
 }
 
@@ -464,7 +471,7 @@ TEST_F(IcingSearchEngineSuggestTest, SearchSuggestionsTest_DeletionTest) {
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
   ASSERT_THAT(response.suggestions(),
-              UnorderedElementsAre(EqualsProto(suggestionFool)));
+              ElementsAre(EqualsProto(suggestionFool)));
 
   // namespace2 has this suggestion
   suggestion_spec.clear_namespace_filters();
@@ -472,7 +479,7 @@ TEST_F(IcingSearchEngineSuggestTest, SearchSuggestionsTest_DeletionTest) {
   response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
   ASSERT_THAT(response.suggestions(),
-              UnorderedElementsAre(EqualsProto(suggestionFool)));
+              ElementsAre(EqualsProto(suggestionFool)));
 
   // delete document from namespace 1
   EXPECT_THAT(icing.Delete("namespace1", "uri1").status(), ProtoIsOk());
@@ -490,7 +497,7 @@ TEST_F(IcingSearchEngineSuggestTest, SearchSuggestionsTest_DeletionTest) {
   response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
   ASSERT_THAT(response.suggestions(),
-              UnorderedElementsAre(EqualsProto(suggestionFool)));
+              ElementsAre(EqualsProto(suggestionFool)));
 }
 
 TEST_F(IcingSearchEngineSuggestTest,
@@ -536,7 +543,7 @@ TEST_F(IcingSearchEngineSuggestTest,
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
   ASSERT_THAT(response.suggestions(),
-              UnorderedElementsAre(EqualsProto(suggestionFool)));
+              ElementsAre(EqualsProto(suggestionFool)));
 
   // Only search in namespace1,uri2
   suggestion_spec.clear_document_uri_filters();
@@ -548,7 +555,7 @@ TEST_F(IcingSearchEngineSuggestTest,
   response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
   ASSERT_THAT(response.suggestions(),
-              UnorderedElementsAre(EqualsProto(suggestionFoo)));
+              ElementsAre(EqualsProto(suggestionFoo)));
 }
 
 TEST_F(IcingSearchEngineSuggestTest,
@@ -928,7 +935,7 @@ TEST_F(IcingSearchEngineSuggestTest,
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
   ASSERT_THAT(response.suggestions(),
-              UnorderedElementsAre(EqualsProto(suggestionFool)));
+              ElementsAre(EqualsProto(suggestionFool)));
 
   // Search in subject and sender.name
   suggestion_spec.clear_type_property_filters();
@@ -1214,7 +1221,7 @@ TEST_F(IcingSearchEngineSuggestTest, SearchSuggestionsTest_ExpiredTest) {
     SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
     ASSERT_THAT(response.status(), ProtoIsOk());
     ASSERT_THAT(response.suggestions(),
-                UnorderedElementsAre(EqualsProto(suggestionFool)));
+                ElementsAre(EqualsProto(suggestionFool)));
 
     // namespace2 has this suggestion
     suggestion_spec.clear_namespace_filters();
@@ -1222,7 +1229,7 @@ TEST_F(IcingSearchEngineSuggestTest, SearchSuggestionsTest_ExpiredTest) {
     response = icing.SearchSuggestions(suggestion_spec);
     ASSERT_THAT(response.status(), ProtoIsOk());
     ASSERT_THAT(response.suggestions(),
-                UnorderedElementsAre(EqualsProto(suggestionFool)));
+                ElementsAre(EqualsProto(suggestionFool)));
   }
   // We reinitialize here so we can feed in a fake clock this time
   {
@@ -1261,7 +1268,7 @@ TEST_F(IcingSearchEngineSuggestTest, SearchSuggestionsTest_ExpiredTest) {
     response = icing.SearchSuggestions(suggestion_spec);
     ASSERT_THAT(response.status(), ProtoIsOk());
     ASSERT_THAT(response.suggestions(),
-                UnorderedElementsAre(EqualsProto(suggestionFool)));
+                ElementsAre(EqualsProto(suggestionFool)));
   }
 }
 
@@ -1334,7 +1341,7 @@ TEST_F(IcingSearchEngineSuggestTest, SearchSuggestionsTest_MultipleTerms_And) {
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
   ASSERT_THAT(response.suggestions(),
-              UnorderedElementsAre(EqualsProto(suggestionBarFo)));
+              ElementsAre(EqualsProto(suggestionBarFo)));
 }
 
 TEST_F(IcingSearchEngineSuggestTest, SearchSuggestionsTest_MultipleTerms_Or) {
@@ -1423,7 +1430,7 @@ TEST_F(IcingSearchEngineSuggestTest,
   SuggestionResponse response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
   ASSERT_THAT(response.suggestions(),
-              UnorderedElementsAre(EqualsProto(suggestionSubjectFool)));
+              ElementsAre(EqualsProto(suggestionSubjectFool)));
 
   // Add property restriction, only search for nested sender.name
   suggestion_spec.set_prefix("sender.name:f");
@@ -1433,7 +1440,7 @@ TEST_F(IcingSearchEngineSuggestTest,
   response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
   ASSERT_THAT(response.suggestions(),
-              UnorderedElementsAre(EqualsProto(suggestionSenderNameFoo)));
+              ElementsAre(EqualsProto(suggestionSenderNameFoo)));
 
   // Add property restriction, only search for nonExist section
   suggestion_spec.set_prefix("none:f");
@@ -1504,7 +1511,7 @@ TEST_F(IcingSearchEngineSuggestTest,
   response = icing.SearchSuggestions(suggestion_spec);
   ASSERT_THAT(response.status(), ProtoIsOk());
   ASSERT_THAT(response.suggestions(),
-              UnorderedElementsAre(EqualsProto(suggestionBarCatSubjectFoo)));
+              ElementsAre(EqualsProto(suggestionBarCatSubjectFoo)));
 }
 
 TEST_F(IcingSearchEngineSuggestTest, SearchSuggestionsTest_InvalidPrefixTest) {
