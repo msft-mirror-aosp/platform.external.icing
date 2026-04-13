@@ -15,6 +15,9 @@
 #ifndef ICING_LEGACY_INDEX_ICING_LITE_INDEX_OPTIONS_H_
 #define ICING_LEGACY_INDEX_ICING_LITE_INDEX_OPTIONS_H_
 
+#include <cstdint>
+#include <string>
+
 #include "icing/legacy/index/icing-dynamic-trie.h"
 
 namespace icing {

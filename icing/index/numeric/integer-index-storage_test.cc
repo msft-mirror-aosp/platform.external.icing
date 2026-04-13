@@ -57,6 +57,7 @@ using ::testing::IsFalse;
 using ::testing::IsTrue;
 using ::testing::Key;
 using ::testing::Le;
+using ::testing::Lt;
 using ::testing::Ne;
 using ::testing::Not;
 
@@ -308,15 +309,17 @@ TEST_P(IntegerIndexStorageTest, InitializeNewFiles) {
 
   // Check info section
   Info info;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                IntegerIndexStorage::kInfoMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                IntegerIndexStorage::kInfoMetadataFileOffset),
+              Eq(sizeof(Info)));
   EXPECT_THAT(info.magic, Eq(Info::kMagic));
   EXPECT_THAT(info.num_data, Eq(0));
 
   // Check crcs section
   Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                IntegerIndexStorage::kCrcsMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                IntegerIndexStorage::kCrcsMetadataFileOffset),
+              Eq(sizeof(Crcs)));
   // # of elements in sorted_buckets should be 1, so it should have non-zero
   // all storages crc value.
   EXPECT_THAT(crcs.component_crcs.storages_crc, Ne(0));
@@ -359,6 +362,51 @@ TEST_P(IntegerIndexStorageTest,
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
+TEST_P(IntegerIndexStorageTest,
+       InitializationShouldSucceedWithUpdateChecksums) {
+  // Create new integer index storage
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndexStorage> storage1,
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
+
+  // Insert some data.
+  ICING_ASSERT_OK(storage1->AddKeys(/*document_id=*/0, /*section_id=*/20,
+                                    /*new_keys=*/{0, 100, -100}));
+  ICING_ASSERT_OK(storage1->AddKeys(/*document_id=*/1, /*section_id=*/2,
+                                    /*new_keys=*/{3, -1000, 500}));
+  ICING_ASSERT_OK(storage1->AddKeys(/*document_id=*/2, /*section_id=*/15,
+                                    /*new_keys=*/{-6, 321, 98}));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<DocHitInfo> doc_hit_info_vec,
+      Query(storage1.get(),
+            /*key_lower=*/std::numeric_limits<int64_t>::min(),
+            /*key_upper=*/std::numeric_limits<int64_t>::max()));
+
+  // After calling UpdateChecksums, all checksums should be recomputed and
+  // synced correctly to disk, so initializing another instance on the same
+  // files should succeed, and we should be able to get the same contents.
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 crc, storage1->GetChecksum());
+  EXPECT_THAT(storage1->UpdateChecksums(), IsOkAndHolds(Eq(crc)));
+  EXPECT_THAT(storage1->GetChecksum(), IsOkAndHolds(Eq(crc)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndexStorage> storage2,
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
+  EXPECT_THAT(
+      Query(storage2.get(), /*key_lower=*/std::numeric_limits<int64_t>::min(),
+            /*key_upper=*/std::numeric_limits<int64_t>::max()),
+      IsOkAndHolds(
+          ElementsAreArray(doc_hit_info_vec.begin(), doc_hit_info_vec.end())));
 }
 
 TEST_P(IntegerIndexStorageTest, InitializationShouldSucceedWithPersistToDisk) {
@@ -472,8 +520,9 @@ TEST_P(IntegerIndexStorageTest,
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                IntegerIndexStorage::kCrcsMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                IntegerIndexStorage::kCrcsMetadataFileOffset),
+              Eq(sizeof(Crcs)));
 
   // Manually corrupt all_crc
   crcs.all_crc += kCorruptedValueOffset;
@@ -521,8 +570,9 @@ TEST_P(IntegerIndexStorageTest,
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Info info;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                IntegerIndexStorage::kInfoMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                IntegerIndexStorage::kInfoMetadataFileOffset),
+              Eq(sizeof(Info)));
 
   // Modify info, but don't update the checksum. This would be similar to
   // corruption of info.
@@ -574,13 +624,11 @@ TEST_P(IntegerIndexStorageTest,
         FileBackedVector<Bucket>::Create(
             filesystem_, sorted_buckets_file_path,
             MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC));
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc,
-                               sorted_buckets->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc, sorted_buckets->UpdateChecksum());
     ICING_ASSERT_OK(sorted_buckets->Append(Bucket(
         /*key_lower=*/0, /*key_upper=*/std::numeric_limits<int64_t>::max())));
     ICING_ASSERT_OK(sorted_buckets->PersistToDisk());
-    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc,
-                               sorted_buckets->ComputeChecksum());
+    ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc, sorted_buckets->UpdateChecksum());
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 
@@ -629,12 +677,12 @@ TEST_P(IntegerIndexStorageTest,
             /*max_file_size=*/sizeof(Bucket) * 100 +
                 FileBackedVector<Bucket>::Header::kHeaderSize));
     ICING_ASSERT_OK_AND_ASSIGN(Crc32 old_crc,
-                               unsorted_buckets->ComputeChecksum());
+                               unsorted_buckets->UpdateChecksum());
     ICING_ASSERT_OK(unsorted_buckets->Append(Bucket(
         /*key_lower=*/0, /*key_upper=*/std::numeric_limits<int64_t>::max())));
     ICING_ASSERT_OK(unsorted_buckets->PersistToDisk());
     ICING_ASSERT_OK_AND_ASSIGN(Crc32 new_crc,
-                               unsorted_buckets->ComputeChecksum());
+                               unsorted_buckets->UpdateChecksum());
     ASSERT_THAT(old_crc, Not(Eq(new_crc)));
   }
 
@@ -1428,6 +1476,134 @@ TEST_P(IntegerIndexStorageTest,
           EqualsDocHitInfo(kDefaultDocumentId, expected_sections))));
 }
 
+TEST_P(IntegerIndexStorageTest, IteratorCallStatsMultipleBuckets) {
+  // We use predefined custom buckets to initialize new integer index storage
+  // and create some test keys accordingly.
+  std::vector<Bucket> custom_init_sorted_buckets = {
+      Bucket(-1000, -100), Bucket(0, 100), Bucket(150, 199), Bucket(200, 300),
+      Bucket(301, 999)};
+  std::vector<Bucket> custom_init_unsorted_buckets = {
+      Bucket(1000, std::numeric_limits<int64_t>::max()), Bucket(-99, -1),
+      Bucket(101, 149), Bucket(std::numeric_limits<int64_t>::min(), -1001)};
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndexStorage> storage,
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(std::move(custom_init_sorted_buckets),
+                  std::move(custom_init_unsorted_buckets),
+                  IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
+
+  // Add some keys into sorted buckets [(-1000,-100), (200,300)].
+  ICING_ASSERT_OK(storage->AddKeys(/*document_id=*/0, kDefaultSectionId,
+                                   /*new_keys=*/{-500}));
+  ICING_ASSERT_OK(storage->AddKeys(/*document_id=*/1, kDefaultSectionId,
+                                   /*new_keys=*/{208}));
+  ICING_ASSERT_OK(storage->AddKeys(/*document_id=*/2, kDefaultSectionId,
+                                   /*new_keys=*/{-200}));
+  ICING_ASSERT_OK(storage->AddKeys(/*document_id=*/3, kDefaultSectionId,
+                                   /*new_keys=*/{-1000}));
+  ICING_ASSERT_OK(storage->AddKeys(/*document_id=*/4, kDefaultSectionId,
+                                   /*new_keys=*/{300}));
+  ASSERT_THAT(storage->num_data(), Eq(5));
+
+  // GetIterator for range [INT_MIN, INT_MAX] and Advance all. Those 5 keys are
+  // in 2 buckets, so we will be inspecting 2 posting lists in 2 blocks.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> iter1,
+      storage->GetIterator(/*key_lower=*/std::numeric_limits<int64_t>::min(),
+                           /*key_upper=*/std::numeric_limits<int64_t>::max()));
+  while (iter1->Advance().ok()) {
+    // Advance all hits.
+  }
+  EXPECT_THAT(iter1->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/5,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/2,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
+
+  // GetIterator for range [-1000, -100] and Advance all. Since we only have to
+  // read bucket (-1000,-100), there will be 3 advance calls and 1 block
+  // inspected.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> iter2,
+      storage->GetIterator(/*key_lower=*/-1000, /*key_upper=*/-100));
+  while (iter2->Advance().ok()) {
+    // Advance all hits.
+  }
+  EXPECT_THAT(iter2->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/3,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
+}
+
+TEST_P(IntegerIndexStorageTest, IteratorCallStatsSingleBucketChainedBlocks) {
+  // We use predefined custom buckets to initialize new integer index storage
+  // and create some test keys accordingly.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndexStorage> storage,
+      IntegerIndexStorage::Create(
+          filesystem_, working_path_,
+          Options(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+                  /*pre_mapping_fbv_in=*/GetParam()),
+          serializer_.get()));
+
+  int32_t num_keys_to_add = 800;
+  ASSERT_THAT(num_keys_to_add,
+              Lt(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit));
+  for (int i = 0; i < num_keys_to_add; ++i) {
+    ICING_ASSERT_OK(storage->AddKeys(/*document_id=*/i, kDefaultSectionId,
+                                     /*new_keys=*/{i}));
+  }
+
+  // Those 800 keys are in 1 single bucket with 3 chained posting lists, so we
+  // will be inspecting 3 blocks.
+  int32_t expected_num_blocks_inspected = 3;
+
+  // GetIterator for range [INT_MIN, INT_MAX] and Advance all.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> iter1,
+      storage->GetIterator(/*key_lower=*/std::numeric_limits<int64_t>::min(),
+                           /*key_upper=*/std::numeric_limits<int64_t>::max()));
+  while (iter1->Advance().ok()) {
+    // Advance all hits.
+  }
+  EXPECT_THAT(
+      iter1->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/num_keys_to_add,
+          /*num_leaf_advance_calls_no_index=*/0, expected_num_blocks_inspected,
+          DocHitInfoIterator::CallStats::EmbeddingStats()));
+
+  // GetIterator for range [1, 1] and Advance all. Although there is only 1
+  // relevant data, we still have to inspect the entire bucket and its posting
+  // lists chain (which contain 3 blocks and 800 data).
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> iter2,
+      storage->GetIterator(/*key_lower=*/1, /*key_upper=*/1));
+  while (iter2->Advance().ok()) {
+    // Advance all hits.
+  }
+  EXPECT_THAT(
+      iter2->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/num_keys_to_add,
+          /*num_leaf_advance_calls_no_index=*/0, expected_num_blocks_inspected,
+          DocHitInfoIterator::CallStats::EmbeddingStats()));
+}
+
 TEST_P(IntegerIndexStorageTest, SplitBuckets) {
   int32_t custom_num_data_threshold_for_bucket_split = 300;
 
@@ -1706,8 +1882,8 @@ TEST_P(IntegerIndexStorageTest, TransferIndexOutOfRangeDocumentId) {
                                    /*new_keys=*/{-2000}));
   ASSERT_THAT(storage->num_data(), Eq(2));
 
-  // Create document_id_old_to_new with size = 2. TransferIndex should handle
-  // out of range DocumentId properly.
+  // Create document_id_old_to_new with size = 2. TransferIndex should return
+  // internal error for out of range document id.
   std::vector<DocumentId> document_id_old_to_new = {kInvalidDocumentId, 0};
 
   // Transfer to new storage.
@@ -1719,17 +1895,9 @@ TEST_P(IntegerIndexStorageTest, TransferIndexOutOfRangeDocumentId) {
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
   EXPECT_THAT(storage->TransferIndex(document_id_old_to_new, new_storage.get()),
-              IsOk());
-
-  // Verify after transferring.
-  std::vector<SectionId> expected_sections = {kDefaultSectionId};
-  EXPECT_THAT(new_storage->num_data(), Eq(1));
-  EXPECT_THAT(Query(new_storage.get(), /*key_lower=*/120, /*key_upper=*/120),
-              IsOkAndHolds(ElementsAre(
-                  EqualsDocHitInfo(/*document_id=*/0, expected_sections))));
-  EXPECT_THAT(
-      Query(new_storage.get(), /*key_lower=*/-2000, /*key_upper=*/-2000),
-      IsOkAndHolds(IsEmpty()));
+              StatusIs(libtextclassifier3::StatusCode::INTERNAL,
+                       HasSubstr("Integer index hit document id is out of "
+                                 "range. The index may have been corrupted.")));
 }
 
 TEST_P(IntegerIndexStorageTest, TransferEmptyIndex) {

@@ -59,6 +59,8 @@ class PostingListIdentifier {
  public:
   static PostingListIdentifier kInvalid;
 
+  explicit PostingListIdentifier() { *this = kInvalid; }
+
   // 1. block_index - the index of this block within the FlashIndexStorage file
   // 2. posting_list_index - the index of this posting list within the block
   // 3. posting_list_index_bits - the number of bits needed to encode the

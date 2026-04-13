@@ -14,9 +14,13 @@
 
 #include "icing/index/lite/lite-index-options.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <string>
 
 #include "icing/index/lite/term-id-hit-pair.h"
+#include "icing/legacy/index/icing-dynamic-trie.h"
 
 namespace icing {
 namespace lib {

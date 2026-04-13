@@ -15,36 +15,60 @@
 #include "icing/file/version-util.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <string_view>
+#include <unordered_set>
 #include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/file/derived-file-util.h"
+#include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/index.h"
+#include "icing/proto/initialize.pb.h"
+#include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
 
 namespace version_util {
 
-libtextclassifier3::StatusOr<VersionInfo> ReadVersion(
-    const Filesystem& filesystem, const std::string& version_file_path,
+namespace {
+
+libtextclassifier3::StatusOr<VersionInfo> ReadV1VersionInfo(
+    const Filesystem& filesystem, const std::string& version_file_dir,
     const std::string& index_base_dir) {
   // 1. Read the version info.
+  const std::string v1_version_filepath =
+      MakeVersionFilePath(version_file_dir, kVersionFilenameV1);
+  bool file_exists = filesystem.FileExists(v1_version_filepath.c_str());
+  ICING_LOG(INFO) << "v1 version file exists: " << file_exists;
+
   VersionInfo existing_version_info(-1, -1);
-  if (filesystem.FileExists(version_file_path.c_str()) &&
-      !filesystem.PRead(version_file_path.c_str(), &existing_version_info,
-                        sizeof(VersionInfo), /*offset=*/0)) {
-    return absl_ports::InternalError("Fail to read version");
+  if (file_exists &&
+      filesystem.PRead(v1_version_filepath.c_str(), &existing_version_info,
+                       sizeof(VersionInfo),
+                       /*offset=*/0) != sizeof(VersionInfo)) {
+    ICING_LOG(ERROR) << "Failed to read v1 version file";
+    return absl_ports::InternalError("Failed to read v1 version file");
   }
 
   // 2. Check the Index magic to see if we're actually on version 0.
-  libtextclassifier3::StatusOr<int> existing_flash_index_magic_or =
+  libtextclassifier3::StatusOr<int> existing_flash_index_magic =
       Index::ReadFlashIndexMagic(&filesystem, index_base_dir);
-  if (!existing_flash_index_magic_or.ok()) {
-    if (absl_ports::IsNotFound(existing_flash_index_magic_or.status())) {
+  if (!existing_flash_index_magic.ok()) {
+    ICING_LOG(WARNING) << "Cannot read index flash index magic for v1 version "
+                          "check. Error code: "
+                       << existing_flash_index_magic.status().error_code()
+                       << ", message: "
+                       << existing_flash_index_magic.status().error_message();
+
+    if (absl_ports::IsNotFound(existing_flash_index_magic.status())) {
       // Flash index magic doesn't exist. In this case, we're unable to
       // determine the version change state correctly (regardless of the
       // existence of the version file), so invalidate VersionInfo by setting
@@ -53,10 +77,12 @@ libtextclassifier3::StatusOr<VersionInfo> ReadVersion(
       return existing_version_info;
     }
     // Real error.
-    return std::move(existing_flash_index_magic_or).status();
+    return std::move(existing_flash_index_magic).status();
   }
-  if (existing_flash_index_magic_or.ValueOrDie() ==
-      kVersionZeroFlashIndexMagic) {
+
+  int flash_index_magic = existing_flash_index_magic.ValueOrDie();
+  ICING_LOG(INFO) << "Index flash index magic: " << flash_index_magic;
+  if (flash_index_magic == kVersionZeroFlashIndexMagic) {
     existing_version_info.version = 0;
     if (existing_version_info.max_version == -1) {
       existing_version_info.max_version = 0;
@@ -66,15 +92,166 @@ libtextclassifier3::StatusOr<VersionInfo> ReadVersion(
   return existing_version_info;
 }
 
-libtextclassifier3::Status WriteVersion(const Filesystem& filesystem,
-                                        const std::string& version_file_path,
-                                        const VersionInfo& version_info) {
-  ScopedFd scoped_fd(filesystem.OpenForWrite(version_file_path.c_str()));
-  if (!scoped_fd.is_valid() ||
-      !filesystem.PWrite(scoped_fd.get(), /*offset=*/0, &version_info,
-                         sizeof(VersionInfo)) ||
-      !filesystem.DataSync(scoped_fd.get())) {
-    return absl_ports::InternalError("Fail to write version");
+libtextclassifier3::StatusOr<IcingSearchEngineVersionProto> ReadV2VersionInfo(
+    const Filesystem& filesystem, const std::string& version_file_dir) {
+  // Read the v2 version file. V2 version file stores the
+  // IcingSearchEngineVersionProto as a file-backed proto.
+  const std::string v2_version_filepath =
+      MakeVersionFilePath(version_file_dir, kVersionFilenameV2);
+  ICING_LOG(INFO) << "v2 version file exists: "
+                  << filesystem.FileExists(v2_version_filepath.c_str());
+
+  FileBackedProto<IcingSearchEngineVersionProto> v2_version_file(
+      filesystem, v2_version_filepath);
+  ICING_ASSIGN_OR_RETURN(const IcingSearchEngineVersionProto* v2_version_proto,
+                         v2_version_file.Read());
+
+  return *v2_version_proto;
+}
+
+}  // namespace
+
+libtextclassifier3::StatusOr<IcingSearchEngineVersionProto> ReadVersion(
+    const Filesystem& filesystem, const std::string& version_file_dir,
+    const std::string& index_base_dir) {
+  // 1. Read the v1 version file
+  ICING_ASSIGN_OR_RETURN(
+      VersionInfo v1_version_info,
+      ReadV1VersionInfo(filesystem, version_file_dir, index_base_dir));
+  if (!v1_version_info.IsValid()) {
+    // This happens if IcingLib's state is invalid (e.g. flash index header file
+    // is missing). Return the invalid version numbers in this case.
+    IcingSearchEngineVersionProto version_proto;
+    version_proto.set_version(v1_version_info.version);
+    version_proto.set_max_version(v1_version_info.max_version);
+    return version_proto;
+  }
+
+  // 2. Read the v2 version file
+  auto v2_version_proto = ReadV2VersionInfo(filesystem, version_file_dir);
+  if (!v2_version_proto.ok()) {
+    ICING_LOG(WARNING) << "Cannot read v2 version file. Error code: "
+                       << v2_version_proto.status().error_code()
+                       << ", message: "
+                       << v2_version_proto.status().error_message();
+
+    if (!absl_ports::IsNotFound(v2_version_proto.status())) {
+      // Real error.
+      return std::move(v2_version_proto).status();
+    }
+    // The v2 version file has not been written
+    IcingSearchEngineVersionProto version_proto;
+    if (v1_version_info.version < kFirstV2Version) {
+      // There are two scenarios for this case:
+      // 1. It's the first time that we're upgrading from a lower version to a
+      //    version >= kFirstV2Version.
+      //    - It's expected that the v2 version file has not been written yet in
+      //      this case and we return the v1 version numbers instead.
+      // 2. We're rolling forward from a version < kFirstV2Version, after
+      //    rolling back from a previous version >= kFirstV2Version, and for
+      //    some unknown reason we lost the v2 version file in the previous
+      //    version.
+      //    - e.g. version #4 -> version #1 -> version #4, but we lost the v2
+      //      file during version #1.
+      //    - This is a rollforward case, but it's still fine to return the v1
+      //      version number here as ShouldRebuildDerivedFiles can handle
+      //      rollforwards correctly.
+      version_proto.set_version(v1_version_info.version);
+      version_proto.set_max_version(v1_version_info.max_version);
+    } else {
+      // Something weird has happened. During last initialization we were
+      // already on a version >= kFirstV2Version, so the v2 version file
+      // should have been written.
+      // Return an invalid version number in this case and trigger rebuilding
+      // everything.
+      ICING_LOG(WARNING)
+          << "v1 version file has a version number greater or equal to "
+             "kFirstV2Version, but failed to read v2 version file. Return "
+             "version -1 and rebuild everything.";
+
+      version_proto.set_version(-1);
+      version_proto.set_max_version(v1_version_info.max_version);
+    }
+    return version_proto;
+  }
+
+  // 3. Check if versions match. If not, it means that we're rolling forward
+  // from a version < kFirstV2Version. In order to trigger rebuilding
+  // everything, we return an invalid version number in this case.
+  IcingSearchEngineVersionProto v2_version_proto_value =
+      std::move(v2_version_proto).ValueOrDie();
+  if (v1_version_info.version != v2_version_proto_value.version()) {
+    ICING_LOG(WARNING)
+        << "v1 and v2 version files have different version numbers, probably "
+           "due to roll forward. Return version -1 and rebuild everything.";
+
+    v2_version_proto_value.set_version(-1);
+    v2_version_proto_value.mutable_enabled_features()->Clear();
+  }
+
+  return v2_version_proto_value;
+}
+
+libtextclassifier3::Status WriteV1Version(const Filesystem& filesystem,
+                                          const std::string& version_file_dir,
+                                          const VersionInfo& version_info) {
+  ScopedFd scoped_fd(filesystem.OpenForWrite(
+      MakeVersionFilePath(version_file_dir, kVersionFilenameV1).c_str()));
+  if (!scoped_fd.is_valid()) {
+    ICING_LOG(ERROR) << "Failed to open v1 version file for write";
+    return absl_ports::InternalError(
+        "Failed to open v1 version file for write");
+  }
+
+  if (!filesystem.PWrite(scoped_fd.get(), /*offset=*/0, &version_info,
+                         sizeof(VersionInfo))) {
+    ICING_LOG(ERROR) << "Failed to write v1 version file";
+    return absl_ports::InternalError("Failed to write v1 version file");
+  }
+
+  if (!filesystem.DataSync(scoped_fd.get())) {
+    ICING_LOG(ERROR) << "Failed to sync v1 version file";
+    return absl_ports::InternalError("Failed to sync v1 version file");
+  }
+
+  ICING_LOG(INFO)
+      << "Successfully write and sync v1 version file with version = "
+      << version_info.version;
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status WriteV2Version(
+    const Filesystem& filesystem, const std::string& version_file_dir,
+    std::unique_ptr<IcingSearchEngineVersionProto> version_proto) {
+  int32_t version = version_proto->version();
+
+  // FileBackedProto::Write also syncs the file, so we don't need to call
+  // DataSync explicitly.
+  FileBackedProto<IcingSearchEngineVersionProto> v2_version_file(
+      filesystem, MakeVersionFilePath(version_file_dir, kVersionFilenameV2));
+  libtextclassifier3::Status v2_write_status =
+      v2_version_file.Write(std::move(version_proto));
+  if (!v2_write_status.ok()) {
+    ICING_LOG(ERROR) << "Failed to write v2 version file. Error code: "
+                     << v2_write_status.error_code()
+                     << ", message: " << v2_write_status.error_message();
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Failed to write v2 version file: ", v2_write_status.error_message()));
+  }
+
+  ICING_LOG(INFO)
+      << "Successfully write and sync v2 version file with version = "
+      << version;
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status DiscardVersionFiles(
+    const Filesystem& filesystem, std::string_view version_file_dir) {
+  if (!filesystem.DeleteFile(
+          MakeVersionFilePath(version_file_dir, kVersionFilenameV1).c_str()) ||
+      !filesystem.DeleteFile(
+          MakeVersionFilePath(version_file_dir, kVersionFilenameV2).c_str())) {
+    return absl_ports::InternalError("Failed to discard version files");
   }
   return libtextclassifier3::Status::OK;
 }
@@ -102,6 +279,67 @@ StateChange GetVersionStateChange(const VersionInfo& existing_version_info,
   }
 }
 
+derived_file_util::DerivedFilesRebuildInfo CalculateRequiredDerivedFilesRebuild(
+    const IcingSearchEngineVersionProto& prev_version_proto,
+    const IcingSearchEngineVersionProto& curr_version_proto) {
+  // 1. Do version check using version and max_version numbers
+  if (ShouldRebuildDerivedFiles(GetVersionInfoFromProto(prev_version_proto),
+                                curr_version_proto.version())) {
+    return derived_file_util::DerivedFilesRebuildInfo(
+        /*needs_document_store_derived_files_rebuild=*/true,
+        /*needs_schema_store_derived_files_rebuild=*/true,
+        /*needs_term_index_rebuild=*/true,
+        /*needs_integer_index_rebuild=*/true,
+        /*needs_qualified_id_join_index_rebuild=*/true,
+        /*needs_embedding_index_rebuild=*/true);
+  }
+
+  // 2. Compare the previous enabled features with the current enabled features
+  // and rebuild if there are differences.
+  std::unordered_set<IcingSearchEngineFeatureInfoProto::FlaggedFeatureType>
+      prev_features;
+  for (const auto& feature : prev_version_proto.enabled_features()) {
+    prev_features.insert(feature.feature_type());
+  }
+  std::unordered_set<IcingSearchEngineFeatureInfoProto::FlaggedFeatureType>
+      curr_features;
+  for (const auto& feature : curr_version_proto.enabled_features()) {
+    curr_features.insert(feature.feature_type());
+  }
+  derived_file_util::DerivedFilesRebuildInfo result;
+  for (const auto& prev_feature : prev_features) {
+    // If there is an UNKNOWN feature in the previous feature set (note that we
+    // never use UNKNOWN  when writing the version proto), it means that:
+    // - The previous version proto contains a feature enum that is only defined
+    //   in a newer version.
+    // - We've now rolled back to an old version that doesn't understand this
+    //   new enum value, and proto serialization defaults it to 0 (UNKNOWN).
+    // - In this case we need to rebuild everything.
+    if (prev_feature == IcingSearchEngineFeatureInfoProto::UNKNOWN) {
+      return derived_file_util::DerivedFilesRebuildInfo(
+          /*needs_document_store_derived_files_rebuild=*/true,
+          /*needs_schema_store_derived_files_rebuild=*/true,
+          /*needs_term_index_rebuild=*/true,
+          /*needs_integer_index_rebuild=*/true,
+          /*needs_qualified_id_join_index_rebuild=*/true,
+          /*needs_embedding_index_rebuild=*/true);
+    }
+    if (curr_features.find(prev_feature) == curr_features.end()) {
+      derived_file_util::DerivedFilesRebuildInfo required_rebuilds =
+          GetFeatureDerivedFilesRebuildInfo(prev_feature);
+      result |= required_rebuilds;
+    }
+  }
+  for (const auto& curr_feature : curr_features) {
+    if (prev_features.find(curr_feature) == prev_features.end()) {
+      derived_file_util::DerivedFilesRebuildInfo required_rebuilds =
+          GetFeatureDerivedFilesRebuildInfo(curr_feature);
+      result |= required_rebuilds;
+    }
+  }
+  return result;
+}
+
 bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
                                int32_t curr_version) {
   StateChange state_change =
@@ -126,18 +364,229 @@ bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
   bool should_rebuild = false;
   int32_t existing_version = existing_version_info.version;
   while (existing_version < curr_version) {
+    // LINT.IfChange(should_rebuild_derived_files_upgrade_check)
     switch (existing_version) {
       case 1: {
         // version 1 -> version 2 upgrade, no need to rebuild
+        break;
+      }
+      case 2: {
+        // version 2 -> version 3 upgrade, no need to rebuild
+        break;
+      }
+      case 3: {
+        // version 3 -> version 4 upgrade, no need to rebuild
+        break;
+      }
+      case 4: {
+        // version 4 -> version 5 upgrade, no need to rebuild
+        break;
+      }
+      case 5: {
+        // version 5 -> version 6 upgrade, no need to rebuild
+        break;
+      }
+      case 6: {
+        // version 6 -> version 7 upgrade, no need to rebuild
+        break;
+      }
+      case 7: {
+        // version 7 -> version 8 upgrade, no need to rebuild
+        break;
+      }
+      case 8: {
+        // version 8 -> version 9 upgrade, no need to rebuild
         break;
       }
       default:
         // This should not happen. Rebuild anyway if unsure.
         should_rebuild |= true;
     }
+    // LINT.ThenChange(//depot/google3/icing/file/version-util.h:kVersion)
     ++existing_version;
   }
   return should_rebuild;
+}
+
+derived_file_util::DerivedFilesRebuildInfo GetFeatureDerivedFilesRebuildInfo(
+    IcingSearchEngineFeatureInfoProto::FlaggedFeatureType feature) {
+  switch (feature) {
+    case IcingSearchEngineFeatureInfoProto::FEATURE_SCORABLE_PROPERTIES: {
+      return derived_file_util::DerivedFilesRebuildInfo(
+          /*needs_document_store_derived_files_rebuild=*/true,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/false,
+          /*needs_embedding_index_rebuild=*/false);
+    }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR: {
+      return derived_file_util::DerivedFilesRebuildInfo(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/true,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/false,
+          /*needs_embedding_index_rebuild=*/false);
+    }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX: {
+      return derived_file_util::DerivedFilesRebuildInfo(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/false,
+          /*needs_embedding_index_rebuild=*/true);
+    }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION: {
+      return derived_file_util::DerivedFilesRebuildInfo(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/false,
+          /*needs_embedding_index_rebuild=*/true);
+    }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE: {
+      // The schema database feature requires schema-store migration, which is
+      // done separately from derived files rebuild.
+      return derived_file_util::DerivedFilesRebuildInfo(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/false,
+          /*needs_embedding_index_rebuild=*/false);
+    }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3:
+    case IcingSearchEngineFeatureInfoProto::
+        FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN: {
+      return derived_file_util::DerivedFilesRebuildInfo(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/true,
+          /*needs_embedding_index_rebuild=*/false);
+    }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM: {
+      // By rebuilding qualified id join index, we will re-validate document
+      // dependency: if a schema enables delete propagation but a document of
+      // this schema references a deleted/expired/non-existent parent document,
+      // then Icing will remove this child document.
+      //
+      // Note: document dependency re-validation can be done by rebuilding any
+      //   index since the process is done in TokenizedDocument generation, but
+      //   we choose to rebuild the join index because:
+      //   - Rebuilding the join index guarantees to "replay" document protos
+      //     from doc id 0. All alive documents will be iterated and
+      //     re-validated.
+      //   - Delete propagation is related to the join index.
+      //   - We could've only generated TokenizedDocument and re-validated the
+      //     document dependency without rebuilding any indices, but:
+      //     - This would require more changes to Icing's derived files recovery
+      //       logic (i.e. RestoreIndexIfNeeded()).
+      //     - Tt is rare to switch this flag on and off too frequently.
+      //     - Therefore, let's just simply reuse the existing derived files
+      //       recovery logic to trigger document dependency re-validation.
+      return derived_file_util::DerivedFilesRebuildInfo(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/true,
+          /*needs_embedding_index_rebuild=*/false);
+    }
+    case IcingSearchEngineFeatureInfoProto::UNKNOWN:
+      return derived_file_util::DerivedFilesRebuildInfo(
+          /*needs_document_store_derived_files_rebuild=*/true,
+          /*needs_schema_store_derived_files_rebuild=*/true,
+          /*needs_term_index_rebuild=*/true,
+          /*needs_integer_index_rebuild=*/true,
+          /*needs_qualified_id_join_index_rebuild=*/true,
+          /*needs_embedding_index_rebuild=*/true);
+  }
+}
+
+bool SchemaDatabaseMigrationRequired(
+    const IcingSearchEngineVersionProto& prev_version_proto) {
+  if (prev_version_proto.version() < kSchemaDatabaseVersion) {
+    return true;
+  }
+  for (const auto& feature : prev_version_proto.enabled_features()) {
+    // The schema database feature was enabled in the previous version, so no
+    // need to migrate.
+    if (feature.feature_type() ==
+        IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE) {
+      return false;
+    }
+  }
+  return true;
+}
+
+IcingSearchEngineFeatureInfoProto GetFeatureInfoProto(
+    IcingSearchEngineFeatureInfoProto::FlaggedFeatureType feature) {
+  IcingSearchEngineFeatureInfoProto info;
+  info.set_feature_type(feature);
+
+  derived_file_util::DerivedFilesRebuildInfo result =
+      GetFeatureDerivedFilesRebuildInfo(feature);
+  info.set_needs_document_store_rebuild(
+      result.needs_document_store_derived_files_rebuild);
+  info.set_needs_schema_store_rebuild(
+      result.needs_schema_store_derived_files_rebuild);
+  info.set_needs_term_index_rebuild(result.needs_term_index_rebuild);
+  info.set_needs_integer_index_rebuild(result.needs_integer_index_rebuild);
+  info.set_needs_qualified_id_join_index_rebuild(
+      result.needs_qualified_id_join_index_rebuild);
+  info.set_needs_embedding_index_rebuild(result.needs_embedding_index_rebuild);
+
+  return info;
+}
+
+void AddEnabledFeatures(const IcingSearchEngineOptions& options,
+                        IcingSearchEngineVersionProto* version_proto) {
+  auto* enabled_features = version_proto->mutable_enabled_features();
+  // HasPropertyOperator feature
+  if (options.build_property_existence_metadata_hits()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR));
+  }
+  // EmbeddingIndex feature
+  if (options.enable_embedding_index()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX));
+  }
+  if (options.enable_scorable_properties()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_SCORABLE_PROPERTIES));
+  }
+  // EmbeddingQuantization feature
+  if (options.enable_embedding_quantization()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION));
+  }
+  // SchemaDatabase feature
+  if (options.enable_schema_database()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE));
+  }
+  // QualifiedIdJoinIndex V3 feature
+  if (options.enable_qualified_id_join_index_v3()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3));
+  }
+  // DeletePropagation PROPAGATE_FROM feature
+  if (options.enable_delete_propagation_from()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM));
+  }
+  // NonExistentQualifiedIdJoin feature
+  if (options.enable_non_existent_qualified_id_join()) {
+    enabled_features->Add(
+        GetFeatureInfoProto(IcingSearchEngineFeatureInfoProto::
+                                FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN));
+  }
 }
 
 }  // namespace version_util

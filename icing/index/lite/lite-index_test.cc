@@ -20,6 +20,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/file/filesystem.h"
@@ -27,7 +28,7 @@
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
-#include "icing/index/lite/lite-index-header.h"
+#include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/index/term-id-codec.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
@@ -38,6 +39,7 @@
 #include "icing/testing/always-false-suggestion-result-checker-impl.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -49,6 +51,7 @@ using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
+using ::testing::Pointee;
 using ::testing::SizeIs;
 
 class LiteIndexTest : public testing::Test {
@@ -71,15 +74,24 @@ class LiteIndexTest : public testing::Test {
 
 constexpr NamespaceId kNamespace0 = 0;
 
-TEST_F(LiteIndexTest,
-       LiteIndexFetchHits_sortAtQuerying_unsortedHitsBelowSortThreshold) {
-  // Set up LiteIndex and TermIdCodec
+TEST_F(LiteIndexTest, TermIdHitPairInvalidValue) {
+  TermIdHitPair invalidTermHitPair(TermIdHitPair::kInvalidValue);
+
+  EXPECT_THAT(invalidTermHitPair.term_id(), Eq(0));
+  EXPECT_THAT(invalidTermHitPair.hit().value(), Eq(Hit::kInvalidValue));
+  EXPECT_THAT(invalidTermHitPair.hit().term_frequency(),
+              Eq(Hit::kDefaultTermFrequency));
+}
+
+TEST_F(LiteIndexTest, OutOfDateChecksumFailsInit) {
+  // 1. Create LiteIndex and add some content.
   std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
-  // At 64 bytes the unsorted tail can contain a max of 8 TermHitPairs.
-  LiteIndex::Options options(lite_index_file_name,
-                             /*hit_buffer_want_merge_bytes=*/1024 * 1024,
-                             /*hit_buffer_sort_at_indexing=*/false,
-                             /*hit_buffer_sort_threshold_bytes=*/64);
+  // Unsorted tail can contain a max of 8 TermIdHitPairs.
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_at_indexing=*/false,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
                              LiteIndex::Create(options, &icing_filesystem_));
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -95,9 +107,160 @@ TEST_F(LiteIndexTest,
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
   Hit foo_hit0(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   Hit foo_hit1(/*section_id=*/1, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit0));
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit1));
+
+  // 2. Create a new LiteIndex. Create should fail because the checksum is out
+  // of date.
+  EXPECT_THAT(LiteIndex::Create(options, &icing_filesystem_),
+              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+}
+
+TEST_F(LiteIndexTest, UpdatedChecksumPassesInit) {
+  // 1. Create LiteIndex and add some content.
+  std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
+  // Unsorted tail can contain a max of 8 TermIdHitPairs.
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_at_indexing=*/false,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
+                             LiteIndex::Create(options, &icing_filesystem_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      term_id_codec_,
+      TermIdCodec::Create(
+          IcingDynamicTrie::max_value_index(IcingDynamicTrie::Options()),
+          IcingDynamicTrie::max_value_index(options.lexicon_options)));
+
+  // Add some hits
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t foo_tvi,
+      lite_index->InsertTerm("foo", TermMatchType::PREFIX, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
+  Hit foo_hit0(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  Hit foo_hit1(/*section_id=*/1, /*document_id=*/1, Hit::kDefaultTermFrequency,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit0));
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit1));
+
+  // 2. Updating the checksum should be sufficient to successfully initialize
+  // the next time.
+  Crc32 checksum = lite_index->GetChecksum();
+  EXPECT_THAT(lite_index->UpdateChecksum(), Eq(checksum));
+  EXPECT_THAT(lite_index->GetChecksum(), Eq(checksum));
+
+  // 3. Create a new LiteIndex. Create should succeed because the checksum has
+  // been updated.
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index2,
+                             LiteIndex::Create(options, &icing_filesystem_));
+
+  // 4. Verify that the hits in the LiteIndex were kept.
+  std::vector<DocHitInfo> hits1;
+  lite_index2->FetchHits(
+      foo_term_id, kSectionIdMaskAll,
+      /*only_from_prefix_sections=*/false,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+      /*namespace_checker=*/nullptr, &hits1);
+  EXPECT_THAT(hits1, SizeIs(1));
+  EXPECT_THAT(hits1.back().document_id(), Eq(1));
+  // Check that the hits are coming from section 0 and section 1.
+  EXPECT_THAT(hits1.back().hit_section_ids_mask(), Eq(0b11));
+}
+
+TEST_F(LiteIndexTest, PersistedIndexPassesInit) {
+  // 1. Create LiteIndex and add some content.
+  std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
+  // Unsorted tail can contain a max of 8 TermIdHitPairs.
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_at_indexing=*/false,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
+                             LiteIndex::Create(options, &icing_filesystem_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      term_id_codec_,
+      TermIdCodec::Create(
+          IcingDynamicTrie::max_value_index(IcingDynamicTrie::Options()),
+          IcingDynamicTrie::max_value_index(options.lexicon_options)));
+
+  // Add some hits
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t foo_tvi,
+      lite_index->InsertTerm("foo", TermMatchType::PREFIX, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
+  Hit foo_hit0(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  Hit foo_hit1(/*section_id=*/1, /*document_id=*/1, Hit::kDefaultTermFrequency,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit0));
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit1));
+
+  // 2. PersistToDisk should be sufficient to successfully initialize the next
+  // time.
+  ICING_ASSERT_OK(lite_index->PersistToDisk());
+
+  // 3. Create a new LiteIndex. Create should succeed because we've called
+  // PersistToDisk.
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index2,
+                             LiteIndex::Create(options, &icing_filesystem_));
+
+  // 4. Verify that the hits in the LiteIndex were kept.
+  std::vector<DocHitInfo> hits1;
+  lite_index2->FetchHits(
+      foo_term_id, kSectionIdMaskAll,
+      /*only_from_prefix_sections=*/false,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+      /*namespace_checker=*/nullptr, &hits1);
+  EXPECT_THAT(hits1, SizeIs(1));
+  EXPECT_THAT(hits1.back().document_id(), Eq(1));
+  // Check that the hits are coming from section 0 and section 1.
+  EXPECT_THAT(hits1.back().hit_section_ids_mask(), Eq(0b11));
+}
+
+TEST_F(LiteIndexTest,
+       LiteIndexFetchHits_sortAtQuerying_unsortedHitsBelowSortThreshold) {
+  // Set up LiteIndex and TermIdCodec
+  std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
+  // Unsorted tail can contain a max of 8 TermIdHitPairs.
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_at_indexing=*/false,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
+                             LiteIndex::Create(options, &icing_filesystem_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      term_id_codec_,
+      TermIdCodec::Create(
+          IcingDynamicTrie::max_value_index(IcingDynamicTrie::Options()),
+          IcingDynamicTrie::max_value_index(options.lexicon_options)));
+
+  // Add some hits
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t foo_tvi,
+      lite_index->InsertTerm("foo", TermMatchType::PREFIX, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
+  Hit foo_hit0(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  Hit foo_hit1(/*section_id=*/1, /*document_id=*/1, Hit::kDefaultTermFrequency,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit0));
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit1));
 
@@ -107,23 +270,19 @@ TEST_F(LiteIndexTest,
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t bar_term_id,
                              term_id_codec_->EncodeTvi(bar_tvi, TviType::LITE));
   Hit bar_hit0(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   Hit bar_hit1(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index->AddHit(bar_term_id, bar_hit0));
   ICING_ASSERT_OK(lite_index->AddHit(bar_term_id, bar_hit1));
 
+  // Check the total size and unsorted size of the hit buffer.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(4)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(4));
   // Check that unsorted hits does not exceed the sort threshold.
   EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsFalse());
-
-  // Check that hits are unsorted. Persist the data and pread from
-  // LiteIndexHeader.
-  ASSERT_THAT(lite_index->PersistToDisk(), IsOk());
-  LiteIndex_HeaderImpl::HeaderData header_data;
-  ASSERT_TRUE(filesystem_.PRead((lite_index_file_name + "hb").c_str(),
-                                &header_data, sizeof(header_data),
-                                LiteIndex::kHeaderFileOffset));
-  EXPECT_THAT(header_data.cur_size - header_data.searchable_end, Eq(4));
 
   // Query the LiteIndex
   std::vector<DocHitInfo> hits1;
@@ -148,28 +307,26 @@ TEST_F(LiteIndexTest,
   // checker.
   EXPECT_THAT(hits2, IsEmpty());
 
-  // Check that hits are sorted after querying LiteIndex. Persist the data and
-  // pread from LiteIndexHeader.
-  ASSERT_THAT(lite_index->PersistToDisk(), IsOk());
-  ASSERT_TRUE(filesystem_.PRead((lite_index_file_name + "hb").c_str(),
-                                &header_data, sizeof(header_data),
-                                LiteIndex::kHeaderFileOffset));
-  EXPECT_THAT(header_data.cur_size - header_data.searchable_end, Eq(0));
+  // Check the total size and unsorted size of the hit buffer. Hits should be
+  // sorted after querying LiteIndex.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(4)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(0));
 }
 
 TEST_F(LiteIndexTest,
        LiteIndexFetchHits_sortAtIndexing_unsortedHitsBelowSortThreshold) {
   // Set up LiteIndex and TermIdCodec
   std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
-  // At 64 bytes the unsorted tail can contain a max of 8 TermHitPairs.
+  // The unsorted tail can contain a max of 8 TermIdHitPairs.
   // However note that in these tests we're unable to sort hits after
   // indexing, as sorting performed by the string-section-indexing-handler
   // after indexing all hits in an entire document, rather than after each
   // AddHits() operation.
-  LiteIndex::Options options(lite_index_file_name,
-                             /*hit_buffer_want_merge_bytes=*/1024 * 1024,
-                             /*hit_buffer_sort_at_indexing=*/true,
-                             /*hit_buffer_sort_threshold_bytes=*/64);
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_at_indexing=*/true,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
                              LiteIndex::Create(options, &icing_filesystem_));
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -185,9 +342,11 @@ TEST_F(LiteIndexTest,
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
   Hit foo_hit0(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   Hit foo_hit1(/*section_id=*/1, /*document_id=*/1, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit0));
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, foo_hit1));
 
@@ -197,23 +356,19 @@ TEST_F(LiteIndexTest,
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t bar_term_id,
                              term_id_codec_->EncodeTvi(bar_tvi, TviType::LITE));
   Hit bar_hit0(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   Hit bar_hit1(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-               /*is_in_prefix_section=*/false);
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
   ICING_ASSERT_OK(lite_index->AddHit(bar_term_id, bar_hit0));
   ICING_ASSERT_OK(lite_index->AddHit(bar_term_id, bar_hit1));
 
+  // Check the total size and unsorted size of the hit buffer.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(4)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(4));
   // Check that unsorted hits does not exceed the sort threshold.
   EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsFalse());
-
-  // Check that hits are unsorted. Persist the data and pread from
-  // LiteIndexHeader.
-  ASSERT_THAT(lite_index->PersistToDisk(), IsOk());
-  LiteIndex_HeaderImpl::HeaderData header_data;
-  ASSERT_TRUE(filesystem_.PRead((lite_index_file_name + "hb").c_str(),
-                                &header_data, sizeof(header_data),
-                                LiteIndex::kHeaderFileOffset));
-  EXPECT_THAT(header_data.cur_size - header_data.searchable_end, Eq(4));
 
   // Query the LiteIndex
   std::vector<DocHitInfo> hits1;
@@ -238,15 +393,11 @@ TEST_F(LiteIndexTest,
   // checker.
   EXPECT_THAT(hits2, IsEmpty());
 
-  // Check that hits are still unsorted after querying LiteIndex because the
-  // HitBuffer unsorted size is still below the sort threshold, and we've
-  // enabled sort_at_indexing.
-  // Persist the data and performing a pread on LiteIndexHeader.
-  ASSERT_THAT(lite_index->PersistToDisk(), IsOk());
-  ASSERT_TRUE(filesystem_.PRead((lite_index_file_name + "hb").c_str(),
-                                &header_data, sizeof(header_data),
-                                LiteIndex::kHeaderFileOffset));
-  EXPECT_THAT(header_data.cur_size - header_data.searchable_end, Eq(4));
+  // Check the total size and unsorted size of the hit buffer. Hits should be
+  // still unsorted after querying LiteIndex because the HitBuffer unsorted size
+  // is still below the sort threshold, and we've enabled sort_at_indexing.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(4)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(4));
 }
 
 TEST_F(
@@ -254,15 +405,16 @@ TEST_F(
     LiteIndexFetchHits_sortAtQuerying_unsortedHitsExceedingSortAtIndexThreshold) {
   // Set up LiteIndex and TermIdCodec
   std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
-  // At 64 bytes the unsorted tail can contain a max of 8 TermHitPairs.
+  // The unsorted tail can contain a max of 8 TermIdHitPairs.
   // However note that in these tests we're unable to sort hits after
   // indexing, as sorting performed by the string-section-indexing-handler
   // after indexing all hits in an entire document, rather than after each
   // AddHits() operation.
-  LiteIndex::Options options(lite_index_file_name,
-                             /*hit_buffer_want_merge_bytes=*/1024 * 1024,
-                             /*hit_buffer_sort_at_indexing=*/false,
-                             /*hit_buffer_sort_threshold_bytes=*/64);
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_at_indexing=*/false,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
                              LiteIndex::Create(options, &icing_filesystem_));
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -274,36 +426,50 @@ TEST_F(
   // Create 4 hits for docs 0-2, and 2 hits for doc 3 -- 14 in total
   // Doc 0
   Hit doc0_hit0(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit1(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit2(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit3(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   // Doc 1
   Hit doc1_hit0(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit1(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit2(/*section_id=*/1, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit3(/*section_id=*/2, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   // Doc 2
   Hit doc2_hit0(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc2_hit1(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc2_hit2(/*section_id=*/1, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc2_hit3(/*section_id=*/2, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   // Doc 3
   Hit doc3_hit0(/*section_id=*/0, /*document_id=*/3, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc3_hit1(/*section_id=*/0, /*document_id=*/3, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
 
   // Create terms
   // Foo
@@ -348,7 +514,10 @@ TEST_F(
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc2_hit3));
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc3_hit0));
   ICING_ASSERT_OK(lite_index->AddHit(baz_term_id, doc3_hit1));
-  // Verify that the HitBuffer has not been sorted.
+  // Check the total size and unsorted size of the hit buffer. The HitBuffer has
+  // not been sorted.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(14)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(14));
   EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsTrue());
 
   // We now have the following in the hit buffer:
@@ -400,7 +569,10 @@ TEST_F(
   EXPECT_THAT(hits3[1].document_id(), Eq(0));
   EXPECT_THAT(hits3[1].hit_section_ids_mask(), Eq(0b1));
 
-  // Check that the HitBuffer is sorted after the query call.
+  // Check the total size and unsorted size of the hit buffer. The HitBuffer
+  // should be sorted after the query call.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(14)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(0));
   EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsFalse());
 }
 
@@ -409,11 +581,12 @@ TEST_F(
     LiteIndexFetchHits_sortAtIndexing_unsortedHitsExceedingSortAtIndexThreshold) {
   // Set up LiteIndex and TermIdCodec
   std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
-  // At 64 bytes the unsorted tail can contain a max of 8 TermHitPairs.
-  LiteIndex::Options options(lite_index_file_name,
-                             /*hit_buffer_want_merge_bytes=*/1024 * 1024,
-                             /*hit_buffer_sort_at_indexing=*/true,
-                             /*hit_buffer_sort_threshold_bytes=*/64);
+  // The unsorted tail can contain a max of 8 TermIdHitPairs.
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_at_indexing=*/true,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
                              LiteIndex::Create(options, &icing_filesystem_));
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -425,49 +598,69 @@ TEST_F(
   // Create 4 hits for docs 0-2, and 2 hits for doc 3 -- 14 in total
   // Doc 0
   Hit doc0_hit0(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit1(/*section_id=*/0, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit2(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit3(/*section_id=*/2, /*document_id=*/0, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   // Doc 1
   Hit doc1_hit0(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit1(/*section_id=*/0, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit2(/*section_id=*/1, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit3(/*section_id=*/2, /*document_id=*/1, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   // Doc 2
   Hit doc2_hit0(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc2_hit1(/*section_id=*/0, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc2_hit2(/*section_id=*/1, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc2_hit3(/*section_id=*/2, /*document_id=*/2, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   // Doc 3
   Hit doc3_hit0(/*section_id=*/0, /*document_id=*/3, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc3_hit1(/*section_id=*/0, /*document_id=*/3, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc3_hit2(/*section_id=*/1, /*document_id=*/3, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc3_hit3(/*section_id=*/2, /*document_id=*/3, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   // Doc 4
   Hit doc4_hit0(/*section_id=*/0, /*document_id=*/4, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc4_hit1(/*section_id=*/0, /*document_id=*/4, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc4_hit2(/*section_id=*/1, /*document_id=*/4, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc4_hit3(/*section_id=*/2, /*document_id=*/4, Hit::kDefaultTermFrequency,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
 
   // Create terms
   // Foo
@@ -511,13 +704,11 @@ TEST_F(
   // AddHit() itself, we need to invoke SortHits() manually.
   EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsTrue());
   lite_index->SortHits();
-  // Check that the HitBuffer is sorted.
-  ASSERT_THAT(lite_index->PersistToDisk(), IsOk());
-  LiteIndex_HeaderImpl::HeaderData header_data;
-  ASSERT_TRUE(filesystem_.PRead((lite_index_file_name + "hb").c_str(),
-                                &header_data, sizeof(header_data),
-                                LiteIndex::kHeaderFileOffset));
-  EXPECT_THAT(header_data.cur_size - header_data.searchable_end, Eq(0));
+  // Check the total size and unsorted size of the hit buffer. The HitBuffer
+  // should be sorted after calling SortHits().
+  EXPECT_THAT(lite_index, Pointee(SizeIs(8)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(0));
+  EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsFalse());
 
   // Add 12 more hits so that sort threshold is exceeded again.
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc2_hit0));
@@ -536,6 +727,8 @@ TEST_F(
   // Adding these hits exceeds the sort threshold. However when sort_at_indexing
   // is enabled, sorting is done in the string-section-indexing-handler rather
   // than AddHit() itself.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(20)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(12));
   EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsTrue());
 
   // We now have the following in the hit buffer:
@@ -589,25 +782,24 @@ TEST_F(
   EXPECT_THAT(hits3[1].document_id(), Eq(0));
   EXPECT_THAT(hits3[1].hit_section_ids_mask(), Eq(0b1));
 
-  // Check that the HitBuffer is sorted after the query call. FetchHits should
-  // sort before performing binary search if the HitBuffer unsorted size exceeds
-  // the sort threshold. Regardless of the sort_at_indexing config.
+  // Check the total size and unsorted size of the hit buffer. FetchHits should
+  // sort before performing search if the HitBuffer unsorted size exceeds the
+  // sort threshold, regardless of the sort_at_indexing config (to avoid
+  // sequential search on an extremely long unsorted tails).
+  EXPECT_THAT(lite_index, Pointee(SizeIs(20)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(0));
   EXPECT_THAT(lite_index->HasUnsortedHitsExceedingSortThreshold(), IsFalse());
-  ASSERT_THAT(lite_index->PersistToDisk(), IsOk());
-  ASSERT_TRUE(filesystem_.PRead((lite_index_file_name + "hb").c_str(),
-                                &header_data, sizeof(header_data),
-                                LiteIndex::kHeaderFileOffset));
-  EXPECT_THAT(header_data.cur_size - header_data.searchable_end, Eq(0));
 }
 
 TEST_F(LiteIndexTest, LiteIndexIterator) {
   // Set up LiteIndex and TermIdCodec
   std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
-  // At 64 bytes the unsorted tail can contain a max of 8 TermHitPairs.
-  LiteIndex::Options options(lite_index_file_name,
-                             /*hit_buffer_want_merge_bytes=*/1024 * 1024,
-                             /*hit_buffer_sort_at_indexing=*/true,
-                             /*hit_buffer_sort_threshold_bytes=*/64);
+  // The unsorted tail can contain a max of 8 TermIdHitPairs.
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_at_indexing=*/true,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
                              LiteIndex::Create(options, &icing_filesystem_));
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -623,9 +815,11 @@ TEST_F(LiteIndexTest, LiteIndexIterator) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
   Hit doc0_hit0(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/3,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit1(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/5,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   SectionIdMask doc0_section_id_mask = 0b11;
   std::unordered_map<SectionId, Hit::TermFrequency>
       expected_section_ids_tf_map0 = {{0, 3}, {1, 5}};
@@ -633,9 +827,11 @@ TEST_F(LiteIndexTest, LiteIndexIterator) {
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc0_hit1));
 
   Hit doc1_hit1(/*section_id=*/1, /*document_id=*/1, /*term_frequency=*/7,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit2(/*section_id=*/2, /*document_id=*/1, /*term_frequency=*/11,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   SectionIdMask doc1_section_id_mask = 0b110;
   std::unordered_map<SectionId, Hit::TermFrequency>
       expected_section_ids_tf_map1 = {{1, 7}, {2, 11}};
@@ -671,11 +867,12 @@ TEST_F(LiteIndexTest, LiteIndexIterator) {
 TEST_F(LiteIndexTest, LiteIndexIterator_sortAtIndexingDisabled) {
   // Set up LiteIndex and TermIdCodec
   std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
-  // At 64 bytes the unsorted tail can contain a max of 8 TermHitPairs.
-  LiteIndex::Options options(lite_index_file_name,
-                             /*hit_buffer_want_merge_bytes=*/1024 * 1024,
-                             /*hit_buffer_sort_at_indexing=*/false,
-                             /*hit_buffer_sort_threshold_bytes=*/64);
+  // The unsorted tail can contain a max of 8 TermIdHitPairs.
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_at_indexing=*/false,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
                              LiteIndex::Create(options, &icing_filesystem_));
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -691,9 +888,11 @@ TEST_F(LiteIndexTest, LiteIndexIterator_sortAtIndexingDisabled) {
   ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
                              term_id_codec_->EncodeTvi(tvi, TviType::LITE));
   Hit doc0_hit0(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/3,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc0_hit1(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/5,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   SectionIdMask doc0_section_id_mask = 0b11;
   std::unordered_map<SectionId, Hit::TermFrequency>
       expected_section_ids_tf_map0 = {{0, 3}, {1, 5}};
@@ -701,9 +900,11 @@ TEST_F(LiteIndexTest, LiteIndexIterator_sortAtIndexingDisabled) {
   ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc0_hit1));
 
   Hit doc1_hit1(/*section_id=*/1, /*document_id=*/1, /*term_frequency=*/7,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   Hit doc1_hit2(/*section_id=*/2, /*document_id=*/1, /*term_frequency=*/11,
-                /*is_in_prefix_section=*/false);
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
   SectionIdMask doc1_section_id_mask = 0b110;
   std::unordered_map<SectionId, Hit::TermFrequency>
       expected_section_ids_tf_map1 = {{1, 7}, {2, 11}};
@@ -734,6 +935,56 @@ TEST_F(LiteIndexTest, LiteIndexIterator_sortAtIndexingDisabled) {
   iter->PopulateMatchedTermsStats(&matched_terms_stats);
   EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
                                        term, expected_section_ids_tf_map0)));
+}
+
+TEST_F(LiteIndexTest, LiteIndexHitBufferSize) {
+  // Set up LiteIndex and TermIdCodec
+  std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
+  // The unsorted tail can contain a max of 8 TermIdHitPairs.
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_at_indexing=*/true,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
+                             LiteIndex::Create(options, &icing_filesystem_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      term_id_codec_,
+      TermIdCodec::Create(
+          IcingDynamicTrie::max_value_index(IcingDynamicTrie::Options()),
+          IcingDynamicTrie::max_value_index(options.lexicon_options)));
+
+  const std::string term = "foo";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t tvi,
+      lite_index->InsertTerm(term, TermMatchType::PREFIX, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(tvi, TviType::LITE));
+  Hit hit0(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/3,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  Hit hit1(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/5,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, hit0));
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, hit1));
+
+  // Check the total size and byte size of the hit buffer.
+  EXPECT_THAT(lite_index, Pointee(SizeIs(2)));
+  EXPECT_THAT(lite_index->GetHitBufferByteSize(),
+              Eq(2 * sizeof(TermIdHitPair::Value)));
+  // Check the unsorted size and byte size of the hit buffer.
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(2));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedByteSize(),
+              Eq(2 * sizeof(TermIdHitPair::Value)));
+
+  // Sort the hit buffer and check again.
+  lite_index->SortHits();
+  EXPECT_THAT(lite_index, Pointee(SizeIs(2)));
+  EXPECT_THAT(lite_index->GetHitBufferByteSize(),
+              Eq(2 * sizeof(TermIdHitPair::Value)));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(0));
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedByteSize(), Eq(0));
 }
 
 }  // namespace
