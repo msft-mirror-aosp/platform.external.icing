@@ -16,6 +16,7 @@
 #define ICING_STORE_DOCUMENT_STORE_H_
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -119,6 +120,7 @@ class DocumentStore {
     std::string schema_type_name;
     std::string name_space;
     std::string uri;
+    DocumentId document_id;
   };
 
   // Not copyable
@@ -200,10 +202,8 @@ class DocumentStore {
   struct PutResult {
     DocumentId old_document_id = kInvalidDocumentId;
     DocumentId new_document_id = kInvalidDocumentId;
-
-    bool was_replacement() const {
-      return old_document_id != kInvalidDocumentId;
-    }
+    int64_t expiration_timestamp_ms = std::numeric_limits<int64_t>::max();
+    bool was_replacement = false;
   };
   libtextclassifier3::StatusOr<PutResult> Put(
       const DocumentWrapper& document_wrapper,
@@ -474,6 +474,23 @@ class DocumentStore {
   //   Any FileBackedVector error
   libtextclassifier3::Status ResetAllAliveExpirationTimestampsToRaw(
       int64_t current_time_ms);
+
+  // Purges all expired documents given the current time.
+  //
+  // Note: documents that expire before
+  //   current_time_ms + feature_flags_.expired_document_purge_threshold_ms()
+  //   will also be purged.
+  //
+  // Returns:
+  //   A vector of purged expired document metadata on success
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::StatusOr<std::vector<DocumentMetadata>>
+  PurgeExpiredDocuments(int64_t current_time_ms);
+
+  // Returns the expiration timestamp (in milliseconds) of the document that
+  // will expire next, relative to current_time_ms. If there are no more expired
+  // documents, returns -1.
+  int64_t GetNextExpiredDocumentTimestampMs(int64_t current_time_ms);
 
   // Gets the SchemaTypeId of a document.
   //
