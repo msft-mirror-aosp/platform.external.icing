@@ -394,8 +394,7 @@ class DocHitInfoIterator {
     // Didn't find anything for the other iterator, reset to invalid values and
     // return.
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
 };
 
