@@ -133,7 +133,6 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_schema_database(true);
   icing_options.set_enable_qualified_id_join_index_v3(true);
   icing_options.set_enable_delete_propagation_from(false);
-  icing_options.set_enable_scorable_properties(true);
   return icing_options;
 }
 

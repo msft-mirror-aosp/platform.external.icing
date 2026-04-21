@@ -76,11 +76,11 @@ TEST_F(SectionManagerBuilderTest, Build) {
 
   SectionManager::Builder builder(*schema_type_mapper);
   ICING_ASSERT_OK(builder.ProcessSchemaTypePropertyConfig(
-      /*schema_type_id=*/0, prop_foo, /*property_path=*/"foo"));
+      /*schema_type_id=*/0, prop_foo, /*property_path=*/"foo", /*type_config_name=*/"type"));
   ICING_ASSERT_OK(builder.ProcessSchemaTypePropertyConfig(
-      /*schema_type_id=*/0, prop_bar, /*property_path=*/"bar"));
+      /*schema_type_id=*/0, prop_bar, /*property_path=*/"bar", /*type_config_name=*/"type"));
   ICING_ASSERT_OK(builder.ProcessSchemaTypePropertyConfig(
-      /*schema_type_id=*/1, prop_baz, /*property_path=*/"baz"));
+      /*schema_type_id=*/1, prop_baz, /*property_path=*/"baz", /*type_config_name=*/"type"));
 
   std::unique_ptr<SectionManager> section_manager = std::move(builder).Build();
   // Check "typeOne"
@@ -116,7 +116,7 @@ TEST_F(SectionManagerBuilderTest, TooManyPropertiesShouldFail) {
             .Build();
     ICING_ASSERT_OK(builder.ProcessSchemaTypePropertyConfig(
         /*schema_type_id=*/0, property_config,
-        /*property_path=*/"property" + std::to_string(i)));
+        /*property_path=*/"property" + std::to_string(i), /*type_config_name=*/"type"));
   }
 
   // Add another indexable property. This should fail.
@@ -127,7 +127,7 @@ TEST_F(SectionManagerBuilderTest, TooManyPropertiesShouldFail) {
           .Build();
   EXPECT_THAT(builder.ProcessSchemaTypePropertyConfig(
                   /*schema_type_id=*/0, property_config,
-                  /*property_path=*/"propertyExceed"),
+                  /*property_path=*/"propertyExceed", /*type_config_name=*/"type"),
               StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE,
                        HasSubstr("Too many properties")));
 }
@@ -150,7 +150,7 @@ TEST_F(SectionManagerBuilderTest, InvalidSchemaTypeIdShouldFail) {
   SectionManager::Builder builder(*schema_type_mapper);
   EXPECT_THAT(
       builder.ProcessSchemaTypePropertyConfig(
-          /*schema_type_id=*/-1, property_config, /*property_path=*/"property"),
+          /*schema_type_id=*/-1, property_config, /*property_path=*/"property", /*type_config_name=*/"type"),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -178,7 +178,7 @@ TEST_F(SectionManagerBuilderTest,
   SectionManager::Builder builder(*schema_type_mapper);
   EXPECT_THAT(
       builder.ProcessSchemaTypePropertyConfig(
-          /*schema_type_id=*/2, property_config, /*property_path=*/"property"),
+          /*schema_type_id=*/2, property_config, /*property_path=*/"property", /*type_config_name=*/"type"),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -200,7 +200,7 @@ TEST_P(IndexableSectionManagerBuilderTest, Build) {
 
   SectionManager::Builder builder(*schema_type_mapper);
   ICING_ASSERT_OK(builder.ProcessSchemaTypePropertyConfig(
-      /*schema_type_id=*/0, property_config, std::string(kPropertyPath)));
+      /*schema_type_id=*/0, property_config, std::string(kPropertyPath), /*type_config_name=*/"type"));
 
   std::unique_ptr<SectionManager> section_manager = std::move(builder).Build();
   EXPECT_THAT(section_manager->GetMetadataList(std::string(kSchemaType)),
@@ -268,7 +268,7 @@ TEST_P(NonIndexableSectionManagerBuilderTest, Build) {
 
   SectionManager::Builder builder(*schema_type_mapper);
   ICING_ASSERT_OK(builder.ProcessSchemaTypePropertyConfig(
-      /*schema_type_id=*/0, property_config, std::string(kPropertyPath)));
+      /*schema_type_id=*/0, property_config, std::string(kPropertyPath), /*type_config_name=*/"type"));
 
   // NonIndexable sections will still consume a sectionId.
   std::unique_ptr<SectionManager> section_manager = std::move(builder).Build();

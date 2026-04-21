@@ -45,6 +45,7 @@ class MonkeySchemaGenerator {
     std::unordered_set<std::string> schema_types_deleted;
     std::unordered_set<std::string> schema_types_incompatible;
     std::unordered_set<std::string> schema_types_index_incompatible;
+    std::unordered_set<std::string> schema_types_join_incompatible;
   };
 
   explicit MonkeySchemaGenerator(
@@ -54,7 +55,7 @@ class MonkeySchemaGenerator {
 
   SchemaProto GenerateSchema();
 
-  UpdateSchemaResult UpdateSchema(const SchemaProto& schema);
+  UpdateSchemaResult UpdateSchema(SchemaProto schema);
 
   // Reload the previous status of the schema generator.
   void ReloadPreviousStatus(const SchemaProto& schema);
@@ -62,7 +63,8 @@ class MonkeySchemaGenerator {
  private:
   PropertyConfigProto GenerateProperty(
       const SchemaTypeConfigProto& type_config,
-      PropertyConfigProto::Cardinality::Code cardinality, bool indexable);
+      PropertyConfigProto::Cardinality::Code cardinality, bool indexable,
+      bool joinable);
 
   void UpdateProperty(const SchemaTypeConfigProto& type_config,
                       PropertyConfigProto& property,
@@ -112,14 +114,19 @@ class MonkeyDocumentGenerator {
   PropertyProto::VectorProto GetRandomVector() const;
 
   std::string GetNamespace() const;
+  std::string GetNamespaceWithRange(int l, int r) const;
 
   std::string GetUri() const;
+  std::string GetUriWithRange(int l, int r) const;
 
   int GetNumTokens() const;
 
   int GetNumVectors(PropertyConfigProto::Cardinality::Code cardinality) const;
 
   std::vector<std::string> GetStringPropertyContent() const;
+
+  std::vector<std::string> GetQualifiedIds(
+      PropertyConfigProto::Cardinality::Code cardinality) const;
 
   std::vector<PropertyProto::VectorProto> GetVectorPropertyContent(
       PropertyConfigProto::Cardinality::Code cardinality) const;

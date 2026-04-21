@@ -214,24 +214,26 @@ class IcingDynamicTrie::CandidateSet {
                                     matched_span, matched_span_len));
   }
 
-  void Pop(Candidate *candidate) {
+  libtextclassifier3::Status Pop(Candidate* candidate) {
     *candidate = candidates_.back();
     if (cur_prefix_.size() < candidate->matched_prefix_len) {
-      ICING_LOG(FATAL)
-          << "Length of current prefix is smaller than length of matched "
-             "prefer, there're inconsistencies in dynamic trie.";
+      return absl_ports::InternalError(
+          "Length of current prefix is smaller than length of matched "
+          "prefer, there're inconsistencies in dynamic trie.");
     }
 
     cur_prefix_.resize(candidate->matched_prefix_len);
     cur_prefix_.append(candidate->matched_span);
     candidates_.pop_back();
+    return libtextclassifier3::Status::OK;
   }
 
   bool empty() const { return candidates_.empty(); }
 
-  void Release(std::vector<OriginalMatch> *ret) {
+  libtextclassifier3::Status Release(std::vector<OriginalMatch>* ret) {
     if (!empty()) {
-      ICING_LOG(FATAL) << "Candidate set not empty before releasing matches";
+      return absl_ports::InternalError(
+          "Candidate set not empty before releasing matches");
     }
 
     ret->swap(matches_);
@@ -239,6 +241,7 @@ class IcingDynamicTrie::CandidateSet {
     cur_prefix_.clear();
     candidates_.clear();
     matches_.clear();
+    return libtextclassifier3::Status::OK;
   }
 
  private:
@@ -267,11 +270,11 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
 
   bool is_initialized() const { return hdr_mmapper_.is_valid(); }
 
-  bool CreateIfNotExist(const Options &options);
+  libtextclassifier3::Status CreateIfNotExist(const Options& options);
   bool Init();
   static bool Remove(const std::string &file_basename,
                      const IcingFilesystem &filesystem);
-  bool Sync();
+  libtextclassifier3::Status Sync();
   uint64_t GetDiskUsage() const;
 
   // Returns the size of the elements held in the trie. This excludes the size
@@ -280,7 +283,7 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
 
   void Warm();
 
-  void Clear();
+  libtextclassifier3::Status Clear();
 
   bool empty() const { return hdr().num_nodes() == 0; }
 
@@ -337,7 +340,7 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
   libtextclassifier3::StatusOr<Node *> AllocNode();
   // REQUIRES: nexts_left() >= kMaxNextArraySize.
   libtextclassifier3::StatusOr<Next *> AllocNextArray(int size);
-  void FreeNextArray(Next *next, int log2_size);
+  libtextclassifier3::Status FreeNextArray(Next* next, int log2_size);
   // REQUIRES: suffixes_left() >= strlen(suffix) + 1 + value_size()
   libtextclassifier3::StatusOr<uint32_t> MakeSuffix(std::string_view suffix,
                                                     const void *value,
@@ -354,8 +357,8 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
   void dec_num_keys() { hdr_.hdr.set_num_keys(hdr_.hdr.num_keys() - 1); }
 
  private:
-  friend void IcingDynamicTrie::SetHeader(
-      const IcingDynamicTrieHeader &new_hdr);
+  friend libtextclassifier3::Status IcingDynamicTrie::SetHeader(
+      const IcingDynamicTrieHeader& new_hdr);
 
   enum ArrayType { NODE, NEXT, SUFFIX, NUM_ARRAY_TYPES };
 
@@ -387,8 +390,9 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
   Crc32 UpdateCrcInternal(bool write_hdr);
 
   // Initializes hdr_ with options and writes the resulting header to disk.
-  bool CreateNewHeader(IcingScopedFd sfd, const Options &options);
-  bool WriteHeader();
+  libtextclassifier3::Status CreateNewHeader(IcingScopedFd sfd,
+                                             const Options& options);
+  libtextclassifier3::Status WriteHeader();
 
   // Header block. On-disk header block format is as follows:
   //
@@ -601,20 +605,21 @@ failed:
   return false;
 }
 
-bool IcingDynamicTrie::IcingDynamicTrieStorage::CreateIfNotExist(
-    const Options &options) {
+libtextclassifier3::Status
+IcingDynamicTrie::IcingDynamicTrieStorage::CreateIfNotExist(
+    const Options& options) {
   std::vector<std::string> filenames;
   GetFilenames(file_basename_, &filenames);
 
   // Check already exists. Just header file check is enough.
   if (filesystem_->FileExists(filenames[0].c_str())) {
-    return true;
+    return libtextclassifier3::Status::OK;
   }
 
   // Ensure the storage directory exists
   std::string storage_dir = filesystem_->GetDirname(filenames[0].c_str());
   if (!filesystem_->CreateDirectoryRecursively(storage_dir.c_str())) {
-    return false;
+    return absl_ports::InternalError("Failed to create trie storage directory");
   }
 
   // Create files.
@@ -622,42 +627,52 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::CreateIfNotExist(
     IcingScopedFd sfd(filesystem_->OpenForWrite(filenames[i].c_str()));
     if (!sfd.is_valid()) {
       Remove(file_basename_, *filesystem_);
-      return false;
+      return absl_ports::InternalError(
+          "Failed to open/create trie storage file: " + filenames[i]);
     }
 
     if (i == 0) {
-      if (!CreateNewHeader(std::move(sfd), options)) {
-        ICING_LOG(ERROR) << "Serialize trie header failed";
+      libtextclassifier3::Status status =
+          CreateNewHeader(std::move(sfd), options);
+      if (!status.ok()) {
         Remove(file_basename_, *filesystem_);
-        return false;
+        return status;
       }
     } else {
       // Crcs are automatically kNoCrc so they will be initialized
       // upon first call to Init.
       if (!filesystem_->Truncate(*sfd, 0)) {
         Remove(file_basename_, *filesystem_);
-        return false;
+        return absl_ports::InternalError(
+            "Failed to truncate trie storage file: " + filenames[i]);
       }
     }
   }
-  return true;
+  return libtextclassifier3::Status::OK;
 }
 
-bool IcingDynamicTrie::IcingDynamicTrieStorage::CreateNewHeader(
-    IcingScopedFd sfd, const Options &options) {
+libtextclassifier3::Status
+IcingDynamicTrie::IcingDynamicTrieStorage::CreateNewHeader(
+    IcingScopedFd sfd, const Options& options) {
   ICING_VLOG(1) << "Creating header with write+sync";
   hdr_.Init(options);
   auto buf = std::make_unique<uint8_t[]>(IcingMMapper::system_page_size());
   // serialized_header_max must be less than system_page_size so we don't
   // overflow buf when serializing the header.
   if (serialized_header_max() > IcingMMapper::system_page_size()) {
-    ICING_LOG(FATAL) << "serialized_header_max exceeds system page size";
+    return absl_ports::InternalError(
+        "serialized_header_max exceeds system page size");
   }
 
-  return hdr_.SerializeToArray(buf.get(), serialized_header_max()) &&
-         filesystem_->Write(sfd.get(), buf.get(),
-                            IcingMMapper::system_page_size()) &&
-         filesystem_->DataSync(sfd.get());
+  if (!hdr_.SerializeToArray(buf.get(), serialized_header_max()) ||
+      !filesystem_->Write(sfd.get(), buf.get(),
+                          IcingMMapper::system_page_size()) ||
+      !filesystem_->DataSync(sfd.get())) {
+    return absl_ports::InternalError(
+        "Failed to serialize "
+        "or write trie header");
+  }
+  return libtextclassifier3::Status::OK;
 }
 
 bool IcingDynamicTrie::IcingDynamicTrieStorage::Remove(
@@ -679,9 +694,9 @@ void IcingDynamicTrie::IcingDynamicTrieStorage::Warm() {
   }
 }
 
-void IcingDynamicTrie::IcingDynamicTrieStorage::Clear() {
+libtextclassifier3::Status IcingDynamicTrie::IcingDynamicTrieStorage::Clear() {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::InternalError("DynamicTrie not initialized");
   }
 
   // Clear header.
@@ -697,47 +712,39 @@ void IcingDynamicTrie::IcingDynamicTrieStorage::Clear() {
   for (int i = 0; i < NUM_ARRAY_TYPES; i++) {
     array_storage_[i].Clear();
   }
-
-  // Copy to persistence.
-  WriteHeader();
+  return WriteHeader();
 }
 
-bool IcingDynamicTrie::IcingDynamicTrieStorage::Sync() {
+libtextclassifier3::Status IcingDynamicTrie::IcingDynamicTrieStorage::Sync() {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::InternalError("DynamicTrie not initialized");
   }
 
   uint32_t total_flushed = 0;
-  bool success = true;
 
   // Sync all array types.
   for (int i = 0; i < NUM_ARRAY_TYPES; i++) {
     total_flushed += array_storage_[i].Sync();
     if (!filesystem_->DataSync(array_fds_[i].get())) {
-      ICING_LOG(ERROR) << "Unable to sync data for flushing";
-      success = false;
+      return absl_ports::InternalError("Failed to sync data");
     }
   }
 
-  if (!WriteHeader()) {
-    ICING_LOG(ERROR) << "Flushing trie header failed: " << strerror(errno);
-    success = false;
-  }
+  ICING_RETURN_IF_ERROR(WriteHeader());
 
   // Need to update CRCs before we sync the header mmap.
   UpdateCrcInternal(false);
 
   // Sync header.
   if (!hdr_mmapper_.Sync()) {
-    ICING_LOG(ERROR) << "Unable to sync trie header for flushing";
-    success = false;
+    return absl_ports::InternalError("Unable to sync trie header for flushing");
   }
 
   if (total_flushed > 0) {
     ICING_VLOG(1) << "Flushing " << total_flushed << " pages of trie";
   }
 
-  return success;
+  return libtextclassifier3::Status::OK;
 }
 
 uint64_t IcingDynamicTrie::IcingDynamicTrieStorage::GetDiskUsage() const {
@@ -819,15 +826,17 @@ IcingDynamicTrie::IcingDynamicTrieStorage::AllocNextArray(int size) {
   return ret;
 }
 
-void IcingDynamicTrie::IcingDynamicTrieStorage::FreeNextArray(Next *next,
-                                                              int log2_size) {
+libtextclassifier3::Status
+IcingDynamicTrie::IcingDynamicTrieStorage::FreeNextArray(Next* next,
+                                                         int log2_size) {
   if (GetNextArrayIndex(next) + (1 << log2_size) > hdr_.hdr.max_nexts()) {
-    ICING_LOG(FATAL) << "'next' array is out of range";
+    return absl_ports::InternalError("'next' array is out of range");
   }
 
   // Put it in free list.
   next->set_next_index(hdr_.hdr.free_lists(log2_size));
   hdr_.hdr.set_free_lists(log2_size, GetNextArrayIndex(next));
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<uint32_t>
@@ -903,7 +912,9 @@ Crc32 IcingDynamicTrie::IcingDynamicTrieStorage::UpdateCrc() {
 
 Crc32 IcingDynamicTrie::IcingDynamicTrieStorage::UpdateCrcInternal(
     bool write_hdr) {
-  if (write_hdr && !WriteHeader()) {
+  // TODO(b/487768980): Populate errors using status, instead of just
+  // checking ok().
+  if (write_hdr && !WriteHeader().ok()) {
     ICING_LOG(ERROR) << "Flushing trie header failed: " << strerror(errno);
   }
 
@@ -921,8 +932,12 @@ Crc32 IcingDynamicTrie::IcingDynamicTrieStorage::UpdateCrcInternal(
   return all_crc;
 }
 
-bool IcingDynamicTrie::IcingDynamicTrieStorage::WriteHeader() {
-  return hdr_.SerializeToArray(hdr_mmapper_.address(), serialized_header_max());
+libtextclassifier3::Status
+IcingDynamicTrie::IcingDynamicTrieStorage::WriteHeader() {
+  if (!hdr_.SerializeToArray(hdr_mmapper_.address(), serialized_header_max())) {
+    return absl_ports::InternalError("Failed to serialize header");
+  }
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::StatusOr<IcingDynamicTrie::Node *>
@@ -1168,30 +1183,34 @@ IcingDynamicTrie::IcingDynamicTrie(const std::string &filename_base,
 
 IcingDynamicTrie::~IcingDynamicTrie() { Close(); }
 
-bool IcingDynamicTrie::Init() {
-  if (is_initialized_) return true;
-
+libtextclassifier3::Status IcingDynamicTrie::Init() {
+  if (is_initialized_) return libtextclassifier3::Status::OK;
   if (storage_ != nullptr) {
-    ICING_LOG(FATAL) << "Storage is not null before initialization";
+    return absl_ports::InternalError("Storage already initialized");
   }
 
   storage_ = std::make_unique<IcingDynamicTrieStorage>(
       filename_base_, runtime_options_, filesystem_);
-  if (!storage_->Init() || !InitPropertyBitmaps()) {
+  if (!storage_->Init()) {
     storage_.reset();
-    return false;
+    return absl_ports::InternalError("Failed to initialize storage");
+  }
+  libtextclassifier3::Status status = InitPropertyBitmaps();
+  if (!status.ok()) {
+    storage_.reset();
+    return status;
   }
   is_initialized_ = true;
-  return true;
+  return libtextclassifier3::Status::OK;
 }
 
-bool IcingDynamicTrie::CreateIfNotExist(const Options &options) {
+libtextclassifier3::Status IcingDynamicTrie::CreateIfNotExist(
+    const Options& options) {
   // Initialized means exists.
-  if (is_initialized_) return true;
+  if (is_initialized_) return libtextclassifier3::Status::OK;
 
   if (!options.is_valid()) {
-    ICING_LOG(ERROR) << "Trie options invalid";
-    return false;
+    return absl_ports::InvalidArgumentError("Trie options invalid");
   }
 
   auto storage = std::make_unique<IcingDynamicTrieStorage>(
@@ -1238,31 +1257,48 @@ bool IcingDynamicTrie::Remove() {
   return success;
 }
 
-bool IcingDynamicTrie::Sync() {
+libtextclassifier3::Status IcingDynamicTrie::Sync() {
   if (!is_initialized_) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::InternalError("DynamicTrie not initialized");
   }
 
   bool success = true;
   IcingTimer timer;
 
   // Sync property bitmaps.
-  for (size_t i = 0; i < property_bitmaps_.size(); i++) {
-    if (property_bitmaps_[i]) {
-      if (!property_bitmaps_[i]->Sync()) success = false;
+  for (auto& bitmap : property_bitmaps_) {
+    if (bitmap != nullptr) {
+      if (!bitmap->Sync()) {
+        ICING_LOG(ERROR) << "Failed to sync property bitmap";
+        success = false;
+      }
     }
   }
-  if (!deleted_bitmap_->Sync()) success = false;
+
+  if (!deleted_bitmap_->Sync()) {
+    ICING_LOG(ERROR) << "Failed to sync deleted bitmap";
+    success = false;
+  }
 
   // Sync storage.
-  if (!storage_->Sync()) success = false;
+  libtextclassifier3::Status status = storage_->Sync();
+  if (!status.ok()) {
+    ICING_LOG(ERROR) << "Failed to sync storage: " << status.error_message();
+    success = false;
+  }
 
-  Warm();
+  libtextclassifier3::Status warm_status = Warm();
+  if (!warm_status.ok()) {
+    ICING_LOG(ERROR) << "Failed to warm dynamic trie: "
+                     << warm_status.error_message();
+    success = false;
+  }
 
   ICING_VLOG(1) << "Syncing dynamic trie " << filename_base_.c_str() << " took "
                 << timer.Elapsed() * 1000 << "ms";
 
-  return success;
+  return success ? libtextclassifier3::Status::OK
+                 : absl_ports::InternalError("Failed to sync dynamic trie");
 }
 
 uint64_t IcingDynamicTrie::GetDiskUsage() const {
@@ -1316,14 +1352,17 @@ std::unique_ptr<IcingFlashBitmap> IcingDynamicTrie::OpenAndInitBitmap(
   return bitmap;
 }
 
-bool IcingDynamicTrie::InitPropertyBitmaps() {
+libtextclassifier3::Status IcingDynamicTrie::InitPropertyBitmaps() {
   // Only called on init.
   if (!property_bitmaps_.empty()) {
-    ICING_LOG(FATAL) << "Property bitmaps not empty before initialization";
+    return absl_ports::InternalError(
+        "Property bitmaps not empty "
+        "before initialization");
   }
 
   if (deleted_bitmap_ != nullptr) {
-    ICING_LOG(FATAL) << "Deleted bitmap not null before initialization";
+    return absl_ports::InternalError(
+        "Deleted bitmap not null before initialization");
   }
 
   // Truncate property bitmap files at current value index. Last value
@@ -1383,20 +1422,20 @@ bool IcingDynamicTrie::InitPropertyBitmaps() {
   }
   deleted_bitmap_->Truncate(truncate_idx);
 
-  return true;
+  return libtextclassifier3::Status::OK;
 
 failed:
   property_bitmaps_.clear();
   deleted_bitmap_.reset();
-  return false;
+  return absl_ports::InternalError("Failed to init property bitmaps");
 }
 
-void IcingDynamicTrie::Warm() const {
+libtextclassifier3::Status IcingDynamicTrie::Warm() const {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::InternalError("DynamicTrie not initialized");
   }
-
-  return storage_->Warm();
+  storage_->Warm();
+  return libtextclassifier3::Status::OK;
 }
 
 uint32_t IcingDynamicTrie::size() const {
@@ -1562,12 +1601,13 @@ void IcingDynamicTrie::DumpTrie(std::ostream *pretty_print,
   dumper.Dump(pretty_print, keys);
 }
 
-void IcingDynamicTrie::Clear() {
+libtextclassifier3::Status IcingDynamicTrie::Clear() {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::InternalError("DynamicTrie not initialized");
   }
 
-  storage_->Clear();
+  ICING_RETURN_IF_ERROR(storage_->Clear());
+
   for (auto &bitmap : property_bitmaps_) {
     if (bitmap) {
       bitmap->Delete();
@@ -1575,6 +1615,8 @@ void IcingDynamicTrie::Clear() {
     }
   }
   deleted_bitmap_->Truncate(0);
+
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::Status IcingDynamicTrie::ClearSuffixAndValue(
@@ -1813,8 +1855,8 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(std::string_view key,
 
       mutable_best_node->set_log2_num_children(log2_num_children + 1);
 
-      storage_->FreeNextArray(cur_next,
-                              mutable_best_node->log2_num_children() - 1);
+      ICING_RETURN_IF_ERROR(storage_->FreeNextArray(
+          cur_next, mutable_best_node->log2_num_children() - 1));
     }
   }
 
@@ -2440,7 +2482,7 @@ IcingDynamicTrie::FindBranchingPrefixLengths(std::string_view key,
 libtextclassifier3::StatusOr<bool> IcingDynamicTrie::IsBranchingTerm(
     std::string_view key) const {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::InternalError("DynamicTrie not initialized");
   }
 
   if (!IsKeyValid(key)) {
@@ -2776,8 +2818,9 @@ libtextclassifier3::Status IcingDynamicTrie::Delete(std::string_view key) {
       mutable_node->set_log2_num_children(mutable_node->log2_num_children() -
                                           1);
       // Add the unused second half of the next array to the free list.
-      storage_->FreeNextArray(next_array_start + next_array_buffer_size / 2,
-                              mutable_node->log2_num_children());
+      ICING_RETURN_IF_ERROR(
+          storage_->FreeNextArray(next_array_start + next_array_buffer_size / 2,
+                                  mutable_node->log2_num_children()));
     }
   }
 
@@ -2791,7 +2834,7 @@ libtextclassifier3::Status IcingDynamicTrie::Delete(std::string_view key) {
     //   before deletion.
     // - Therefore, after deletion, there should be no valid nodes or nexts in
     //   the trie.
-    Clear();
+    ICING_RETURN_IF_ERROR(Clear());
   }
 
   return libtextclassifier3::Status::OK;
@@ -2923,13 +2966,14 @@ void IcingDynamicTrie::GetHeader(IcingDynamicTrieHeader *hdr) const {
   *hdr = storage_->hdr();
 }
 
-void IcingDynamicTrie::SetHeader(const IcingDynamicTrieHeader &new_hdr) {
+libtextclassifier3::Status IcingDynamicTrie::SetHeader(
+    const IcingDynamicTrieHeader& new_hdr) {
   if (!is_initialized()) {
     ICING_LOG(FATAL) << "DynamicTrie not initialized";
   }
 
   storage_->hdr_.hdr = new_hdr;
-  storage_->WriteHeader();
+  return storage_->WriteHeader();
 }
 
 }  // namespace lib
