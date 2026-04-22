@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -35,6 +36,7 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/embed/embedding-hit.h"
+#include "icing/index/embed/embedding-reference.h"
 #include "icing/index/embed/quantizer.h"
 #include "icing/index/hit/hit.h"
 #include "icing/legacy/index/icing-filesystem.h"
@@ -73,6 +75,8 @@ static constexpr float kEpsQuantized = 0.01f;
 static constexpr uint32_t kDefaultDimension = 3;
 static const char kDefaultModelSignature[] = "model";
 static constexpr std::string_view kDefaultSchemaName = "type";
+
+}  // namespace
 
 class EmbeddingIndexTest : public Test {
  protected:
@@ -165,6 +169,13 @@ class EmbeddingIndexTest : public Test {
       return absl_ports::InternalError("Failed to list directory");
     }
     return sub_dirs.size() == 1 && sub_dirs[0] == "metadata";
+  }
+
+  libtextclassifier3::StatusOr<uint32_t> AppendEmbeddingVector(
+      const EmbeddingReference& embedding, uint32_t dimension,
+      uint32_t shard_id) {
+    return embedding_index_->AppendEmbeddingVector(embedding, dimension,
+                                                   shard_id);
   }
 
   std::unique_ptr<FeatureFlags> feature_flags_;
@@ -505,6 +516,58 @@ TEST_F(EmbeddingIndexTest, AddSingleEmbedding) {
       GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
       ElementsAre(0.1, 0.2, 0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
+}
+
+TEST_F(EmbeddingIndexTest, AppendEmbeddingReferenceDirectly) {
+  // Buffer some embedding first.
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(/*section_id=*/0, /*document_id=*/0), test_vector1_,
+      QUANTIZATION_TYPE_NONE, kDefaultSchemaName));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+
+  // Test Float Vector
+  std::vector<float> float_vector = {0.1f, 0.2f, 0.3f, 0.4f};
+  EmbeddingReference float_ref;
+  float_ref.float_vector = float_vector.data();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t float_location,
+      AppendEmbeddingVector(float_ref, /*dimension=*/3, default_shard_id_));
+  // Location should be after the first vector which had dimension=3
+  EXPECT_EQ(float_location, 3);
+  // Append it again with dimension=4
+  ICING_ASSERT_OK_AND_ASSIGN(
+      float_location,
+      AppendEmbeddingVector(float_ref, /*dimension=*/4, default_shard_id_));
+  EXPECT_EQ(float_location, 6);
+
+  EXPECT_THAT(
+      GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
+      ElementsAre(0.1, 0.2, 0.3, 0.1, 0.2, 0.3, 0.1, 0.2, 0.3, 0.4));
+
+  // Test Quantized Vector
+  ICING_ASSERT_OK_AND_ASSIGN(Quantizer quantizer,
+                             Quantizer::Create(0.1f, 0.3f));
+  std::vector<char> quantized_data(sizeof(Quantizer) + 4);
+  memcpy(quantized_data.data(), &quantizer, sizeof(Quantizer));
+  quantized_data[sizeof(Quantizer)] = quantizer.Quantize(0.1f);
+  quantized_data[sizeof(Quantizer) + 1] = quantizer.Quantize(0.2f);
+  quantized_data[sizeof(Quantizer) + 2] = quantizer.Quantize(0.3f);
+  quantized_data[sizeof(Quantizer) + 3] = quantizer.Quantize(0.4f);
+
+  EmbeddingReference quantized_ref;
+  quantized_ref.quantized_vector = quantized_data.data();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t quantized_location,
+      AppendEmbeddingVector(quantized_ref, /*dimension=*/3, default_shard_id_));
+  EXPECT_EQ(quantized_location, 0);
+  // Append it again with dimension=4
+  ICING_ASSERT_OK_AND_ASSIGN(
+      quantized_location,
+      AppendEmbeddingVector(quantized_ref, /*dimension=*/4, default_shard_id_));
+  EXPECT_EQ(quantized_location, 3 + sizeof(Quantizer));
+
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
+              Eq(3 + 4 + 2 * sizeof(Quantizer)));
 }
 
 TEST_F(EmbeddingIndexTest, AddSingleQuantizedEmbedding) {
@@ -1485,8 +1548,6 @@ TEST_F(EmbeddingIndexTest,
       ElementsAre(-0.1, -0.2, -0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
-
-}  // namespace
 
 TEST_F(EmbeddingIndexTest, ShardFileShouldBeLazilyCreated) {
   // Check no shard file exists after initialization.

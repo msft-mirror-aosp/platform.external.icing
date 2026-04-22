@@ -54,8 +54,10 @@ class IcingMonkeyTestRunner {
   void DoDeleteBySchemaType();
   void DoDeleteByQuery();
   void DoSearch();
+  void DoGetDebugInfo();
 
   // Operations with no observable side-effects.
+  void DoPersistToDisk();
   void ReloadFromDisk();
   void DoOptimize();
 
