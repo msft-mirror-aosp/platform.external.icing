@@ -35,7 +35,7 @@ option objc_class_prefix = "ICNG";
 // TODO(cassiewang) Define a sample proto file that can be used by tests and for
 // documentation.
 //
-// Next tag: 10
+// Next tag: 11
 message SchemaTypeConfigProto {
   // REQUIRED: Named type that identifies the structured, logical schema being
   // defined.
@@ -68,6 +68,10 @@ message SchemaTypeConfigProto {
   // unknown properties. Accepting them could make switching between versions
   // easier.
   repeated PropertyConfigProto properties = 4;
+
+  // Sha256 digest of all properties. This is a field used for Icing's internal
+  // optimizations and should not be set by clients.
+  optional bytes properties_digest = 10;
 
   // Version is an arbitrary number that the client may use to keep track of
   // different incarnations of the schema. Icing library imposes no requirements

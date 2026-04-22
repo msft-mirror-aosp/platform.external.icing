@@ -61,6 +61,14 @@ struct IcingMonkeyTestRunnerConfiguration {
 
   // The possible number of tokens that may appear in a string property of
   // generated documents, with a noise factor from 0.5 to 1 applied.
+  // - This number is also used for the number of qualified ids in join
+  //   properties if the string property is qualified id joinable.
+  // - However, unlike normal string tokens which will be concatenated together
+  //   (separated by spaces) into a single string, qualified ids will be stored
+  //   as multiple strings in the document.
+  // - Also if the cardinality of the joinable property is optional or required,
+  //   then only 1 qualified id will be generated. In this case,
+  //   possible_num_tokens is ignored.
   std::vector<int> possible_num_tokens;
 
   // The possible number of embedding vectors that may appear in a repeated
@@ -70,11 +78,32 @@ struct IcingMonkeyTestRunnerConfiguration {
   // The possible dimensions for the randomly generated embedding vectors.
   std::vector<int> possible_vector_dimensions;
 
+  // The possible random spaces for generating qualified ids for join
+  // properties. When generating a qualified id:
+  // - Pick a random space from this list.
+  // - Then generate a namespace from [namespace_l, namespace_r) and a uri from
+  //   [uri_l, uri_r).
+  //
+  // This will ensure that a decent join ratio can be achieved.
+  //
+  // Note: join monkey tests should have at least one of these spaces defined.
+  struct QualifiedIdRandomSpace {
+    int namespace_l;
+    int namespace_r;
+    int uri_l;
+    int uri_r;
+  };
+  std::vector<QualifiedIdRandomSpace> possible_ref_qualified_id_random_spaces;
+
   // An array of pairs of monkey test APIs with frequencies.
   // If f_sum is the sum of all the frequencies, an operation with frequency f
   // means for every f_sum iterations, the operation is expected to run f times.
   std::vector<std::pair<std::function<void(IcingMonkeyTestRunner*)>, uint32_t>>
       monkey_api_schedules;
+
+  bool IsJoinEnabled() const {
+    return !possible_ref_qualified_id_random_spaces.empty();
+  }
 };
 
 }  // namespace lib
