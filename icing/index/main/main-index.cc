@@ -27,6 +27,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/feature-flags.h"
 #include "icing/file/destructible-directory.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/posting_list/flash-index-storage.h"
@@ -116,20 +117,23 @@ std::string MakeFlashIndexFilename(const std::string& base_dir) {
 
 MainIndex::MainIndex(const std::string& index_directory,
                      const Filesystem* filesystem,
-                     const IcingFilesystem* icing_filesystem)
+                     const IcingFilesystem* icing_filesystem,
+                     const FeatureFlags* feature_flags)
     : base_dir_(index_directory),
       filesystem_(filesystem),
       icing_filesystem_(icing_filesystem),
       posting_list_hit_serializer_(
-          std::make_unique<PostingListHitSerializer>()) {}
+          std::make_unique<PostingListHitSerializer>()),
+      feature_flags_(*feature_flags) {}
 
 libtextclassifier3::StatusOr<std::unique_ptr<MainIndex>> MainIndex::Create(
     const std::string& index_directory, const Filesystem* filesystem,
-    const IcingFilesystem* icing_filesystem) {
+    const IcingFilesystem* icing_filesystem,
+    const FeatureFlags* feature_flags) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(icing_filesystem);
-  std::unique_ptr<MainIndex> main_index(
-      new MainIndex(index_directory, filesystem, icing_filesystem));
+  std::unique_ptr<MainIndex> main_index(new MainIndex(
+      index_directory, filesystem, icing_filesystem, feature_flags));
   ICING_RETURN_IF_ERROR(main_index->Init());
   return main_index;
 }
@@ -155,13 +159,15 @@ libtextclassifier3::Status MainIndex::Init() {
 
   std::string lexicon_file = base_dir_ + "/main-lexicon";
   IcingDynamicTrie::RuntimeOptions runtime_options;
+  if (feature_flags_.enable_optimize_improvements()) {
+    runtime_options.set_storage_policy(
+        IcingDynamicTrie::RuntimeOptions::kMapSharedWithCrc);
+  }
   main_lexicon_ = std::make_unique<IcingDynamicTrie>(
       lexicon_file, runtime_options, icing_filesystem_);
   IcingDynamicTrie::Options lexicon_options;
-  if (!main_lexicon_->CreateIfNotExist(lexicon_options) ||
-      !main_lexicon_->Init()) {
-    return absl_ports::InternalError("Failed to initialize lexicon trie");
-  }
+  ICING_RETURN_IF_ERROR(main_lexicon_->CreateIfNotExist(lexicon_options));
+  ICING_RETURN_IF_ERROR(main_lexicon_->Init());
   return libtextclassifier3::Status::OK;
 }
 
@@ -741,9 +747,10 @@ libtextclassifier3::Status MainIndex::Optimize(
         "Unable to create temp directory to build new index.");
   }
 
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<MainIndex> new_index,
-                         MainIndex::Create(temporary_index_dir.dir(),
-                                           filesystem_, icing_filesystem_));
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<MainIndex> new_index,
+      MainIndex::Create(temporary_index_dir.dir(), filesystem_,
+                        icing_filesystem_, &feature_flags_));
   ICING_RETURN_IF_ERROR(TransferIndex(document_id_old_to_new, new_index.get()));
   ICING_RETURN_IF_ERROR(new_index->PersistToDisk());
   new_index = nullptr;
