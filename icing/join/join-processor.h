@@ -17,19 +17,15 @@
 
 #include <cstdint>
 #include <memory>
-#include <string>
 #include <string_view>
-#include <unordered_set>
 #include <vector>
 
-#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
-#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 
 namespace icing {
@@ -65,27 +61,8 @@ class JoinProcessor {
       std::vector<ScoredDocumentHit>&& parent_scored_document_hits,
       const JoinChildrenFetcher& join_children_fetcher);
 
-  // Gets all child documents to delete, propagated from the given deleted
-  // documents.
-  //
-  // Returns:
-  //   - On success, a set of child document ids to delete.
-  //   - Any other errors.
-  libtextclassifier3::StatusOr<std::unordered_set<DocumentId>>
-  GetPropagatedChildDocumentsToDelete(
-      const std::unordered_set<DocumentId>& deleted_document_ids);
-
  private:
-  // TODO(b/275121148): deprecate v1, v2 after rollout v3.
-
-  // Helper function to construct JoinChildrenFetcher for
-  // QualfiedIdJoinIndexImplV1.
-  //
-  // Note: JoinChildrenFetcherImplDeprecated will be returned.
-  libtextclassifier3::StatusOr<std::unique_ptr<JoinChildrenFetcher>>
-  GetChildrenFetcherV1(
-      const JoinSpecProto& join_spec,
-      std::vector<ScoredDocumentHit>&& child_scored_document_hits);
+  // TODO(b/275121148): deprecate v2 after rollout v3.
 
   // Helper function to construct JoinChildrenFetcher for
   // QualfiedIdJoinIndexImplV2.
@@ -95,21 +72,6 @@ class JoinProcessor {
   GetChildrenFetcherV2(
       const JoinSpecProto& join_spec,
       std::vector<ScoredDocumentHit>&& child_scored_document_hits);
-
-  // Fetches referenced document id of the given document under the given
-  // property path.
-  //
-  // TODO(b/256022027): validate joinable property (and its upper-level) should
-  //                    not have REPEATED cardinality.
-  //
-  // Returns:
-  //   - A valid referenced document id on success
-  //   - kInvalidDocumentId if the given document is not found, doesn't have
-  //     qualified id joinable type for the given property_path, or doesn't have
-  //     joinable value (an optional property)
-  //   - Any other QualifiedIdJoinIndex errors
-  libtextclassifier3::StatusOr<DocumentId> FetchReferencedQualifiedId(
-      const DocumentId& document_id, const std::string& property_path) const;
 
   const DocumentStore* doc_store_;  // Does not own.
   const SchemaStore* schema_store_;  // Does not own.

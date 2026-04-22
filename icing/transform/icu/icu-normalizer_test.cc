@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include <memory>
+#include <string>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
@@ -44,6 +45,15 @@ class IcuNormalizerTest : public testing::Test {
 
   std::unique_ptr<Normalizer> normalizer_;
 };
+
+TEST_F(IcuNormalizerTest, SuccessfulIcuNormalizerSetsOkStatus) {
+  StatusProto icu_normalizer_creation_status;
+  NormalizerOptions options(/*max_term_byte_size=*/1024);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto normalizer,
+      normalizer_factory::Create(options, &icu_normalizer_creation_status));
+  EXPECT_THAT(icu_normalizer_creation_status.code(), Eq(StatusProto::OK));
+}
 
 TEST_F(IcuNormalizerTest, Creation) {
   NormalizerOptions options1(/*max_term_byte_size=*/5);
@@ -264,6 +274,15 @@ TEST_F(IcuNormalizerTest, SquaredCharsToASCII) {
 TEST_F(IcuNormalizerTest, FractionsToASCII) {
   EXPECT_THAT(normalizer_->NormalizeTerm("¼"), EqualsNormalizedTerm(" 1/4"));
   EXPECT_THAT(normalizer_->NormalizeTerm("⅚"), EqualsNormalizedTerm(" 5/6"));
+}
+
+TEST_F(IcuNormalizerTest, CorruptTerm) {
+  std::string_view empty_term = "";
+  EXPECT_THAT(normalizer_->NormalizeTerm(empty_term), EqualsNormalizedTerm(""));
+  std::string_view CGJ_term = "\u034F";
+  EXPECT_THAT(normalizer_->NormalizeTerm(CGJ_term), EqualsNormalizedTerm(""));
+  std::string_view null_term = "\0";
+  EXPECT_THAT(normalizer_->NormalizeTerm(null_term), EqualsNormalizedTerm(""));
 }
 
 TEST_F(IcuNormalizerTest, Truncate) {

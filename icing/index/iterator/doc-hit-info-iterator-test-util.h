@@ -19,6 +19,7 @@
 #include <cinttypes>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -84,7 +85,7 @@ class DocHitInfoTermFrequencyPair {
 // will then proceed to return the doc_hit_infos in order as Advance's are
 // called. After all doc_hit_infos are returned, Advance will return a NotFound
 // error (also like normal DocHitInfoIterators).
-class DocHitInfoIteratorDummy : public DocHitInfoLeafIterator {
+class DocHitInfoIteratorDummy : public DocHitInfoIterator {
  public:
   DocHitInfoIteratorDummy() = default;
   explicit DocHitInfoIteratorDummy(
@@ -119,6 +120,10 @@ class DocHitInfoIteratorDummy : public DocHitInfoLeafIterator {
     DocHitInfoIterator::TrimmedNode node = {nullptr, term_, term_start_index_,
                                             unnormalized_term_length_};
     return node;
+  }
+
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {};
   }
 
   // Imitates behavior of DocHitInfoIteratorTermMain/DocHitInfoIteratorTermLite

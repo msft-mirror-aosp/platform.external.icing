@@ -31,6 +31,7 @@
 #include "icing/index/term-id-codec.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/util/logging.h"
+#include "icing/util/math-util.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -142,15 +143,37 @@ class HitSelector {
   TermIdHitPair prev_;
 };
 
-class HitComparator {
- public:
-  explicit HitComparator(
-      const TermIdCodec& term_id_codec,
-      const std::unordered_map<uint32_t, int>& main_tvi_to_block_index)
-      : term_id_codec_(&term_id_codec),
-        main_tvi_to_block_index_(&main_tvi_to_block_index) {}
+int GetIndexBlock(
+    uint32_t term_id,
+    const std::unordered_map<uint32_t, int>& main_tvi_to_block_index,
+    const TermIdCodec& term_id_codec) {
+  auto term_info_or = term_id_codec.DecodeTermInfo(term_id);
+  if (!term_info_or.ok()) {
+    ICING_LOG(WARNING)
+        << "Unable to decode term-info during merge. This shouldn't happen.";
+    return kInvalidBlockIndex;
+  }
+  TermIdCodec::DecodedTermInfo term_info = std::move(term_info_or).ValueOrDie();
+  auto itr = main_tvi_to_block_index.find(term_info.tvi);
+  if (itr == main_tvi_to_block_index.end()) {
+    return kInvalidBlockIndex;
+  }
+  return itr->second;
+}
 
-  bool operator()(const TermIdHitPair& lhs, const TermIdHitPair& rhs) const {
+void SortHits(std::vector<TermIdHitPair>& hits,
+              const std::unordered_map<uint32_t, int>& main_tvi_to_block_index,
+              const TermIdCodec& term_id_codec) {
+  std::vector<int> indices;
+  indices.reserve(hits.size());
+  std::vector<int> index_blocks;
+  index_blocks.reserve(hits.size());
+  for (int i = 0; i < hits.size(); ++i) {
+    indices.push_back(i);
+    index_blocks.push_back(GetIndexBlock(
+        hits[i].term_id(), main_tvi_to_block_index, term_id_codec));
+  }
+  std::sort(indices.begin(), indices.end(), [&](int i, int j) {
     // Primary sort by index block. This achieves two things:
     // 1. It reduces the number of flash writes by grouping together new hits
     // for terms whose posting lists might share the same index block.
@@ -158,35 +181,14 @@ class HitComparator {
     // will be populated first (because all newly added terms have an invalid
     // block index of 0) before any new hits are added to the postings lists
     // that they backfill from.
-    int lhs_index_block = GetIndexBlock(lhs.term_id());
-    int rhs_index_block = GetIndexBlock(rhs.term_id());
-    if (lhs_index_block == rhs_index_block) {
-      // Secondary sort by term_id and hit.
-      return lhs.value() < rhs.value();
+    if (index_blocks[i] == index_blocks[j]) {
+      return hits[i].value() < hits[j].value();
     }
-    return lhs_index_block < rhs_index_block;
-  }
+    return index_blocks[i] < index_blocks[j];
+  });
 
- private:
-  int GetIndexBlock(uint32_t term_id) const {
-    auto term_info_or = term_id_codec_->DecodeTermInfo(term_id);
-    if (!term_info_or.ok()) {
-      ICING_LOG(WARNING)
-          << "Unable to decode term-info during merge. This shouldn't happen.";
-      return kInvalidBlockIndex;
-    }
-    TermIdCodec::DecodedTermInfo term_info =
-        std::move(term_info_or).ValueOrDie();
-    auto itr = main_tvi_to_block_index_->find(term_info.tvi);
-    if (itr == main_tvi_to_block_index_->end()) {
-      return kInvalidBlockIndex;
-    }
-    return itr->second;
-  }
-
-  const TermIdCodec* term_id_codec_;
-  const std::unordered_map<uint32_t, int>* main_tvi_to_block_index_;
-};
+  math_util::ApplyPermutation(indices, hits);
+}
 
 // A helper function to dedupe hits stored in hits. Suppose that the lite index
 // contained a single document with two hits in a single prefix section: "foot"
@@ -211,8 +213,7 @@ void DedupeHits(
     const std::unordered_map<uint32_t, int>& main_tvi_to_block_index) {
   // Now all terms are grouped together and all hits for a term are sorted.
   // Merge equivalent hits into one.
-  std::sort(hits->begin(), hits->end(),
-            HitComparator(term_id_codec, main_tvi_to_block_index));
+  SortHits(*hits, main_tvi_to_block_index, term_id_codec);
   size_t current_offset = 0;
   HitSelector hit_selector;
   for (const TermIdHitPair& term_id_hit_pair : *hits) {

@@ -34,6 +34,7 @@
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/query/query-processor.h"
@@ -99,14 +100,18 @@ class CombinedTokenizerTest : public ::testing::Test {
 
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
-        DocumentStore::Create(&filesystem_, store_dir_, &fake_clock_,
-                              schema_store_.get(), feature_flags_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/false,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDefaultCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, store_dir_, &fake_clock_, schema_store_.get(),
+            feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/false,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(create_result.document_store);
 
     Index::Options options(index_dir_,
@@ -114,7 +119,8 @@ class CombinedTokenizerTest : public ::testing::Test {
                            /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
-        index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+        index_, Index::Create(options, &filesystem_, &icing_filesystem_,
+                              feature_flags_.get()));
     // TODO(b/249829533): switch to use persistent numeric index.
     ICING_ASSERT_OK_AND_ASSIGN(
         numeric_index_,
@@ -122,7 +128,8 @@ class CombinedTokenizerTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
         EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &fake_clock_,
-                               feature_flags_.get()));
+                               feature_flags_.get(),
+                               /*num_shards=*/32));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(
         ULOC_US, jni_cache_.get());
@@ -153,6 +160,7 @@ class CombinedTokenizerTest : public ::testing::Test {
         QueryResults parsed_query,
         query_processor_->ParseSearch(
             search_spec, ScoringSpecProto::RankingStrategy::NONE,
+            /*get_embedding_match_info=*/false,
             /*current_time_ms=*/0, /*search_stats=*/nullptr));
 
     std::vector<std::string> query_terms;
@@ -252,8 +260,7 @@ TEST_F(CombinedTokenizerTest, Negation) {
   const std::string_view kQueryText = "\\-foo \\-bar \\-baz";
   ICING_ASSERT_OK_AND_ASSIGN(std::vector<std::string> query_terms,
                              GetQueryTerms(kQueryText));
-  EXPECT_THAT(query_terms,
-              UnorderedElementsAre("foo", "bar", "baz"));
+  EXPECT_THAT(query_terms, UnorderedElementsAre("foo", "bar", "baz"));
 }
 
 // TODO(b/254874614): Handle colon word breaks in ICU 72+
@@ -282,8 +289,9 @@ TEST_F(CombinedTokenizerTest, ColonsPropertyRestricts) {
       tokenizer_factory::CreateIndexingTokenizer(
           StringIndexingConfig::TokenizerType::PLAIN, lang_segmenter_.get()));
 
-  if (GetIcuTokenizationVersion() >= 72) {
-    // In ICU 72+ and above, ':' are no longer considered word connectors.
+  int icu_version = GetIcuTokenizationVersion();
+  if (icu_version >= 72 && icu_version < 77) {
+    // In ICU 72+ and before 77, ':' are not considered word connectors.
     constexpr std::string_view kText = "foo:bar";
     ICING_ASSERT_OK_AND_ASSIGN(std::vector<Token> indexing_tokens,
                                indexing_tokenizer->TokenizeAll(kText));
@@ -292,7 +300,7 @@ TEST_F(CombinedTokenizerTest, ColonsPropertyRestricts) {
 
     const std::string_view kQueryText = "foo\\:bar";
     ICING_ASSERT_OK_AND_ASSIGN(std::vector<std::string> query_terms,
-                              GetQueryTerms(kQueryText));
+                               GetQueryTerms(kQueryText));
     EXPECT_THAT(query_terms, UnorderedElementsAre("foo", "bar"));
 
     constexpr std::string_view kText2 = "foo:bar:baz";
@@ -302,8 +310,7 @@ TEST_F(CombinedTokenizerTest, ColonsPropertyRestricts) {
     EXPECT_THAT(indexing_terms, ElementsAre("foo", "bar", "baz"));
 
     const std::string_view kQueryText2 = "foo\\:bar\\:baz";
-    ICING_ASSERT_OK_AND_ASSIGN(query_terms,
-                              GetQueryTerms(kQueryText2));
+    ICING_ASSERT_OK_AND_ASSIGN(query_terms, GetQueryTerms(kQueryText2));
     EXPECT_THAT(query_terms, UnorderedElementsAre("foo", "bar", "baz"));
   } else {
     constexpr std::string_view kText = "foo:bar";

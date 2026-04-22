@@ -20,6 +20,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -116,9 +117,19 @@ class SchemaUtil {
     }
   };
 
+  // A struct that stores the information about a property config parsed from
+  // a SchemaTypeConfigProto.
+  struct PropertyConfigInfo {
+    const PropertyConfigProto* property_config;
+
+    // The position of the property in the type config's repeated property
+    // field.
+    int32_t position;
+  };
+
   struct ParsedPropertyConfigs {
     // Mapping of property name to PropertyConfigProto
-    std::unordered_map<std::string_view, const PropertyConfigProto*>
+    std::unordered_map<std::string_view, PropertyConfigInfo>
         property_config_map;
 
     // Properties that have an indexing config
@@ -186,8 +197,7 @@ class SchemaUtil {
   //   ALREADY_EXISTS for case 1 and 2
   //   INVALID_ARGUMENT for 3-15
   static libtextclassifier3::StatusOr<DependentMap> Validate(
-      const SchemaProto& schema, const FeatureFlags& feature_flags,
-      bool allow_circular_schema_definitions);
+      const SchemaProto& schema, const FeatureFlags& feature_flags);
 
   // Builds a transitive inheritance map.
   //
