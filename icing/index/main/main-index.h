@@ -26,6 +26,7 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
@@ -55,7 +56,8 @@ class MainIndex {
   //  - INTERNAL error if unable to create the lexicon or flash storage.
   static libtextclassifier3::StatusOr<std::unique_ptr<MainIndex>> Create(
       const std::string& index_directory, const Filesystem* filesystem,
-      const IcingFilesystem* icing_filesystem);
+      const IcingFilesystem* icing_filesystem,
+      const FeatureFlags* feature_flags);
 
   // Reads magic from existing flash index storage file header. We need this
   // during Icing initialization phase to determine the version.
@@ -177,10 +179,12 @@ class MainIndex {
       std::vector<TermIdHitPair>&& hits, DocumentId last_added_document_id);
 
   libtextclassifier3::Status PersistToDisk() {
-    if (main_lexicon_->Sync() && flash_index_storage_->PersistToDisk()) {
-      return libtextclassifier3::Status::OK;
+    ICING_RETURN_IF_ERROR(main_lexicon_->Sync());
+    if (!flash_index_storage_->PersistToDisk()) {
+      return absl_ports::InternalError(
+          "Unable to persist flash index storage.");
     }
-    return absl_ports::InternalError("Unable to sync main index components.");
+    return libtextclassifier3::Status::OK;
   }
 
   // Updates and returns the checksums of the components in the MainIndex.
@@ -235,7 +239,8 @@ class MainIndex {
  private:
   explicit MainIndex(const std::string& index_directory,
                      const Filesystem* filesystem,
-                     const IcingFilesystem* icing_filesystem);
+                     const IcingFilesystem* icing_filesystem,
+                     const FeatureFlags* feature_flags);
 
   libtextclassifier3::Status Init();
 
@@ -358,6 +363,7 @@ class MainIndex {
   std::unique_ptr<PostingListHitSerializer> posting_list_hit_serializer_;
   std::unique_ptr<FlashIndexStorage> flash_index_storage_;
   std::unique_ptr<IcingDynamicTrie> main_lexicon_;
+  const FeatureFlags& feature_flags_;  // Does not own.
 };
 
 }  // namespace lib

@@ -214,15 +214,8 @@ libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Initialize(
       sizeof(IcingDynamicTrie::Node) * options.max_nodes;
   options.value_size = sizeof(T);
 
-  if (!trie_.CreateIfNotExist(options)) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Failed to create DynamicTrieKeyMapper file: ", file_prefix_));
-  }
-  if (!trie_.Init()) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Failed to init DynamicTrieKeyMapper file: ", file_prefix_));
-  }
-  return libtextclassifier3::Status::OK;
+  ICING_RETURN_IF_ERROR(trie_.CreateIfNotExist(options));
+  return trie_.Init();
 }
 
 template <typename T, typename Formatter>
@@ -290,12 +283,7 @@ DynamicTrieKeyMapper<T, Formatter>::GetIterator() const {
 
 template <typename T, typename Formatter>
 libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::PersistToDisk() {
-  if (!trie_.Sync()) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Failed to sync DynamicTrieKeyMapper file: ", file_prefix_));
-  }
-
-  return libtextclassifier3::Status::OK;
+  return trie_.Sync();
 }
 
 template <typename T, typename Formatter>

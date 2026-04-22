@@ -404,9 +404,7 @@ class LiteIndex {
   //    This is more of a sanity check. We should not really be encountering
   //    this case.
   bool NeedSortAtQuerying() const ICING_SHARED_LOCKS_REQUIRED(mutex_) {
-    return HasUnsortedHitsExceedingSortThresholdImpl() ||
-           (!options_.hit_buffer_sort_at_indexing &&
-            GetHitBufferUnsortedSizeImpl() > 0);
+    return HasUnsortedHitsExceedingSortThresholdImpl();
   }
 
   // Non-locking implementation for HasUnsortedHitsExceedingSortThresholdImpl().
