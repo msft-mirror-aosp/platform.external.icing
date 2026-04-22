@@ -29,6 +29,7 @@
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/thread_annotations.h"
 #include "icing/feature-flags.h"
+#include "icing/file/database-stableness-log.h"
 #include "icing/file/derived-file-util.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/data-indexing-handler.h"
@@ -751,6 +752,10 @@ class IcingSearchEngine {
   //     because task_scheduler_ is already set to nullptr.
   std::unique_ptr<SimpleTaskScheduler> task_scheduler_ ICING_GUARDED_BY(mutex_);
 
+  // For logging database stableness information.
+  std::unique_ptr<DatabaseStablenessLog> database_stableness_log_
+      ICING_GUARDED_BY(mutex_);
+
   // Pointer to JNI class references
   const std::unique_ptr<const JniCache> jni_cache_;
 
@@ -796,10 +801,26 @@ class IcingSearchEngine {
   // issues.
   //
   // @param persist_type: The type of persistence guarantee that PersistToDisk
-  // should provide.
+  //                      should provide.
   // @param persist_stats: The NON-null stats about the PersistToDisk call.
   libtextclassifier3::Status PersistToDiskLocked(
       PersistType::Code persist_type, PersistToDiskStatsProto* persist_stats)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to persist derived data (excluding document store) with
+  // RECOVERY_PROOF mode.
+  //
+  // @param persist_stats: The NON-null stats about the PersistToDisk call.
+  libtextclassifier3::Status PersistDerivedDataRecoveryProofLocked(
+      PersistToDiskStatsProto* persist_stats)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to persist derived data (excluding document store) with FULL
+  // mode.
+  //
+  // @param persist_stats: The NON-null stats about the PersistToDisk call.
+  libtextclassifier3::Status PersistDerivedDataFullLocked(
+      PersistToDiskStatsProto* persist_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to the actual work to Initialize. We need this separate
@@ -1025,6 +1046,10 @@ class IcingSearchEngine {
   // Task scheduler should be destroyed ONLY IF we want to destroy
   // IcingSearchEngine (e.g. destructor, ClearAndDestroy API, etc).
   void DestroyTaskScheduler() ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Helper method to write database stableness log for the given API call type.
+  void WriteDatabaseStablenessLog(IcingApiCallType::Code call_type)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to discard parts of (term, integer, qualified id join,
   // embedding) indices if they contain data for document ids greater than

@@ -225,12 +225,9 @@ CreateUriMapper(const Filesystem& filesystem, const std::string& base_dir,
   }
 }
 
-// Find the existing blob handles in the given document and remove them from the
-// dead_blob_handles set. Those are the blob handles that are still in use.
-//
-// This method is flag-guarded by the flag enable_blob_store. If the flag is
-// disabled, the dead_blob_handles must be empty and this method will be a
-// no-op.
+// RemoveAliveBlobHandles find the existing blob handles in the given document
+// and remove them from the dead_blob_handles set. Those are the blob handles
+// that are still in use.
 //
 // The type_blob_map is a map from schema type to a set of blob property names.
 void RemoveAliveBlobHandles(
@@ -1334,9 +1331,7 @@ libtextclassifier3::StatusOr<DocumentProto> DocumentStore::Get(
 
 std::unique_ptr<ScorablePropertySet> DocumentStore::GetScorablePropertySet(
     DocumentId document_id, int64_t current_time_ms) const {
-  if (!feature_flags_.enable_scorable_properties()) {
-    return nullptr;
-  }
+  // The scorable properties feature has been fully rolled out.
 
   // Get scorable property cache index from the score_cache_
   libtextclassifier3::StatusOr<const DocumentAssociatedScoreData*>
@@ -1968,47 +1963,60 @@ libtextclassifier3::StatusOr<int> DocumentStore::BatchDelete(
 libtextclassifier3::Status DocumentStore::PersistToDisk(
     PersistType::Code persist_type, PersistToDiskStatsProto* persist_stats) {
   ICING_RETURN_IF_ERROR(document_log_->PersistToDisk(persist_stats, &clock_));
-  if (persist_type == PersistType::LITE) {
-    // only persist the document log.
-    return libtextclassifier3::Status::OK;
-  }
 
   std::unique_ptr<Timer> overall_timer;
-
-  if (persist_stats) {
+  if (persist_stats != nullptr) {
     overall_timer = clock_.GetNewTimer();
   }
-  if (persist_type == PersistType::RECOVERY_PROOF) {
-    libtextclassifier3::Status status = UpdateChecksum().status();
-    if (persist_stats) {
-      persist_stats->set_document_store_checksum_update_latency_ms(
-          overall_timer->GetElapsedMilliseconds());
+
+  switch (persist_type) {
+    case PersistType::LITE: {
+      // Only persist the document log and no-op for derived files.
+      return libtextclassifier3::Status::OK;
     }
-    return status;
-  }
-  ICING_RETURN_IF_ERROR(document_key_mapper_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(document_id_mapper_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(score_cache_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(scorable_property_cache_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(filter_cache_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(namespace_mapper_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(usage_store_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(corpus_mapper_->PersistToDisk());
-  ICING_RETURN_IF_ERROR(corpus_score_cache_->PersistToDisk());
+    case PersistType::RECOVERY_PROOF:
+      [[fallthrough]];
+    case PersistType::SHUTDOWN: {
+      libtextclassifier3::Status status = UpdateChecksum().status();
+      if (persist_stats != nullptr) {
+        persist_stats->set_document_store_checksum_update_latency_ms(
+            static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
+      }
+      return status;
+    }
+    case PersistType::UNKNOWN:
+      ICING_LOG(WARNING) << "PersistToDisk with UNKNOWN persist type. This "
+                            "should not happen. Please check the call site to "
+                            "ensure the persist type is set correctly.";
+      [[fallthrough]];
+    case PersistType::FULL:
+      [[fallthrough]];
+    case PersistType::DESTRUCTOR: {
+      ICING_RETURN_IF_ERROR(document_key_mapper_->PersistToDisk());
+      ICING_RETURN_IF_ERROR(document_id_mapper_->PersistToDisk());
+      ICING_RETURN_IF_ERROR(score_cache_->PersistToDisk());
+      ICING_RETURN_IF_ERROR(scorable_property_cache_->PersistToDisk());
+      ICING_RETURN_IF_ERROR(filter_cache_->PersistToDisk());
+      ICING_RETURN_IF_ERROR(namespace_mapper_->PersistToDisk());
+      ICING_RETURN_IF_ERROR(usage_store_->PersistToDisk());
+      ICING_RETURN_IF_ERROR(corpus_mapper_->PersistToDisk());
+      ICING_RETURN_IF_ERROR(corpus_score_cache_->PersistToDisk());
 
-  if (persist_stats) {
-    persist_stats->set_document_store_components_persist_latency_ms(
-        overall_timer->GetElapsedMilliseconds());
-    overall_timer = clock_.GetNewTimer();
-  }
+      if (persist_stats != nullptr) {
+        persist_stats->set_document_store_components_persist_latency_ms(
+            static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
+        overall_timer = clock_.GetNewTimer();
+      }
 
-  // Update the combined checksum and write to header file.
-  ICING_RETURN_IF_ERROR(UpdateChecksum());
-  if (persist_stats) {
-    persist_stats->set_document_store_checksum_update_latency_ms(
-        overall_timer->GetElapsedMilliseconds());
+      // Update the combined checksum and write to header file.
+      ICING_RETURN_IF_ERROR(UpdateChecksum());
+      if (persist_stats != nullptr) {
+        persist_stats->set_document_store_checksum_update_latency_ms(
+            static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
+      }
+      return libtextclassifier3::Status::OK;
+    }
   }
-  return libtextclassifier3::Status::OK;
 }
 
 int64_t GetValueOrDefault(const libtextclassifier3::StatusOr<int64_t>& value_or,
@@ -2631,8 +2639,10 @@ libtextclassifier3::StatusOr<
     google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
 DocumentStore::CollectCorpusInfo() const {
   google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo> corpus_info;
+  // Ok to use GetFileBackedSchemaProto() here because we don't need the schema
+  // property definitions.
   libtextclassifier3::StatusOr<const SchemaProto*> schema_proto_or =
-      schema_store_->GetSchema();
+      schema_store_->GetFileBackedSchemaProto();
   if (!schema_proto_or.ok()) {
     return corpus_info;
   }
@@ -2653,6 +2663,20 @@ DocumentStore::CollectCorpusInfo() const {
                            score_cache_->Get(document_id));
     const std::string& name_space =
         namespace_id_to_namespace[filter_data->namespace_id()];
+    if (filter_data->schema_type_id() == kInvalidSchemaTypeId) {
+      ICING_LOG(WARNING)
+          << "Attempting to collect corpus info, but encountered invalid schema"
+          << " type id for document id: "
+          << document_id;
+      continue;
+    } else if (filter_data->schema_type_id() >= schema_proto->types().size()) {
+      ICING_LOG(WARNING)
+          << "Encountered out of range schema type id for document id: "
+          << document_id << ". Schema type id: "
+          << filter_data->schema_type_id() << ", max schema type id: "
+          << schema_proto->types().size();
+      continue;
+    }
     const std::string& schema =
         schema_proto->types()[filter_data->schema_type_id()].schema_type();
     auto iter = info_map.find(score_data->corpus_id());
@@ -2687,9 +2711,7 @@ DocumentStore::GetDebugInfo(int verbosity) const {
 
 libtextclassifier3::StatusOr<int> DocumentStore::UpdateScorablePropertyCache(
     const DocumentProto& document, SchemaTypeId schema_type_id) {
-  if (!feature_flags_.enable_scorable_properties()) {
-    return kInvalidScorablePropertyCacheIndex;
-  }
+  // The scorable properties feature has been fully rolled out.
   ICING_ASSIGN_OR_RETURN(
       const std::vector<ScorablePropertyManager::ScorablePropertyInfo>*
           ordered_scorable_property_info,

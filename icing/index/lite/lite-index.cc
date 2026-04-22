@@ -121,10 +121,8 @@ libtextclassifier3::Status LiteIndex::Initialize() {
   IcingTimer timer;
 
   absl_ports::unique_lock l(&mutex_);
-  if (!lexicon_.CreateIfNotExist(options_.lexicon_options) ||
-      !lexicon_.Init()) {
-    return absl_ports::InternalError("Failed to initialize lexicon trie");
-  }
+  ICING_RETURN_IF_ERROR(lexicon_.CreateIfNotExist(options_.lexicon_options));
+  ICING_RETURN_IF_ERROR(lexicon_.Init());
 
   hit_buffer_fd_.reset(filesystem_->OpenForWrite(
       MakeHitBufferFilename(options_.filename_base).c_str()));
@@ -148,13 +146,13 @@ libtextclassifier3::Status LiteIndex::Initialize() {
 
     ICING_VLOG(2) << "Creating new hit buffer";
     // Make sure files are fresh.
-    if (!lexicon_.Remove() ||
-        !lexicon_.CreateIfNotExist(options_.lexicon_options) ||
-        !lexicon_.Init()) {
+    if (!lexicon_.Remove()) {
       status =
           absl_ports::InternalError("Failed to refresh lexicon during clear");
       goto error;
     }
+    ICING_RETURN_IF_ERROR(lexicon_.CreateIfNotExist(options_.lexicon_options));
+    ICING_RETURN_IF_ERROR(lexicon_.Init());
 
     // Create fresh hit buffer by first emptying the hit buffer file and then
     // allocating header_padded_size of the cleared space.
@@ -234,7 +232,7 @@ libtextclassifier3::Status LiteIndex::Reset() {
   absl_ports::unique_lock l(&mutex_);
   // TODO(b/140436942): When these components have been changed to return errors
   // they should be propagated from here.
-  lexicon_.Clear();
+  ICING_RETURN_IF_ERROR(lexicon_.Clear());
   hit_buffer_.Clear();
   header_->Reset();
   UpdateChecksumInternal();
@@ -246,23 +244,20 @@ libtextclassifier3::Status LiteIndex::Reset() {
 void LiteIndex::Warm() {
   absl_ports::shared_lock l(&mutex_);
   hit_buffer_.Warm();
-  lexicon_.Warm();
+  libtextclassifier3::Status status = lexicon_.Warm();
+  if (!status.ok()) {
+    ICING_LOG(ERROR) << "Failed to warm lexicon: " << status.error_message();
+  }
 }
 
 libtextclassifier3::Status LiteIndex::PersistToDisk() {
   absl_ports::unique_lock l(&mutex_);
-  bool success = true;
-  if (!lexicon_.Sync()) {
-    ICING_VLOG(1) << "Failed to sync the lexicon.";
-    success = false;
-  }
+  ICING_RETURN_IF_ERROR(lexicon_.Sync());
   hit_buffer_.Sync();
   UpdateChecksumInternal();
   header_mmap_.Sync();
 
-  return (success) ? libtextclassifier3::Status::OK
-                   : absl_ports::InternalError(
-                         "Unable to sync lite index components.");
+  return libtextclassifier3::Status::OK;
 }
 
 Crc32 LiteIndex::UpdateChecksum() {
@@ -480,14 +475,12 @@ int LiteIndex::FetchHits(
                        << status.error_message();
     }
 
-    if (options_.hit_buffer_sort_at_indexing) {
-      // This is the second case for sort. Log as this should be a very rare
-      // occasion.
-      ICING_LOG(WARNING) << "Sorting HitBuffer at querying time when "
-                            "hit_buffer_sort_at_indexing is enabled. Sort and "
-                            "merge HitBuffer in "
-                         << timer.Elapsed() * 1000 << " ms.";
-    }
+    // This is the second case for sort. Log as this should be a very rare
+    // occasion.
+    ICING_LOG(WARNING) << "Sorting HitBuffer at querying time when "
+                          "hit_buffer_sort_at_indexing is enabled. Sort and "
+                          "merge HitBuffer in "
+                       << timer.Elapsed() * 1000 << " ms.";
   }
 
   // This downgrade from an unique_lock to a shared_lock is safe because we're
@@ -518,25 +511,19 @@ int LiteIndex::FetchHits(
   int total_score = 0;
 
   // Linear search over unsorted tail in reverse iteration order.
-  // This should only be performed when hit_buffer_sort_at_indexing is enabled.
-  // When disabled, the entire HitBuffer should be sorted already and only
-  // binary search is needed.
-  if (options_.hit_buffer_sort_at_indexing) {
-    uint32_t unsorted_length = GetHitBufferUnsortedSizeImpl();
-    for (uint32_t i = 1; i <= unsorted_length; ++i) {
-      TermIdHitPair term_id_hit_pair = array[header_->cur_size() - i];
-      if (term_id_hit_pair.term_id() == term_id) {
-        // We've found a matched hit.
-        const Hit& matched_hit = term_id_hit_pair.hit();
-        // Score the hit and add to total_score. Also add the hits and its term
-        // frequency info to hits_out and term_frequency_out if the two vectors
-        // are non-null.
-        ScoreAndAppendFetchedHit(matched_hit, section_id_mask,
-                                 only_from_prefix_sections, score_by,
-                                 suggestion_result_checker, last_document_id,
-                                 is_last_document_desired, total_score,
-                                 hits_out, term_frequency_out);
-      }
+  uint32_t unsorted_length = GetHitBufferUnsortedSizeImpl();
+  for (uint32_t i = 1; i <= unsorted_length; ++i) {
+    TermIdHitPair term_id_hit_pair = array[header_->cur_size() - i];
+    if (term_id_hit_pair.term_id() == term_id) {
+      // We've found a matched hit.
+      const Hit& matched_hit = term_id_hit_pair.hit();
+      // Score the hit and add to total_score. Also add the hits and its term
+      // frequency info to hits_out and term_frequency_out if the two vectors
+      // are non-null.
+      ScoreAndAppendFetchedHit(
+          matched_hit, section_id_mask, only_from_prefix_sections, score_by,
+          suggestion_result_checker, last_document_id, is_last_document_desired,
+          total_score, hits_out, term_frequency_out);
     }
   }
 

@@ -220,7 +220,6 @@ std::vector<DocHitInfo> GetHits(std::unique_ptr<DocHitInfoIterator> iterator) {
 
 TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
@@ -329,7 +328,6 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
 
 TEST_F(PropertyExistenceIndexingHandlerTest, HandleNestedPropertyExistence) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
@@ -471,7 +469,6 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandleNestedPropertyExistence) {
 
 TEST_F(PropertyExistenceIndexingHandlerTest, SingleEmptyStringIsNonExisting) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,

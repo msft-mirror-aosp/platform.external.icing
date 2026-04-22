@@ -422,11 +422,11 @@ BlobProto BlobStore::CommitBlob(
   return blob_proto;
 }
 
-BlobProto BlobStore::GetAllBlobInfos() {
+BlobProto BlobStore::GetAllBlobInfos() const {
   BlobProto blob_proto;
   blob_proto.mutable_status()->set_code(StatusProto::OK);
-  for (auto itr = blob_handle_to_offset_.begin();
-       itr != blob_handle_to_offset_.end(); ++itr) {
+  for (auto itr = blob_handle_to_offset_.cbegin();
+       itr != blob_handle_to_offset_.cend(); ++itr) {
     auto blob_info_proto_or = blob_info_log_->ReadProto(itr->second);
     if (!blob_info_proto_or.ok()) {
       continue;
@@ -602,7 +602,7 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
       new_blob_handle_to_offset[blob_handle_str] = new_offset;
     }
   }
-  new_blob_info_log->PersistToDisk();
+  ICING_RETURN_IF_ERROR(new_blob_info_log->PersistToDisk());
   new_blob_info_log.reset();
   blob_info_log_.reset();
   std::string old_blob_info_proto_file_name =

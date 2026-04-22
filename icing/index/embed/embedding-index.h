@@ -34,6 +34,7 @@
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/embed/embedding-hit.h"
+#include "icing/index/embed/embedding-reference.h"
 #include "icing/index/embed/embedding-scorer.h"
 #include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/embed/posting-list-embedding-hit-serializer.h"
@@ -325,6 +326,7 @@ class EmbeddingIndex : public PersistentStorage {
         quantized_embedding_vectors_(num_shards) {}
 
   friend class EmbeddingHitAccessor;
+  friend class EmbeddingIndexTest;
 
   static uint32_t GetPostingListKeyHash(std::string_view posting_list_key) {
     return Crc32(posting_list_key).Get();
@@ -398,6 +400,18 @@ class EmbeddingIndex : public PersistentStorage {
   }
 
   libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum() const override;
+
+  // Appends the given embedding vector to the appropriate vector storage
+  // shard based on the quantization type and shard_id. If the storage shard
+  // does not exist, it will be created.
+  //
+  // Returns:
+  //   - The location of the appended vector (i.e., the starting index within
+  //     the vector storage shard).
+  //   - Any error when allocating the vector storage.
+  libtextclassifier3::StatusOr<uint32_t> AppendEmbeddingVector(
+      const EmbeddingReference& embedding, uint32_t dimension,
+      uint32_t shard_id);
 
   // Appends the given embedding vector to the appropriate vector storage
   // shard based on the quantization type and shard_id. If the storage shard
