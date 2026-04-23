@@ -1462,7 +1462,6 @@ TEST_F(IcingSearchEngineTest, PersistToDiskLogging) {
 
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
-  icing_options.set_enable_marker_file_for_optimize(true);
 
   TestIcingSearchEngine icing(icing_options, std::make_unique<Filesystem>(),
                               std::make_unique<IcingFilesystem>(),

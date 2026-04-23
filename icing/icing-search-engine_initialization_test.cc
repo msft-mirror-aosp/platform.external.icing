@@ -85,7 +85,6 @@
 #include "icing/store/document-id.h"
 #include "icing/store/document-log-creator.h"
 #include "icing/store/document-store.h"
-#include "icing/store/namespace-id-fingerprint.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/embedding-test-utils.h"
 #include "icing/testing/fake-clock.h"
@@ -261,10 +260,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_document_store_namespace_id_fingerprint(true);
-  icing_options.set_enable_qualified_id_join_index_v3(true);
-  icing_options.set_enable_soft_index_restoration(true);
   icing_options.set_enable_delete_propagation_from(false);
-  icing_options.set_enable_marker_file_for_optimize(true);
   icing_options.set_enable_proto_log_new_header_format(true);
   icing_options.set_embedding_index_num_shards(32);
   icing_options.set_enable_non_existent_qualified_id_join(true);
@@ -502,39 +498,6 @@ TEST_F(IcingSearchEngineInitializationTest,
   IcingSearchEngine icing(options, GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-}
-
-TEST_F(IcingSearchEngineInitializationTest,
-       DeletePropagationEnabledAndJoinIndexV3DisabledReturnsInvalidArgument) {
-  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
-  icing_options.set_enable_qualified_id_join_index_v3(false);
-  icing_options.set_enable_soft_index_restoration(true);
-  icing_options.set_enable_delete_propagation_from(true);
-
-  IcingSearchEngine icing(icing_options, GetTestJniCache());
-  InitializeResultProto initialize_result_proto = icing.Initialize();
-  EXPECT_THAT(initialize_result_proto.status(),
-              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-  EXPECT_THAT(initialize_result_proto.status().message(),
-              HasSubstr("Delete propagation is enabled but qualified id join "
-                        "index v3 or soft index restoration is not enabled."));
-}
-
-TEST_F(
-    IcingSearchEngineInitializationTest,
-    DeletePropagationEnabledAndSoftIndexRestorationDisabledReturnsInvalidArgument) {
-  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
-  icing_options.set_enable_qualified_id_join_index_v3(true);
-  icing_options.set_enable_soft_index_restoration(false);
-  icing_options.set_enable_delete_propagation_from(true);
-
-  IcingSearchEngine icing(icing_options, GetTestJniCache());
-  InitializeResultProto initialize_result_proto = icing.Initialize();
-  EXPECT_THAT(initialize_result_proto.status(),
-              ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-  EXPECT_THAT(initialize_result_proto.status().message(),
-              HasSubstr("Delete propagation is enabled but qualified id join "
-                        "index v3 or soft index restoration is not enabled."));
 }
 
 TEST_F(IcingSearchEngineInitializationTest, GoodCompressionLevelReturnsOk) {
@@ -888,81 +851,8 @@ TEST_F(IcingSearchEngineInitializationTest,
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
-       SoftIndexRestorationDisabledShouldFailIndexRestorationOnError) {
+       IndexRestorationShouldIgnoreErrorsAndReturnWarningDataLoss) {
   IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
-  icing_options.set_enable_soft_index_restoration(false);
-
-  // Create a schema with indexable integer property "timestamp".
-  SchemaProto email_schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Email")
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("subject")
-                                        .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_REQUIRED))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("timestamp")
-                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
-                                        .SetCardinality(CARDINALITY_OPTIONAL)))
-          .Build();
-
-  DocumentProto email1 =
-      DocumentBuilder()
-          .SetKey("namespace", "uri1")
-          .SetSchema("Email")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .AddStringProperty("subject", "subject1")
-          .Build();
-  DocumentProto email2 =
-      DocumentBuilder()
-          .SetKey("namespace", "uri2")
-          .SetSchema("Email")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .AddStringProperty("subject", "subject2")
-          .AddInt64Property("timestamp", 123)
-          .Build();
-
-  {
-    // 1. Create an index with a few documents.
-    IcingSearchEngine icing(icing_options, GetTestJniCache());
-    InitializeResultProto init_result = icing.Initialize();
-    ASSERT_THAT(init_result.status(), ProtoIsOk());
-    ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
-                Eq(0));
-    ASSERT_THAT(icing.SetSchema(email_schema).status(), ProtoIsOk());
-    ASSERT_THAT(icing.Put(email1).status(), ProtoIsOk());
-    ASSERT_THAT(icing.Put(email2).status(), ProtoIsOk());
-  }
-
-  // 2. Delete integer index to trigger index restoration.
-  ASSERT_TRUE(
-      filesystem()->DeleteDirectoryRecursively(GetIntegerIndexDir().c_str()));
-
-  // 3. Mock filesystem to fail creating "timestamp" integer index storage.
-  auto mock_filesystem = std::make_unique<MockFilesystem>();
-  ON_CALL(*mock_filesystem,
-          CreateDirectory(HasSubstr(GetIntegerIndexDir() + "/timestamp")))
-      .WillByDefault(Return(false));
-
-  // 4. Initialize IcingSearchEngine again with the mock filesystem. When
-  //    indexing document "uri2", it will fail to create "timestamp" integer
-  //    index storage and fail initialization.
-  TestIcingSearchEngine icing(icing_options, std::move(mock_filesystem),
-                              std::make_unique<IcingFilesystem>(),
-                              std::make_unique<FakeClock>(), GetTestJniCache());
-
-  InitializeResultProto initialize_result = icing.Initialize();
-  EXPECT_THAT(initialize_result.status(), ProtoStatusIs(StatusProto::INTERNAL));
-  EXPECT_THAT(initialize_result.status().message(),
-              HasSubstr("Failed to create directory"));
-}
-
-TEST_F(IcingSearchEngineInitializationTest,
-       SoftIndexRestorationEnabledShouldIgnoreErrorsAndReturnWarningDataLoss) {
-  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
-  icing_options.set_enable_soft_index_restoration(true);
 
   // Create a schema with indexable integer property "timestamp".
   SchemaProto email_schema =
@@ -4917,8 +4807,6 @@ TEST_F(IcingSearchEngineInitializationTest,
                               .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -5029,8 +4917,6 @@ TEST_F(
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
   options.set_enable_background_task_scheduler(true);
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -5168,8 +5054,6 @@ TEST_F(
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
   options.set_enable_background_task_scheduler(false);
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -5278,8 +5162,6 @@ TEST_F(IcingSearchEngineInitializationTest,
                               .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -5376,6 +5258,36 @@ TEST_F(IcingSearchEngineInitializationTest,
   InitializeResultProto initialize_result_proto = icing.Initialize();
   EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
   EXPECT_THAT(initialize_result_proto.initialize_stats().latency_ms(), Eq(10));
+}
+
+TEST_F(IcingSearchEngineInitializationTest, InitializeShouldLogSchemaByteSize) {
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("icing", "fake_type/1")
+                                .SetSchema("Message")
+                                .AddStringProperty("body", "message body")
+                                .AddInt64Property("indexableInteger", 123)
+                                .Build();
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    // No schema is set, so the schema proto byte size should be 0.
+    EXPECT_THAT(
+        initialize_result_proto.initialize_stats().schema_proto_byte_size(),
+        Eq(0));
+    // Set a schema and put document
+    ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  }
+
+  {
+    // Initialize again, the schema proto byte size should be set.
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto initialize_result_proto = icing.Initialize();
+    EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_GT(
+        initialize_result_proto.initialize_stats().schema_proto_byte_size(), 0);
+  }
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
@@ -7215,8 +7127,6 @@ TEST_F(IcingSearchEngineInitializationTest,
 
   {
     IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_enable_qualified_id_join_index_v3(true);
-    options.set_enable_soft_index_restoration(true);
     options.set_enable_delete_propagation_from(false);
     options.set_expired_document_purge_threshold_ms(0);
 
@@ -7235,8 +7145,6 @@ TEST_F(IcingSearchEngineInitializationTest,
   }
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -7338,8 +7246,6 @@ TEST_F(IcingSearchEngineInitializationTest,
 
   {
     IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_enable_qualified_id_join_index_v3(true);
-    options.set_enable_soft_index_restoration(true);
     options.set_enable_delete_propagation_from(true);
     options.set_expired_document_purge_threshold_ms(0);
 
@@ -7358,8 +7264,6 @@ TEST_F(IcingSearchEngineInitializationTest,
   }
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(false);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -8142,7 +8046,6 @@ INSTANTIATE_TEST_SUITE_P(
                     std::vector<uint32_t>{1, 1, 1, 1},
                     std::vector<uint32_t>{32, 32, 32, 32}));
 
-
 class IcingSearchEngineInitializationSchemaDatabaseMigrationTest
     : public IcingSearchEngineInitializationTest,
       public ::testing::WithParamInterface<std::tuple<int32_t, bool, bool>> {};
@@ -8717,160 +8620,6 @@ INSTANTIATE_TEST_SUITE_P(
             /*previous_version=*/version_util::kSchemaDefinitionDedupingVersion,
             /*previous_version_has_deduping_enabled=*/true,
             /*current_version_has_deduping_enabled=*/true)));
-
-class IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest
-    : public IcingSearchEngineInitializationTest,
-      public ::testing::WithParamInterface<std::vector<bool>> {};
-TEST_P(IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest,
-       ChangeEnableJoinIndexV3FlagTest) {
-  std::vector<bool> enable_join_index_v3_flags = GetParam();
-
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
-              PropertyConfigBuilder()
-                  .SetName("name")
-                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_REQUIRED)))
-          .AddType(SchemaTypeConfigBuilder()
-                       .SetType("Message")
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("body")
-                                        .SetDataTypeString(TERM_MATCH_PREFIX,
-                                                           TOKENIZER_PLAIN)
-                                        .SetCardinality(CARDINALITY_REQUIRED))
-                       .AddProperty(PropertyConfigBuilder()
-                                        .SetName("senderQualifiedId")
-                                        .SetDataTypeJoinableString(
-                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
-                                        .SetCardinality(CARDINALITY_REQUIRED)))
-          .Build();
-
-  DocumentProto person =
-      DocumentBuilder()
-          .SetKey("namespace", "person")
-          .SetSchema("Person")
-          .AddStringProperty("name", "person")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .Build();
-  DocumentProto message =
-      DocumentBuilder()
-          .SetKey("namespace", "message/1")
-          .SetSchema("Message")
-          .AddStringProperty("body", "message body")
-          .AddStringProperty("senderQualifiedId", "namespace#person")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .Build();
-
-  {
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_enable_qualified_id_join_index_v3(
-        enable_join_index_v3_flags.at(0));
-    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
-                                std::make_unique<IcingFilesystem>(),
-                                std::make_unique<FakeClock>(),
-                                GetTestJniCache());
-
-    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
-    ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
-    ASSERT_THAT(icing.Put(message).status(), ProtoIsOk());
-  }
-
-  // Create icing multiple times with different
-  // enable_qualified_id_join_index_v3 flags.
-  for (int i = 1; i < enable_join_index_v3_flags.size(); ++i) {
-    bool flag_changed =
-        enable_join_index_v3_flags[i] != enable_join_index_v3_flags[i - 1];
-
-    // Ensure that the qualified id join index is rebuilt if the flag is
-    // changed.
-    IcingSearchEngineOptions options = GetDefaultIcingOptions();
-    options.set_enable_qualified_id_join_index_v3(
-        enable_join_index_v3_flags[i]);
-    TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
-                                std::make_unique<IcingFilesystem>(),
-                                std::make_unique<FakeClock>(),
-                                GetTestJniCache());
-    InitializeResultProto initialize_result = icing.Initialize();
-    ASSERT_THAT(initialize_result.status(), ProtoIsOk());
-
-    // Qualified id join index recovery cause should be FEATURE_FLAG_CHANGED if
-    // flag is changed.
-    EXPECT_THAT(initialize_result.initialize_stats()
-                    .qualified_id_join_index_restoration_cause(),
-                Eq(flag_changed ? InitializeStatsProto::FEATURE_FLAG_CHANGED
-                                : InitializeStatsProto::NONE));
-    EXPECT_THAT(
-        initialize_result.needs_persist_type(),
-        Eq(flag_changed ? PersistType::RECOVERY_PROOF : PersistType::UNKNOWN));
-
-    // Schema store, document store and all other indices should be unaffected.
-    EXPECT_THAT(
-        initialize_result.initialize_stats().schema_store_recovery_cause(),
-        Eq(InitializeStatsProto::NONE));
-    EXPECT_THAT(
-        initialize_result.initialize_stats().document_store_recovery_cause(),
-        Eq(InitializeStatsProto::NONE));
-    EXPECT_THAT(initialize_result.initialize_stats().index_restoration_cause(),
-                Eq(InitializeStatsProto::NONE));
-    EXPECT_THAT(
-        initialize_result.initialize_stats().integer_index_restoration_cause(),
-        Eq(InitializeStatsProto::NONE));
-    EXPECT_THAT(initialize_result.initialize_stats()
-                    .embedding_index_restoration_cause(),
-                Eq(InitializeStatsProto::NONE));
-
-    // Prepare join search spec to join a query for `name:person` with a child
-    // query for `body:message` based on the child's `senderQualifiedId` field.
-    //
-    // No matter what the flag value is, the join API should always return the
-    // expected result.
-    SearchSpecProto search_spec;
-    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
-    search_spec.set_query("name:person");
-    JoinSpecProto* join_spec = search_spec.mutable_join_spec();
-    join_spec->set_parent_property_expression(
-        std::string(JoinProcessor::kQualifiedIdExpr));
-    join_spec->set_child_property_expression("senderQualifiedId");
-    join_spec->set_aggregation_scoring_strategy(
-        JoinSpecProto::AggregationScoringStrategy::COUNT);
-    JoinSpecProto::NestedSpecProto* nested_spec =
-        join_spec->mutable_nested_spec();
-    SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
-    nested_search_spec->set_term_match_type(TermMatchType::EXACT_ONLY);
-    nested_search_spec->set_query("body:message");
-    *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
-    *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
-
-    ResultSpecProto result_spec = ResultSpecProto::default_instance();
-    result_spec.set_max_joined_children_per_parent_to_return(
-        std::numeric_limits<int32_t>::max());
-
-    SearchResultProto expected_search_result_proto;
-    expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-    SearchResultProto::ResultProto* result_proto =
-        expected_search_result_proto.mutable_results()->Add();
-    *result_proto->mutable_document() = person;
-    *result_proto->mutable_joined_results()->Add()->mutable_document() =
-        message;
-
-    SearchResultProto search_result_proto =
-        icing.Search(search_spec, GetDefaultScoringSpec(), result_spec);
-    EXPECT_THAT(search_result_proto, EqualsSearchResultIgnoreStatsAndScores(
-                                         expected_search_result_proto));
-  }
-}
-
-INSTANTIATE_TEST_SUITE_P(
-    IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest,
-    IcingSearchEngineInitializationChangeEnableJoinIndexV3FlagTest,
-    testing::Values(std::vector<bool>{false, true, false, true, false, true},
-                    std::vector<bool>{true, false, true, false, true, false},
-                    std::vector<bool>{false, true, true, true, false, true},
-                    std::vector<bool>{true, false, false, false, true, false},
-                    std::vector<bool>{true, true, true, true},
-                    std::vector<bool>{false, false, false, false}));
 
 class IcingSearchEngineInitializationChangeNonExistentQualifiedIdJoinFlagTest
     : public IcingSearchEngineInitializationTest,

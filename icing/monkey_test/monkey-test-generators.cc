@@ -17,7 +17,6 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
-#include <cstdint>
 #include <random>
 #include <string>
 #include <string_view>
@@ -127,7 +126,15 @@ void SetEmbeddingIndexingConfig(MonkeyTestRandomEngine* random,
 SchemaProto MonkeySchemaGenerator::GenerateSchema() {
   SchemaProto schema;
   for (int i = 0; i < config_->num_types; ++i) {
-    *schema.add_types() = GenerateType();
+    // Generate a new type if this is the first type we're adding. Otherwise,
+    // generate the type with 80% chance of generating a new type and 20%
+    // chance of adding a duplicate type.
+    if (num_types_generated_ == 0 ||
+        GetRandomBooleanWithProbability(random_, 0.8f)) {
+      *schema.add_types() = GenerateType();
+    } else {
+      AddDuplicateType(schema);
+    }
   }
   return schema;
 }
@@ -160,11 +167,16 @@ MonkeySchemaGenerator::UpdateSchemaResult MonkeySchemaGenerator::UpdateSchema(
     }
   }
 
-  // Add up to 2 new types.
-  std::uniform_int_distribution<> num_types_to_add_dist(0, 2);
+  // Add up to 5 new types.
+  std::uniform_int_distribution<> num_types_to_add_dist(0, 5);
   for (int num_types_to_add = num_types_to_add_dist(*random_);
        num_types_to_add >= 0; --num_types_to_add) {
-    *new_schema.add_types() = GenerateType();
+    // 20% chance of adding a duplicate type.
+    if (GetRandomBooleanWithProbability(random_, 0.2f)) {
+      AddDuplicateType(new_schema);
+    } else {
+      *new_schema.add_types() = GenerateType();
+    }
   }
 
   return result;
@@ -327,6 +339,31 @@ SchemaTypeConfigProto MonkeySchemaGenerator::GenerateType() {
         type_config, GetRandomCardinality(random_), indexable, joinable);
   }
   return type_config;
+}
+
+void MonkeySchemaGenerator::AddDuplicateType(SchemaProto& schema) {
+  if (schema.types_size() == 0) {
+    return;
+  }
+
+  // Make the added type a dupe of one of the first 3 types.
+  std::uniform_int_distribution<> duplicate_type_index_dist(
+      0, std::min(2, schema.types_size() - 1));
+  int duplicate_type_index = duplicate_type_index_dist(*random_);
+
+  const SchemaTypeConfigProto& base_type =
+      schema.types().at(duplicate_type_index);
+  SchemaTypeConfigProto new_dupe_type = base_type;
+  new_dupe_type.set_schema_type(std::string(kSchemaTypeNamePrefix) +
+                                std::to_string(num_types_generated_++));
+  int max_property_id = 0;
+  for (const PropertyConfigProto& property : new_dupe_type.properties()) {
+    max_property_id =
+        std::max(max_property_id, std::stoi(property.property_name().substr(
+                                      kSchemaPropertyNamePrefix.size())));
+  }
+  num_properties_generated_[new_dupe_type.schema_type()] = max_property_id + 1;
+  *schema.add_types() = std::move(new_dupe_type);
 }
 
 void MonkeySchemaGenerator::UpdateType(SchemaTypeConfigProto& type_config,

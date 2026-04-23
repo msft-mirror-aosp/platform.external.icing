@@ -1,0 +1,59 @@
+// Copyright (C) 2026 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto2";
+
+package icing.lib;
+
+import "icing/proto/status.proto";
+
+option java_package = "com.google.android.icing.proto";
+option java_multiple_files = true;
+option objc_class_prefix = "ICNG";
+
+// Next tag: 8
+message MiniBatchKMeansOptions {
+  // Target average number of elements per cluster.
+  // k (number of clusters) = total_elements / target_cluster_size.
+  // If total_elements < target_cluster_size, k will be 1.
+  optional uint32 target_cluster_size = 1 [default = 100];
+
+  // Number of elements to use in each mini-batch iteration.
+  optional uint32 mini_batch_size = 2 [default = 512];
+
+  // Minimum number of iterations to run the training.
+  optional uint32 min_num_iterations = 3 [default = 10];
+
+  // Total sampling ratio relative to dataset size.
+  // The expected total iterations will be max(min_num_iterations,
+  // num_embeddings * sampling_ratio / mini_batch_size).
+  optional float sampling_ratio = 4 [default = 0.5];
+
+  // Max time allowed for the training iterations of Mini-Batch K-Means in
+  // milliseconds.
+  // Note that this timeout ONLY controls the main training loop. Other phases
+  // like the final assignment of all embeddings to clusters, and subsequent
+  // operations like TransferEmbeddingsToNewClusters in EmbeddingIndex, are not
+  // subject to this timeout and may take significant additional time. If 0,
+  // there is no time limit for the training loop.
+  optional uint32 timeout_ms = 5 [default = 10000];
+
+  // Penalty factor for cluster size imbalance.
+  // Distance metric becomes:
+  //   distance(x, c) + balance_penalty * cluster_size[c]
+  optional float balance_penalty = 6 [default = 0.001];
+
+  // Seed for random number generator.
+  optional int32 random_seed = 7 [default = 42];
+}
