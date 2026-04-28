@@ -18,7 +18,6 @@
 #include <cstdint>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -26,7 +25,6 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/join/qualified-id.h"
 #include "icing/proto/document.pb.h"
-#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/util/tokenized-document.h"
 
@@ -48,55 +46,17 @@ class DocumentDependencyProcessor {
       const std::vector<TokenizedDocument>& batch_documents_to_add,
       int64_t current_time_ms);
 
-  // Evaluates the document dependencies:
-  // - Validates the dependencies. For each document in the batch, its
-  //   dependencies (parent documents with delete propagation enabled in the
-  //   schema) must be present in either the same batch of new documents or the
-  //   document store.
-  // - Attaches some additional information to the result for the caller.
+  // Evaluates the document dependencies. For each document in the batch, its
+  // dependencies (parent documents with delete propagation enabled in the
+  // schema) must be alive in either the same batch of new documents or the
+  // document store.
   //
   // Returns:
-  //   - An EvaluateResult object containing essential evaluation result
-  //     information on success.
+  //   - OK on success.
   //   - INVALID_ARGUMENT_ERROR if the validation fails, e.g. any of the
   //     dependencies (referenced parent documents) are not present.
   //   - Any error from document store or schema store.
-  struct EvaluateResult {
-    // A vector of sets to store dependency document ids out of the batch, for
-    // each document in batch_documents_to_add_. Note that the index of the
-    // vector corresponds to the index of the document in
-    // batch_documents_to_add_.
-    //
-    // Note: only dependency documents out of the batch are included. IOW the
-    //   relations between documents in the batch are not included.
-    //
-    // The caller must propagate (std::min) the expiration timestamps of the
-    // dependency documents down to the batch documents to add.
-    std::vector<std::unordered_set<DocumentId>> outer_dependency_document_ids;
-
-    // A set of existing document ids that are expired and will be replaced by
-    // the new documents in the batch.
-    //
-    // The caller must run delete propagation against these documents to remove
-    // their (expired) children from ground truth. Otherwise, it is possible
-    // that when Icing rebuilds derived files, an already expired child document
-    // becomes alive again. For example, consider a parent document A and child
-    // document B:
-    // - t = 0: put A with raw expiration timestamp 100.
-    // - t = 10: put B with raw expiration timestamp 1000. Its final expiration
-    //   timestamp is min(100, 1000) = 100.
-    // - t = 200: both A and B are expired.
-    // - t = 300: replace (expired) A with raw expiration timestamp 2000.
-    // - t = 500: the device reboots.
-    //   - When initializing Icing, derived files are discarded and rebuilt.
-    //   - Since we lost the previously propagated expiration timestamp of B
-    //     (100), when recomputing from ground truth, it becomes min(1000, 2000)
-    //     = 1000 and B becomes alive again.
-    //   - This causes privacy issue since the replaced A may have unaware child
-    //     documents.
-    std::unordered_set<DocumentId> existing_expired_doc_ids_to_replace;
-  };
-  libtextclassifier3::StatusOr<EvaluateResult> Evaluate();
+  libtextclassifier3::Status Evaluate();
 
  private:
   explicit DocumentDependencyProcessor(
@@ -116,17 +76,13 @@ class DocumentDependencyProcessor {
   // - Satisfies the dependency: matches a document in either the same batch of
   //   new documents to add or the document store.
   //
-  // Also add the dependency document id (out of the batch) into
-  // outer_dep_doc_ids.
-  //
   // Returns:
   //   - OK on success.
   //   - INVALID_ARGUMENT_ERROR if dep_qualified_id_str is invalid or the
   //     document referenced by the qualified id is not present.
   //   - Any error from document store.
   libtextclassifier3::Status ValidateDependency(
-      std::string_view dep_qualified_id_str,
-      std::unordered_set<DocumentId>& outer_dep_doc_ids) const;
+      std::string_view dep_qualified_id_str) const;
 
   const DocumentStore& document_store_;
   const std::vector<TokenizedDocument>& batch_documents_to_add_;

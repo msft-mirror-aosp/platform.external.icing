@@ -335,6 +335,18 @@ class DocHitInfoIterator {
     return false;
   }
 
+  // Whether this iterator can adopt a delegate iterator.
+  //
+  // If true, then AdoptDelegate can be called to adopt a delegate iterator.
+  virtual bool CanAdoptDelegate() const { return false; }
+
+  // If CanAdoptDelegate returns false, then this method will have no effect.
+  //
+  // This iterator instance will then filter all of its hits to only include
+  // documents that are returned by the delegate iterator.
+  virtual void AdoptDelegate(std::unique_ptr<DocHitInfoIterator> delegate,
+                     bool delegate_node_is_right_most) {}
+
   virtual ~DocHitInfoIterator() = default;
 
   // Returns:
@@ -382,8 +394,7 @@ class DocHitInfoIterator {
     // Didn't find anything for the other iterator, reset to invalid values and
     // return.
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
 };
 

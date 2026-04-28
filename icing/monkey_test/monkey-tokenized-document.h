@@ -16,12 +16,10 @@
 #define ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_
 
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "icing/absl_ports/str_cat.h"
-#include "icing/absl_ports/str_join.h"
 #include "icing/proto/document.pb.h"
 
 namespace icing {
@@ -31,55 +29,58 @@ namespace lib {
 // it since a non-indexable property can become indexable after a schema type
 // change. The in-memory icing will automatically skip sections that are
 // non-indexable at the time of search requests.
-struct MonkeyTokenizedSection {
+struct MonkeySection {
   std::string path;
-  std::vector<std::string> token_sequence;
-  std::vector<PropertyProto::VectorProto> embedding_vectors;
+  std::vector<std::string> string_values;
+  std::vector<PropertyProto::VectorProto> vector_values;
 };
+
+// Note:
+// - Unlike TokenizedDocument in prod Icing, data held by MonkeySection may not
+//   be indexable or joinable.
+// - In fact, they are only "potentially" indexable or joinable. It is more
+//   convenient to extract and store them separately, so
+//   InMemoryIcingSearchEngine can easily use sections/joinable properties if
+//   they're indexable/joinable, OR ignore them if non-indexable/non-joinable.
 
 struct MonkeyTokenizedDocument {
   DocumentProto document;
-  std::vector<MonkeyTokenizedSection> tokenized_sections;
+  std::vector<MonkeySection> sections;
 
   static MonkeyTokenizedDocument Reload(DocumentProto document) {
     MonkeyTokenizedDocument tokenized_document;
     tokenized_document.document = std::move(document);
-    ExtractTokenizedSections(tokenized_document.document, /*curr_path=*/"",
-                             tokenized_document.tokenized_sections);
+
+    ExtractSections(tokenized_document.document, /*curr_path=*/"",
+                    tokenized_document.sections);
+
     return tokenized_document;
   }
 
  private:
-  static void ExtractTokenizedSections(
-      const DocumentProto& document, std::string curr_path,
-      std::vector<MonkeyTokenizedSection>& tokenized_sections) {
+  static void ExtractSections(const DocumentProto& document,
+                              std::string curr_path,
+                              std::vector<MonkeySection>& sections) {
     for (const PropertyProto& property : document.properties()) {
       std::string new_path =
           curr_path.empty()
               ? property.name()
               : absl_ports::StrCat(curr_path, ".", property.name());
-      if (property.string_values_size() > 0) {
-        std::vector<std::string> token_sequence;
-        for (const std::string& value : property.string_values()) {
-          for (std::string_view token : absl_ports::StrSplit(value, " ")) {
-            token_sequence.push_back(std::string(token));
-          }
-        }
-        tokenized_sections.push_back(MonkeyTokenizedSection{
-            .path = new_path, .token_sequence = std::move(token_sequence)});
-      } else if (property.vector_values_size() > 0) {
-        std::vector<PropertyProto::VectorProto> embedding_vectors;
-        for (const PropertyProto::VectorProto& vector :
-             property.vector_values()) {
-          embedding_vectors.push_back(vector);
-        }
-        tokenized_sections.push_back(MonkeyTokenizedSection{
+      if (!property.string_values().empty()) {
+        sections.push_back(MonkeySection{
             .path = new_path,
-            .embedding_vectors = std::move(embedding_vectors)});
+            .string_values =
+                std::vector<std::string>(property.string_values().cbegin(),
+                                         property.string_values().cend())});
+      } else if (!property.vector_values().empty()) {
+        sections.push_back(MonkeySection{
+            .path = new_path,
+            .vector_values = std::vector<PropertyProto::VectorProto>(
+                property.vector_values().cbegin(),
+                property.vector_values().cend())});
       } else if (property.document_values_size() > 0) {
         for (const DocumentProto& document_value : property.document_values()) {
-          ExtractTokenizedSections(document_value, new_path,
-                                   tokenized_sections);
+          ExtractSections(document_value, new_path, sections);
         }
       }
     }
@@ -88,4 +89,5 @@ struct MonkeyTokenizedDocument {
 
 }  // namespace lib
 }  // namespace icing
+
 #endif  // ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_

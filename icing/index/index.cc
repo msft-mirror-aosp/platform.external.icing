@@ -67,9 +67,9 @@ libtextclassifier3::StatusOr<LiteIndex::Options> CreateLiteIndexOptions(
         "Requested hit buffer size %d is too large.",
         options.index_merge_size));
   }
-  return LiteIndex::Options(
-      options.base_dir + "/idx/lite.", options.index_merge_size,
-      options.lite_index_sort_at_indexing, options.lite_index_sort_size);
+  return LiteIndex::Options(options.base_dir + "/idx/lite.",
+                            options.index_merge_size,
+                            options.lite_index_sort_size);
 }
 
 std::string MakeMainIndexFilepath(const std::string& base_dir) {
@@ -169,15 +169,14 @@ libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
       LiteIndex::Create(lite_index_options, icing_filesystem));
   // Sort the lite index if we've enabled sorting the HitBuffer at indexing
   // time, and there's an unsorted tail exceeding the threshold.
-  if (options.lite_index_sort_at_indexing &&
-      lite_index->HasUnsortedHitsExceedingSortThreshold()) {
+  if (lite_index->HasUnsortedHitsExceedingSortThreshold()) {
     lite_index->SortHits();
   }
 
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<MainIndex> main_index,
       MainIndex::Create(MakeMainIndexFilepath(options.base_dir), filesystem,
-                        icing_filesystem));
+                        icing_filesystem, feature_flags));
   return std::unique_ptr<Index>(
       new Index(options, std::move(term_id_codec), std::move(lite_index),
                 std::move(main_index), filesystem, feature_flags));

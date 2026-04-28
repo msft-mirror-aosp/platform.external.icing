@@ -93,12 +93,16 @@ DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
     no_more_hit_ = true;
   }
 
+  // Create a sequential access order of the embedding hits for optimized
+  // memory access for embedding data.
   cached_hit_scores_idx_ = 0;
   cached_hit_scores_.clear();
   cached_hit_scores_.resize(embedding_hits.size());
+  cached_section_id_masks_.clear();
+  if (delegate_ != nullptr) {
+    cached_section_id_masks_.resize(embedding_hits.size());
+  }
 
-  // Create a sequential access order of the embedding hits for optimized
-  // memory access for embedding data.
   std::vector<int> access_order(embedding_hits.size());
   std::iota(access_order.begin(), access_order.end(), 0);
   std::sort(access_order.begin(), access_order.end(),
@@ -106,6 +110,24 @@ DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
               return embedding_hits[i].location() <
                      embedding_hits[j].location();
             });
+  if (delegate_ != nullptr) {
+    // Add to access_order and filter any docids that don't match the delegate.
+    for (int i = 0; i < embedding_hits.size(); ++i) {
+      while (delegate_->doc_hit_info().document_id() == kInvalidDocumentId ||
+             delegate_->doc_hit_info().document_id() >
+                 embedding_hits[i].basic_hit().document_id()) {
+        if (!delegate_->Advance().ok()) {
+          break;
+        }
+      }
+      SectionIdMask section_id_mask = kSectionIdMaskNone;
+      if (delegate_->doc_hit_info().document_id() ==
+          embedding_hits[i].basic_hit().document_id()) {
+        section_id_mask = delegate_->doc_hit_info().hit_section_ids_mask();
+      }
+      cached_section_id_masks_[i] = section_id_mask;
+    }
+  }
 
   DocumentId document_id = kInvalidDocumentId;
   SchemaTypeId schema_type_id = kInvalidSchemaTypeId;
@@ -124,6 +146,12 @@ DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
       if (!DoesDocumentPassAllFilters(document_id)) {
         // This means that the document is filtered out by the document filter
         // predicate. Just skip the document.
+        continue;
+      }
+      if (delegate_ != nullptr &&
+          cached_section_id_masks_[access_order[i]] == kSectionIdMaskNone) {
+        // The document has been filtered out by the delegate. Therefore, there
+        // is no need to calculate the embedding score for this document.
         continue;
       }
       schema_type_id =
@@ -169,12 +197,20 @@ DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
 
   // Remove the embedding hits that are filtered out.
   int hit_cnt = 0;
-  for (const HitWithScore& hit_with_score : cached_hit_scores_) {
+  for (int i = 0; i < cached_hit_scores_.size(); ++i) {
+    const HitWithScore& hit_with_score = cached_hit_scores_[i];
     if (hit_with_score.hit.is_valid()) {
-      cached_hit_scores_[hit_cnt++] = hit_with_score;
+      cached_hit_scores_[hit_cnt] = hit_with_score;
+      if (delegate_ != nullptr && i < cached_section_id_masks_.size()) {
+        cached_section_id_masks_[hit_cnt] = cached_section_id_masks_[i];
+      }
+      ++hit_cnt;
     }
   }
   cached_hit_scores_.resize(hit_cnt);
+  if (!cached_section_id_masks_.empty()) {
+    cached_section_id_masks_.resize(hit_cnt);
+  }
   return libtextclassifier3::Status::OK;
 }
 
@@ -201,8 +237,7 @@ DocHitInfoIteratorEmbeddingV2::AdvanceToNextEmbeddingHit() {
 libtextclassifier3::Status
 DocHitInfoIteratorEmbeddingV2::AdvanceToNextUnfilteredDocument() {
   if (no_more_hit_ || embedding_hit_accessor_ == nullptr) {
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
 
   doc_hit_info_ = DocHitInfo(kInvalidDocumentId, kSectionIdMaskNone);
@@ -210,12 +245,17 @@ DocHitInfoIteratorEmbeddingV2::AdvanceToNextUnfilteredDocument() {
   SectionId current_section_id = kInvalidSectionId;
   int current_section_match_count = 0;
 
+  SectionIdMask delegate_section_id_mask = kSectionIdMaskNone;
   while (true) {
     ICING_ASSIGN_OR_RETURN(const HitWithScore* embedding_hit_score,
                            AdvanceToNextEmbeddingHit());
     if (embedding_hit_score == nullptr) {
       // No more hits for the current document.
       break;
+    }
+    if (delegate_ != nullptr) {
+      delegate_section_id_mask |=
+          cached_section_id_masks_[cached_hit_scores_idx_ - 1];
     }
 
     // We've reached a new section. Reset the match count and retrieve the
@@ -244,10 +284,17 @@ DocHitInfoIteratorEmbeddingV2::AdvanceToNextUnfilteredDocument() {
     }
     ++current_section_match_count;
   }
+  if (doc_hit_info_.hit_section_ids_mask() != kSectionIdMaskNone) {
+    // The hit sections id mask is used by the caller of this function
+    // (DocHitInfoIteratorEmbeddingV2::Advance) to determine whether
+    // the current document has any hits meeting our score thresholds.
+    // Therefore, we can only merge here so long as at least one embedding hit
+    // has passed the score threshold.
+    doc_hit_info_.MergeSectionsFrom(delegate_section_id_mask);
+  }
 
   if (doc_hit_info_.document_id() == kInvalidDocumentId) {
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
   return libtextclassifier3::Status::OK;
 }

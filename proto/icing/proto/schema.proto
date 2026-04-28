@@ -35,7 +35,7 @@ option objc_class_prefix = "ICNG";
 // TODO(cassiewang) Define a sample proto file that can be used by tests and for
 // documentation.
 //
-// Next tag: 9
+// Next tag: 11
 message SchemaTypeConfigProto {
   // REQUIRED: Named type that identifies the structured, logical schema being
   // defined.
@@ -69,6 +69,10 @@ message SchemaTypeConfigProto {
   // easier.
   repeated PropertyConfigProto properties = 4;
 
+  // Sha256 digest of all properties. This is a field used for Icing's internal
+  // optimizations and should not be set by clients.
+  optional bytes properties_digest = 10;
+
   // Version is an arbitrary number that the client may use to keep track of
   // different incarnations of the schema. Icing library imposes no requirements
   // on this field and will not validate it in anyway. If a client calls
@@ -83,6 +87,10 @@ message SchemaTypeConfigProto {
   // the Search APIs, including schema type filters and projections specified in
   // TypePropertyMask.
   repeated string parent_types = 6;
+
+  // List of all account properties that need to be managed. All accounts under
+  // this property should be existed in the account manager.
+  repeated string account_properties = 9;
 
   reserved 2, 3;
 }
@@ -456,7 +464,7 @@ message SetSchemaRequestProto {
 }
 
 // Result of a call to IcingSearchEngine.SetSchema
-// Next tag: 18
+// Next tag: 19
 message SetSchemaResultProto {
   // Status code can be one of:
   //   OK
@@ -538,6 +546,10 @@ message SetSchemaResultProto {
   // Persist type needed after setting the new schema. If UNKNOWN, then
   // everything is clean and no need to call persistToDisk.
   optional PersistType.Code needs_persist_type = 17;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 18;
 }
 
 // Stats and latencies for IcingSearchEngine::SetSchema.
@@ -594,7 +606,7 @@ message GetSchemaResultProto {
 }
 
 // Result of a call to IcingSearchEngine.GetSchemaType
-// Next tag: 4
+// Next tag: 5
 message GetSchemaTypeResultProto {
   // Status code can be one of:
   //   OK
@@ -615,4 +627,8 @@ message GetSchemaTypeResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }

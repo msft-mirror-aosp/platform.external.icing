@@ -14,11 +14,15 @@
 
 #include "icing/legacy/index/icing-storage-collection.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 
-#include "icing/legacy/core/icing-compat.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/legacy/index/icing-storage.h"
 #include "icing/util/crc32.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -55,20 +59,15 @@ bool IcingStorageCollection::UpgradeTo(int new_version) {
   return count == files_.size();
 }
 
-bool IcingStorageCollection::Init() {
-  size_t count = 0;
+libtextclassifier3::Status IcingStorageCollection::Init() {
   for (size_t i = 0; i < files_.size(); ++i) {
     if (files_[i].remove_if_corrupted) {
-      if (IIcingStorage::InitWithRetry(files_[i].file)) {
-        ++count;
-      }
+      ICING_RETURN_IF_ERROR(IIcingStorage::InitWithRetry(files_[i].file));
     } else {
-      if (files_[i].file->Init()) {
-        ++count;
-      }
+      ICING_RETURN_IF_ERROR(files_[i].file->Init());
     }
   }
-  return count == files_.size();
+  return libtextclassifier3::Status::OK;
 }
 
 void IcingStorageCollection::Close() {
@@ -87,14 +86,11 @@ bool IcingStorageCollection::Remove() {
   return count == files_.size();
 }
 
-bool IcingStorageCollection::Sync() {
-  size_t count = 0;
+libtextclassifier3::Status IcingStorageCollection::Sync() {
   for (size_t i = 0; i < files_.size(); ++i) {
-    if (files_[i].file->Sync()) {
-      ++count;
-    }
+    ICING_RETURN_IF_ERROR(files_[i].file->Sync());
   }
-  return count == files_.size();
+  return libtextclassifier3::Status::OK;
 }
 
 uint64_t IcingStorageCollection::GetDiskUsage() const {

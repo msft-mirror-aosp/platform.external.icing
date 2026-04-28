@@ -54,7 +54,7 @@ using testing::SizeIs;
 constexpr std::string_view kKeys[] = {
     "", "ab", "ac", "abd", "bac", "bb", "bacd", "abbb", "abcdefg",
 };
-constexpr uint32_t kNumKeys = ABSL_ARRAYSIZE(kKeys);
+constexpr uint32_t kNumKeys = sizeof(kKeys) / sizeof(kKeys[0]);
 
 class IcingDynamicTrieTest : public ::testing::Test {
  protected:
@@ -132,8 +132,8 @@ TEST_F(IcingDynamicTrieTest, Simple) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   for (uint32_t i = 0; i < kNumKeys; i++) {
     ASSERT_THAT(trie.Insert(kKeys[i], &i), IsOk());
@@ -161,10 +161,10 @@ TEST_F(IcingDynamicTrieTest, Init) {
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
   EXPECT_FALSE(trie.is_initialized());
-  EXPECT_FALSE(trie.Init());
+  EXPECT_THAT(trie.Init(), Not(IsOk()));
 
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  EXPECT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  EXPECT_THAT(trie.Init(), IsOk());
   EXPECT_TRUE(trie.is_initialized());
 }
 
@@ -173,8 +173,8 @@ TEST_F(IcingDynamicTrieTest, Iterator) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   for (uint32_t i = 0; i < kNumKeys; i++) {
     ASSERT_THAT(trie.Insert(kKeys[i], &i), IsOk());
@@ -243,7 +243,7 @@ TEST_F(IcingDynamicTrieTest, Iterator) {
       "abcdefg",
   };
 
-  for (size_t k = 0; k < ABSL_ARRAYSIZE(kOneMatch); k++) {
+  for (size_t k = 0; k < sizeof(kOneMatch) / sizeof(kOneMatch[0]); k++) {
     IcingDynamicTrie::Iterator it_single(trie, std::string(kOneMatch[k]));
     ASSERT_TRUE(it_single.IsValid()) << kOneMatch[k];
     EXPECT_THAT(it_single.GetKey(), Eq(kOneMatchMatched[k]));
@@ -264,7 +264,7 @@ TEST_F(IcingDynamicTrieTest, Iterator) {
       "abcdeg",
       "abcdefh",
   };
-  for (size_t k = 0; k < ABSL_ARRAYSIZE(kNoMatch); k++) {
+  for (size_t k = 0; k < sizeof(kNoMatch) / sizeof(kNoMatch[0]); k++) {
     IcingDynamicTrie::Iterator it_empty(trie, std::string(kNoMatch[k]));
     EXPECT_FALSE(it_empty.IsValid());
     it_empty.Reset();
@@ -283,8 +283,8 @@ TEST_F(IcingDynamicTrieTest, IteratorReverse) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   for (uint32_t i = 0; i < kNumKeys; i++) {
     ASSERT_THAT(trie.Insert(kKeys[i], &i), IsOk());
@@ -351,7 +351,7 @@ TEST_F(IcingDynamicTrieTest, IteratorReverse) {
       "abcdefg",
   };
 
-  for (size_t k = 0; k < ABSL_ARRAYSIZE(kOneMatch); k++) {
+  for (size_t k = 0; k < sizeof(kOneMatch) / sizeof(kOneMatch[0]); k++) {
     IcingDynamicTrie::Iterator it_single(trie, std::string(kOneMatch[k]),
                                          /*reverse=*/true);
     ASSERT_TRUE(it_single.IsValid()) << kOneMatch[k];
@@ -373,7 +373,7 @@ TEST_F(IcingDynamicTrieTest, IteratorReverse) {
       "abcdeg",
       "abcdefh",
   };
-  for (size_t k = 0; k < ABSL_ARRAYSIZE(kNoMatch); k++) {
+  for (size_t k = 0; k < sizeof(kNoMatch) / sizeof(kNoMatch[0]); k++) {
     IcingDynamicTrie::Iterator it_empty(trie, std::string(kNoMatch[k]),
                                         /*reverse=*/true);
     EXPECT_FALSE(it_empty.IsValid());
@@ -393,8 +393,8 @@ TEST_F(IcingDynamicTrieTest, IteratorLoadTest) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   std::default_random_engine random;
   ICING_LOG(ERROR) << "Seed: " << std::default_random_engine::default_seed;
@@ -441,9 +441,9 @@ TEST_F(IcingDynamicTrieTest, Persistence) {
     // words are not unique.
     IcingDynamicTrie trie(trie_files_prefix_,
                           IcingDynamicTrie::RuntimeOptions(), &filesystem);
-    EXPECT_FALSE(trie.Init());
-    ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-    ASSERT_TRUE(trie.Init());
+    EXPECT_THAT(trie.Init(), Not(IsOk()));
+    ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+    ASSERT_THAT(trie.Init(), IsOk());
 
     for (uint32_t i = 0; i < kCommonEnglishWordArrayLen; i++) {
       ASSERT_THAT(trie.Insert(kCommonEnglishWords[i], &i), IsOk());
@@ -456,13 +456,13 @@ TEST_F(IcingDynamicTrieTest, Persistence) {
   {
     IcingDynamicTrie trie(trie_files_prefix_,
                           IcingDynamicTrie::RuntimeOptions(), &filesystem);
-    ASSERT_TRUE(trie.Init());
+    ASSERT_THAT(trie.Init(), IsOk());
     EXPECT_EQ(0U, trie.size());
 
     for (uint32_t i = 0; i < kCommonEnglishWordArrayLen; i++) {
       ASSERT_THAT(trie.Insert(kCommonEnglishWords[i], &i), IsOk());
     }
-    trie.Sync();
+    ASSERT_THAT(trie.Sync(), IsOk());
 
     StatsDump(trie);
   }
@@ -470,7 +470,7 @@ TEST_F(IcingDynamicTrieTest, Persistence) {
   {
     IcingDynamicTrie trie(trie_files_prefix_,
                           IcingDynamicTrie::RuntimeOptions(), &filesystem);
-    ASSERT_TRUE(trie.Init());
+    ASSERT_THAT(trie.Init(), IsOk());
 
     // Make sure we can find everything with the right value.
     uint32_t found_count = 0;
@@ -502,9 +502,9 @@ TEST_F(IcingDynamicTrieTest, PersistenceShared) {
     // words are not unique.
     ropt.storage_policy = IcingDynamicTrie::RuntimeOptions::kMapSharedWithCrc;
     IcingDynamicTrie trie(trie_files_prefix_, ropt, &filesystem);
-    EXPECT_FALSE(trie.Init());
-    ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-    ASSERT_TRUE(trie.Init());
+    EXPECT_THAT(trie.Init(), Not(IsOk()));
+    ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+    ASSERT_THAT(trie.Init(), IsOk());
 
     uint32_t next_reopen = kCommonEnglishWordArrayLen / 16;
     for (uint32_t i = 0; i < kCommonEnglishWordArrayLen; i++) {
@@ -513,7 +513,7 @@ TEST_F(IcingDynamicTrieTest, PersistenceShared) {
       if (i == next_reopen) {
         ASSERT_NE(Crc32(), trie.UpdateCrc());
         trie.Close();
-        ASSERT_TRUE(trie.Init());
+        ASSERT_THAT(trie.Init(), IsOk());
 
         next_reopen += next_reopen / 2;
       }
@@ -533,7 +533,7 @@ TEST_F(IcingDynamicTrieTest, PersistenceShared) {
       ropt.storage_policy = IcingDynamicTrie::RuntimeOptions::kExplicitFlush;
     }
     IcingDynamicTrie trie(trie_files_prefix_, ropt, &filesystem);
-    ASSERT_TRUE(trie.Init());
+    ASSERT_THAT(trie.Init(), IsOk());
 
     // Make sure we can find everything with the right value.
     uint32_t found_count = 0;
@@ -557,10 +557,10 @@ TEST_F(IcingDynamicTrieTest, PersistenceShared) {
   // Clear and re-open.
   ropt.storage_policy = IcingDynamicTrie::RuntimeOptions::kMapSharedWithCrc;
   IcingDynamicTrie trie(trie_files_prefix_, ropt, &filesystem);
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.Init(), IsOk());
   trie.Clear();
   trie.Close();
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.Init(), IsOk());
 }
 
 TEST_F(IcingDynamicTrieTest, UpdateCrc) {
@@ -569,8 +569,8 @@ TEST_F(IcingDynamicTrieTest, UpdateCrc) {
   runtime_options.storage_policy =
       IcingDynamicTrie::RuntimeOptions::kMapSharedWithCrc;
   IcingDynamicTrie trie_one(trie_files_prefix_, runtime_options, &filesystem);
-  ASSERT_TRUE(trie_one.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie_one.Init());
+  ASSERT_THAT(trie_one.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie_one.Init(), IsOk());
 
   // Initial Crcs of the various storages are 0. However, the crc of the header
   // is not zero and the way in which IcingDynamicTrie combines the crcs of its
@@ -595,8 +595,8 @@ TEST_F(IcingDynamicTrieTest, GetCrcDoesntPreserveContent) {
   runtime_options.storage_policy =
       IcingDynamicTrie::RuntimeOptions::kMapSharedWithCrc;
   IcingDynamicTrie trie_one(trie_files_prefix_, runtime_options, &filesystem);
-  ASSERT_TRUE(trie_one.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie_one.Init());
+  ASSERT_THAT(trie_one.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie_one.Init(), IsOk());
 
   // Initial Crcs of the various storages are 0. However, the crc of the header
   // is not zero and the way in which IcingDynamicTrie combines the crcs of its
@@ -636,7 +636,7 @@ TEST_F(IcingDynamicTrieTest, GetCrcDoesntPreserveContent) {
   // 2. GetCrc will return the crc of the original (empty) trie.
   // 3. Find will return false.
   IcingDynamicTrie trie_two(trie_files_prefix_, runtime_options, &filesystem);
-  EXPECT_TRUE(trie_two.Init());
+  EXPECT_THAT(trie_two.Init(), IsOk());
   EXPECT_THAT(trie_two.GetCrc(), Eq(initial_crc));
   EXPECT_FALSE(trie_two.Find("foo", &val_out));
 }
@@ -647,8 +647,8 @@ TEST_F(IcingDynamicTrieTest, UpdateCrcPreservesNewContent) {
   runtime_options.storage_policy =
       IcingDynamicTrie::RuntimeOptions::kMapSharedWithCrc;
   IcingDynamicTrie trie_one(trie_files_prefix_, runtime_options, &filesystem);
-  ASSERT_TRUE(trie_one.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie_one.Init());
+  ASSERT_THAT(trie_one.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie_one.Init(), IsOk());
 
   // Initial Crcs of the various storages are 0. However, the crc of the header
   // is not zero and the way in which IcingDynamicTrie combines the crcs of its
@@ -672,7 +672,7 @@ TEST_F(IcingDynamicTrieTest, UpdateCrcPreservesNewContent) {
   // Create a second trie. It should init successfully, have the same crc as
   // the first trie and hold the same value for "foo".
   IcingDynamicTrie trie_two(trie_files_prefix_, runtime_options, &filesystem);
-  EXPECT_TRUE(trie_two.Init());
+  EXPECT_THAT(trie_two.Init(), IsOk());
   EXPECT_THAT(trie_two.GetCrc(), Eq(updated_crc));
   EXPECT_TRUE(trie_two.Find("foo", &val_out));
   EXPECT_THAT(val_out, Eq(val));
@@ -683,8 +683,8 @@ TEST_F(IcingDynamicTrieTest, Sync) {
   {
     IcingDynamicTrie trie(trie_files_prefix_,
                           IcingDynamicTrie::RuntimeOptions(), &filesystem);
-    ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-    ASSERT_TRUE(trie.Init());
+    ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+    ASSERT_THAT(trie.Init(), IsOk());
 
     for (uint32_t i = 0; i < kNumKeys; i++) {
       ASSERT_THAT(trie.Insert(kKeys[i], &i), IsOk());
@@ -698,7 +698,7 @@ TEST_F(IcingDynamicTrieTest, Sync) {
     StatsDump(trie);
     PrintTrie(trie);
 
-    trie.Sync();
+    ASSERT_THAT(trie.Sync(), IsOk());
 
     for (uint32_t i = 0; i < kNumKeys; i++) {
       uint32_t val;
@@ -711,7 +711,7 @@ TEST_F(IcingDynamicTrieTest, Sync) {
   {
     IcingDynamicTrie trie(trie_files_prefix_,
                           IcingDynamicTrie::RuntimeOptions(), &filesystem);
-    ASSERT_TRUE(trie.Init());
+    ASSERT_THAT(trie.Init(), IsOk());
 
     for (uint32_t i = 0; i < kNumKeys; i++) {
       uint32_t val;
@@ -730,7 +730,8 @@ TEST_F(IcingDynamicTrieTest, LimitsZero) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_FALSE(trie.CreateIfNotExist(IcingDynamicTrie::Options(0, 0, 0, 0)));
+  EXPECT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options(0, 0, 0, 0)),
+              Not(IsOk()));
 }
 
 TEST_F(IcingDynamicTrieTest, LimitsSmall) {
@@ -738,9 +739,10 @@ TEST_F(IcingDynamicTrieTest, LimitsSmall) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(
-      IcingDynamicTrie::Options(10, 300, 30, sizeof(uint32_t))));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(
+                  IcingDynamicTrie::Options(10, 300, 30, sizeof(uint32_t))),
+              IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   ASSERT_LT(3U, kNumKeys);
 
@@ -767,12 +769,12 @@ TEST_F(IcingDynamicTrieTest, DISABLEDFingerprintedKeys) {
                                     sizeof(uint32_t));
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(options));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(options), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
   IcingDynamicTrie triefp(trie_files_prefix_ + ".fps",
                           IcingDynamicTrie::RuntimeOptions(), &filesystem);
-  ASSERT_TRUE(triefp.CreateIfNotExist(options));
-  ASSERT_TRUE(triefp.Init());
+  ASSERT_THAT(triefp.CreateIfNotExist(options), IsOk());
+  ASSERT_THAT(triefp.Init(), IsOk());
 
   static const uint32_t kNumKeys = 1000000;
   std::string key;
@@ -799,9 +801,9 @@ TEST_F(IcingDynamicTrieTest, DISABLEDFingerprintedKeys) {
     // Sync periodically to gauge write locality.
     if ((i + 1) % (kNumKeys / 10) == 0) {
       DLOG(INFO) << "Trie sync";
-      trie.Sync();
+      ASSERT_THAT(trie.Sync(), IsOk());
       DLOG(INFO) << "Trie fp sync";
-      triefp.Sync();
+      ASSERT_THAT(triefp.Sync(), IsOk());
     }
   }
 
@@ -815,8 +817,8 @@ TEST_F(IcingDynamicTrieTest, AddDups) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   static const uint32_t kNumKeys = 5000;
   AddToTrie(&trie, kNumKeys);
@@ -835,8 +837,8 @@ TEST_F(IcingDynamicTrieTest, Properties) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   static const uint32_t kOne = 1;
   uint32_t val_idx;
@@ -853,7 +855,7 @@ TEST_F(IcingDynamicTrieTest, Properties) {
 
   // Disappear after close.
   trie.Close();
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.Init(), IsOk());
   {
     IcingDynamicTrie::PropertyReader reader(trie, 3);
     EXPECT_FALSE(reader.HasProperty(val_idx));
@@ -862,9 +864,9 @@ TEST_F(IcingDynamicTrieTest, Properties) {
   // Persist after sync.
   ICING_ASSERT_OK(trie.Insert("abcd", &kOne, &val_idx, false));
   trie.SetProperty(val_idx, 1);
-  ASSERT_TRUE(trie.Sync());
+  ASSERT_THAT(trie.Sync(), IsOk());
   trie.Close();
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   uint32_t val;
   ASSERT_TRUE(trie.Find("abcd", &val, &val_idx));
@@ -889,8 +891,8 @@ TEST_F(IcingDynamicTrieTest, ClearSingleProperty) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   static const uint32_t kOne = 1;
   uint32_t val_idx[3];
@@ -948,8 +950,8 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWhenRootIsLeaf) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   // Inserts a key, the root is a leaf.
   uint32_t value = 1;
@@ -969,8 +971,8 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWhenLastCharIsLeaf) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   // Inserts "bar" and "ba", the trie structure looks like:
   //       root
@@ -1000,8 +1002,8 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithTerminationNode) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   // Inserts "bar" and "ba", the trie structure looks like:
   //       root
@@ -1031,8 +1033,8 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithMultipleNexts) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   // Inserts "ba", "bb", "bc", and "bd", the trie structure looks like:
   //       root
@@ -1066,8 +1068,8 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldWorkWithMultipleTrieBranches) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   // Inserts "batter", "battle", and "bar", the trie structure looks like:
   //       root
@@ -1106,8 +1108,8 @@ TEST_F(IcingDynamicTrieTest, DeletionShouldResetEmptyStateIfAllKeysAreDeleted) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   uint32_t value1 = 1;
   ASSERT_THAT(trie.Insert("foo", &value1), IsOk());
@@ -1139,8 +1141,8 @@ TEST_F(IcingDynamicTrieTest, InsertionShouldWorkAfterDeletion) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   // Inserts some keys.
   uint32_t value = 1;
@@ -1163,8 +1165,8 @@ TEST_F(IcingDynamicTrieTest, IteratorShouldWorkAfterDeletion) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   // Inserts some keys.
   uint32_t value = 1;
@@ -1196,8 +1198,8 @@ TEST_F(IcingDynamicTrieTest, IteratorShouldWorkAfterAllKeysAreDeleted) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   // Inserts some keys.
   uint32_t value = 1;
@@ -1233,8 +1235,8 @@ TEST_F(IcingDynamicTrieTest, DeletingNonExistingKeyShouldReturnTrue) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   // Inserts some keys.
   uint32_t value = 1;
@@ -1254,8 +1256,8 @@ TEST_F(IcingDynamicTrieTest, DeletionResortsFullNextArray) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   uint32_t value = 1;
   // 'f' -> [ 'a', 'j', 'o', 'u' ]
@@ -1279,8 +1281,8 @@ TEST_F(IcingDynamicTrieTest, DeletionResortsPartiallyFilledNextArray) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   uint32_t value = 1;
   // 'f' -> [ 'a', 'o', 'u', 0xFF ]
@@ -1303,8 +1305,8 @@ TEST_F(IcingDynamicTrieTest, DeletionLoadTest) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   std::default_random_engine random;
   ICING_LOG(ERROR) << "Seed: " << std::default_random_engine::default_seed;
@@ -1367,10 +1369,11 @@ TEST_F(IcingDynamicTrieTest, TrieShouldRespectLimits) {
                           IcingDynamicTrie::RuntimeOptions(), &filesystem);
     ASSERT_TRUE(trie.Remove());
     // Creates a trie with enough numbers of nodes, nexts, and suffix file size.
-    ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options(
-        /*max_nodes_in=*/1000, /*max_nexts_in=*/1000,
-        /*max_suffixes_size_in=*/1000, sizeof(uint32_t))));
-    ASSERT_TRUE(trie.Init());
+    ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options(
+                    /*max_nodes_in=*/1000, /*max_nexts_in=*/1000,
+                    /*max_suffixes_size_in=*/1000, sizeof(uint32_t))),
+                IsOk());
+    ASSERT_THAT(trie.Init(), IsOk());
 
     // Inserts all the test words before the last one.
     uint32_t value = 0;
@@ -1405,10 +1408,11 @@ TEST_F(IcingDynamicTrieTest, TrieShouldRespectLimits) {
     IcingDynamicTrie trie(trie_files_prefix_,
                           IcingDynamicTrie::RuntimeOptions(), &filesystem);
     ASSERT_TRUE(trie.Remove());
-    ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options(
-        num_nodes_enough, /*max_nexts_in=*/1000,
-        /*max_suffixes_size_in=*/1000, sizeof(uint32_t))));
-    ASSERT_TRUE(trie.Init());
+    ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options(
+                    num_nodes_enough, /*max_nexts_in=*/1000,
+                    /*max_suffixes_size_in=*/1000, sizeof(uint32_t))),
+                IsOk());
+    ASSERT_THAT(trie.Init(), IsOk());
 
     // Inserts all the test words before the last one.
     uint32_t value = 0;
@@ -1427,10 +1431,11 @@ TEST_F(IcingDynamicTrieTest, TrieShouldRespectLimits) {
     IcingDynamicTrie trie(trie_files_prefix_,
                           IcingDynamicTrie::RuntimeOptions(), &filesystem);
     ASSERT_TRUE(trie.Remove());
-    ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options(
-        /*max_nodes_in=*/1000, num_nexts_enough,
-        /*max_suffixes_size_in=*/1000, sizeof(uint32_t))));
-    ASSERT_TRUE(trie.Init());
+    ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options(
+                    /*max_nodes_in=*/1000, num_nexts_enough,
+                    /*max_suffixes_size_in=*/1000, sizeof(uint32_t))),
+                IsOk());
+    ASSERT_THAT(trie.Init(), IsOk());
 
     // Inserts all the test words before the last one.
     uint32_t value = 0;
@@ -1449,10 +1454,11 @@ TEST_F(IcingDynamicTrieTest, TrieShouldRespectLimits) {
     IcingDynamicTrie trie(trie_files_prefix_,
                           IcingDynamicTrie::RuntimeOptions(), &filesystem);
     ASSERT_TRUE(trie.Remove());
-    ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options(
-        /*max_nodes_in=*/1000, /*max_nexts_in=*/1000, suffixes_size_enough,
-        sizeof(uint32_t))));
-    ASSERT_TRUE(trie.Init());
+    ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options(
+                    /*max_nodes_in=*/1000, /*max_nexts_in=*/1000,
+                    suffixes_size_enough, sizeof(uint32_t))),
+                IsOk());
+    ASSERT_THAT(trie.Init(), IsOk());
 
     // Inserts all the test words before the last one.
     uint32_t value = 0;
@@ -1471,25 +1477,25 @@ TEST_F(IcingDynamicTrieTest, SyncErrorRecovery) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   static const uint32_t kNumKeys = 5000;
   AddToTrie(&trie, kNumKeys);
   CheckTrie(trie, kNumKeys);
 
-  trie.Sync();
+  ASSERT_THAT(trie.Sync(), IsOk());
   trie.Close();
 
   // Reach into the file and set the value_size.
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.Init(), IsOk());
   IcingDynamicTrieHeader hdr;
   trie.GetHeader(&hdr);
   hdr.set_value_size(hdr.value_size() + 123);
-  trie.SetHeader(hdr);
+  ASSERT_THAT(trie.SetHeader(hdr), IsOk());
   trie.Close();
 
-  ASSERT_FALSE(trie.Init());
+  ASSERT_THAT(trie.Init(), Not(IsOk()));
 }
 
 TEST_F(IcingDynamicTrieTest, BitmapsClosedWhenInitFails) {
@@ -1500,8 +1506,8 @@ TEST_F(IcingDynamicTrieTest, BitmapsClosedWhenInitFails) {
       IcingDynamicTrie::RuntimeOptions().set_storage_policy(
           IcingDynamicTrie::RuntimeOptions::kMapSharedWithCrc),
       &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
   ASSERT_TRUE(trie.deleted_bitmap_);
   trie.SetProperty(0, 0);
   ASSERT_EQ(1, trie.property_bitmaps_.size());
@@ -1513,7 +1519,7 @@ TEST_F(IcingDynamicTrieTest, BitmapsClosedWhenInitFails) {
   ASSERT_TRUE(fp);
   ASSERT_EQ(16, fwrite("################", 1, 16, fp));
   fclose(fp);
-  ASSERT_FALSE(trie.Init());
+  ASSERT_THAT(trie.Init(), Not(IsOk()));
 
   // Check that both the bitmap and the property files have been closed.
   ASSERT_FALSE(trie.deleted_bitmap_);
@@ -1524,137 +1530,137 @@ TEST_F(IcingDynamicTrieTest, IsBranchingTermShouldWorkForExistingTerms) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   uint32_t value = 1;
 
   ASSERT_THAT(trie.Insert("", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("ab", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("ac", &value), IsOk());
   // "" is a prefix of "ab" and "ac", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ac").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("ba", &value), IsOk());
   // "" now branches to "ba"
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
+  EXPECT_TRUE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ac").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ba").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("a", &value), IsOk());
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
+  EXPECT_TRUE(trie.IsBranchingTerm("").ValueOrDie());
   // "a" branches to "ab" and "ac"
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ac").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ba").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("abc", &value), IsOk());
   ASSERT_THAT(trie.Insert("acd", &value), IsOk());
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
+  EXPECT_TRUE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
   // "ab" is a prefix of "abc", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
   // "ac" is a prefix of "acd", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("acd"));
+  EXPECT_FALSE(trie.IsBranchingTerm("ac").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ba").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("acd").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("abcd", &value), IsOk());
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
+  EXPECT_TRUE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
   // "ab" is a prefix of "abc" and "abcd", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ac").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ba").ValueOrDie());
   // "abc" is a prefix of "abcd", but it is not a branching term.
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("acd"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abcd"));
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("acd").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abcd").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("abd", &value), IsOk());
-  EXPECT_TRUE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
+  EXPECT_TRUE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
   // "ab" branches to "abc" and "abd"
-  EXPECT_TRUE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ac"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ba"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("acd"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abcd"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abd"));
+  EXPECT_TRUE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ac").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ba").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("acd").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abcd").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abd").ValueOrDie());
 }
 
 TEST_F(IcingDynamicTrieTest, IsBranchingTermShouldWorkForNonExistingTerms) {
   IcingFilesystem filesystem;
   IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
                         &filesystem);
-  ASSERT_TRUE(trie.CreateIfNotExist(IcingDynamicTrie::Options()));
-  ASSERT_TRUE(trie.Init());
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
 
   uint32_t value = 1;
 
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("aa", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_FALSE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("ac", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
   // "a" does not exist in the trie, but now it branches to "aa" and "ac".
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("ad", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("abcd", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_FALSE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("abd", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
   // "ab" does not exist in the trie, but now it branches to "abcd" and "abd".
-  EXPECT_TRUE(trie.IsBranchingTerm("ab"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc"));
+  EXPECT_TRUE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("abce", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_TRUE(trie.IsBranchingTerm("ab"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("ab").ValueOrDie());
   // "abc" does not exist in the trie, but now it branches to "abcd" and "abce".
-  EXPECT_TRUE(trie.IsBranchingTerm("abc"));
+  EXPECT_TRUE(trie.IsBranchingTerm("abc").ValueOrDie());
 
   ASSERT_THAT(trie.Insert("abc_suffix", &value), IsOk());
-  EXPECT_FALSE(trie.IsBranchingTerm(""));
-  EXPECT_TRUE(trie.IsBranchingTerm("a"));
-  EXPECT_TRUE(trie.IsBranchingTerm("ab"));
-  EXPECT_TRUE(trie.IsBranchingTerm("abc"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc_s"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc_su"));
-  EXPECT_FALSE(trie.IsBranchingTerm("abc_suffi"));
+  EXPECT_FALSE(trie.IsBranchingTerm("").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("a").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("ab").ValueOrDie());
+  EXPECT_TRUE(trie.IsBranchingTerm("abc").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc_s").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc_su").ValueOrDie());
+  EXPECT_FALSE(trie.IsBranchingTerm("abc_suffi").ValueOrDie());
 }
 
 }  // namespace lib

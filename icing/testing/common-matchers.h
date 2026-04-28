@@ -48,6 +48,7 @@ namespace icing {
 namespace lib {
 
 using ::testing::DoubleNear;
+using ::testing::EqualsProto;
 using ::testing::Matches;
 
 constexpr float kEps = 1e-6;
@@ -158,6 +159,13 @@ MATCHER_P5(EqualsDocumentAssociatedScoreData, corpus_id, document_score,
          arg.length_in_tokens() == length_in_tokens &&
          expected_has_valid_scorable_property_cache_index ==
              has_valid_scorable_property_cache_index;
+}
+
+MATCHER_P4(EqualsDocumentMetadata, schema_type_name, name_space, uri,
+           document_id, "") {
+  return arg.schema_type_name == schema_type_name &&
+         arg.name_space == name_space && arg.uri == uri &&
+         arg.document_id == document_id;
 }
 
 // Used to match a ScorablePropertyManager::ScorablePropertyInfo
@@ -633,6 +641,7 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   SearchResultProto actual_copy = arg;
   actual_copy.clear_query_stats();
   actual_copy.clear_debug_info();
+  actual_copy.clear_vm_binder_transaction_latency_start_time_ms();
   for (SearchResultProto::ResultProto& result :
        *actual_copy.mutable_results()) {
     // Joined results
@@ -646,6 +655,7 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   SearchResultProto expected_copy = expected;
   expected_copy.clear_query_stats();
   expected_copy.clear_debug_info();
+  actual_copy.clear_vm_binder_transaction_latency_start_time_ms();
   for (SearchResultProto::ResultProto& result :
        *expected_copy.mutable_results()) {
     // Joined results
@@ -655,6 +665,21 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
     }
     result.clear_score();
   }
+  return ExplainMatchResult(portable_equals_proto::EqualsProto(expected_copy),
+                            actual_copy, result_listener);
+}
+
+MATCHER_P(EqualsSchemaProtoIgnorePropertiesDigest, expected, "") {
+  SchemaProto actual_copy = arg;
+  for (SchemaTypeConfigProto& type_config : *actual_copy.mutable_types()) {
+    type_config.clear_properties_digest();
+  }
+
+  SchemaProto expected_copy = expected;
+  for (SchemaTypeConfigProto& type_config : *expected_copy.mutable_types()) {
+    type_config.clear_properties_digest();
+  }
+
   return ExplainMatchResult(portable_equals_proto::EqualsProto(expected_copy),
                             actual_copy, result_listener);
 }
@@ -718,6 +743,28 @@ MATCHER_P(EqualsEmbeddingMatchSnippetProto, expected, "") {
              expected.embedding_query_vector_index() &&
          actual.embedding_query_metric_type() ==
              expected.embedding_query_metric_type();
+}
+
+// Used for matching SchemaUtil::TypeConfigInfoCache::TypeConfigHolder to a
+// SchemaTypeConfigProto.
+MATCHER_P(TypeConfigHolderEqualsProto, expected_proto, "") {
+  SchemaTypeConfigProto actual_proto = arg.base_type_config();
+  actual_proto.mutable_properties()->Clear();
+  for (const auto& property : arg.properties()) {
+    *actual_proto.add_properties() = property;
+  }
+  return Matches(EqualsProto(expected_proto))(actual_proto);
+}
+
+MATCHER_P(TypeConfigHolderEqualsProtoIgnorePropertiesDigest, expected_proto,
+          "") {
+  SchemaTypeConfigProto actual_proto = arg.base_type_config();
+  actual_proto.clear_properties_digest();
+  actual_proto.mutable_properties()->Clear();
+  for (const auto& property : arg.properties()) {
+    *actual_proto.add_properties() = property;
+  }
+  return Matches(EqualsProto(expected_proto))(actual_proto);
 }
 
 // TODO(tjbarron) Remove this once icing has switched to depend on TC3 Status
