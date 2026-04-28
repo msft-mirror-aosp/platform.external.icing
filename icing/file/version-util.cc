@@ -398,6 +398,10 @@ bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
         // version 8 -> version 9 upgrade, no need to rebuild
         break;
       }
+      case 9: {
+        // version 9 -> version 10 upgrade, no need to rebuild
+        break;
+      }
       default:
         // This should not happen. Rebuild anyway if unsure.
         should_rebuild |= true;
@@ -447,8 +451,10 @@ derived_file_util::DerivedFilesRebuildInfo GetFeatureDerivedFilesRebuildInfo(
           /*needs_qualified_id_join_index_rebuild=*/false,
           /*needs_embedding_index_rebuild=*/true);
     }
+    case IcingSearchEngineFeatureInfoProto::
+        FEATURE_SCHEMA_DEFINITION_DEDUPLICATION:
     case IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE: {
-      // The schema database feature requires schema-store migration, which is
+      // Both these schema features require schema-store migration, which is
       // done separately from derived files rebuild.
       return derived_file_util::DerivedFilesRebuildInfo(
           /*needs_document_store_derived_files_rebuild=*/false,
@@ -458,8 +464,37 @@ derived_file_util::DerivedFilesRebuildInfo GetFeatureDerivedFilesRebuildInfo(
           /*needs_qualified_id_join_index_rebuild=*/false,
           /*needs_embedding_index_rebuild=*/false);
     }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3:
     case IcingSearchEngineFeatureInfoProto::
-        FEATURE_QUALIFIED_ID_JOIN_INDEX_V3: {
+        FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN: {
+      return derived_file_util::DerivedFilesRebuildInfo(
+          /*needs_document_store_derived_files_rebuild=*/false,
+          /*needs_schema_store_derived_files_rebuild=*/false,
+          /*needs_term_index_rebuild=*/false,
+          /*needs_integer_index_rebuild=*/false,
+          /*needs_qualified_id_join_index_rebuild=*/true,
+          /*needs_embedding_index_rebuild=*/false);
+    }
+    case IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM: {
+      // By rebuilding qualified id join index, we will re-validate document
+      // dependency: if a schema enables delete propagation but a document of
+      // this schema references a deleted/expired/non-existent parent document,
+      // then Icing will remove this child document.
+      //
+      // Note: document dependency re-validation can be done by rebuilding any
+      //   index since the process is done in TokenizedDocument generation, but
+      //   we choose to rebuild the join index because:
+      //   - Rebuilding the join index guarantees to "replay" document protos
+      //     from doc id 0. All alive documents will be iterated and
+      //     re-validated.
+      //   - Delete propagation is related to the join index.
+      //   - We could've only generated TokenizedDocument and re-validated the
+      //     document dependency without rebuilding any indices, but:
+      //     - This would require more changes to Icing's derived files recovery
+      //       logic (i.e. RestoreIndexIfNeeded()).
+      //     - Tt is rare to switch this flag on and off too frequently.
+      //     - Therefore, let's just simply reuse the existing derived files
+      //       recovery logic to trigger document dependency re-validation.
       return derived_file_util::DerivedFilesRebuildInfo(
           /*needs_document_store_derived_files_rebuild=*/false,
           /*needs_schema_store_derived_files_rebuild=*/false,
@@ -495,6 +530,22 @@ bool SchemaDatabaseMigrationRequired(
   return true;
 }
 
+bool ShouldRecalculatePropertiesDigestsForDeduping(
+    const IcingSearchEngineVersionProto& prev_version_proto) {
+  if (prev_version_proto.version() < kSchemaDefinitionDedupingVersion) {
+    return true;
+  }
+  for (const auto& feature : prev_version_proto.enabled_features()) {
+    // The schema deduplication feature was enabled in the previous version, so
+    // no need to migrate.
+    if (feature.feature_type() == IcingSearchEngineFeatureInfoProto::
+                                      FEATURE_SCHEMA_DEFINITION_DEDUPLICATION) {
+      return false;
+    }
+  }
+  return true;
+}
+
 IcingSearchEngineFeatureInfoProto GetFeatureInfoProto(
     IcingSearchEngineFeatureInfoProto::FlaggedFeatureType feature) {
   IcingSearchEngineFeatureInfoProto info;
@@ -524,19 +575,14 @@ void AddEnabledFeatures(const IcingSearchEngineOptions& options,
         IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR));
   }
   // EmbeddingIndex feature
-  if (options.enable_embedding_index()) {
-    enabled_features->Add(GetFeatureInfoProto(
-        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX));
-  }
-  if (options.enable_scorable_properties()) {
-    enabled_features->Add(GetFeatureInfoProto(
-        IcingSearchEngineFeatureInfoProto::FEATURE_SCORABLE_PROPERTIES));
-  }
+  enabled_features->Add(GetFeatureInfoProto(
+      IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX));
+  // ScorableProperties feature
+  enabled_features->Add(GetFeatureInfoProto(
+      IcingSearchEngineFeatureInfoProto::FEATURE_SCORABLE_PROPERTIES));
   // EmbeddingQuantization feature
-  if (options.enable_embedding_quantization()) {
-    enabled_features->Add(GetFeatureInfoProto(
-        IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION));
-  }
+  enabled_features->Add(GetFeatureInfoProto(
+      IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION));
   // SchemaDatabase feature
   if (options.enable_schema_database()) {
     enabled_features->Add(GetFeatureInfoProto(
@@ -546,6 +592,23 @@ void AddEnabledFeatures(const IcingSearchEngineOptions& options,
   if (options.enable_qualified_id_join_index_v3()) {
     enabled_features->Add(GetFeatureInfoProto(
         IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3));
+  }
+  // DeletePropagation PROPAGATE_FROM feature
+  if (options.enable_delete_propagation_from()) {
+    enabled_features->Add(GetFeatureInfoProto(
+        IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM));
+  }
+  // NonExistentQualifiedIdJoin feature
+  if (options.enable_non_existent_qualified_id_join()) {
+    enabled_features->Add(
+        GetFeatureInfoProto(IcingSearchEngineFeatureInfoProto::
+                                FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN));
+  }
+  // SchemaDefinitionDeduplication feature
+  if (options.enable_schema_definition_deduping()) {
+    enabled_features->Add(
+        GetFeatureInfoProto(IcingSearchEngineFeatureInfoProto::
+                                FEATURE_SCHEMA_DEFINITION_DEDUPLICATION));
   }
 }
 

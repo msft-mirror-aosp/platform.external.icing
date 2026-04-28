@@ -149,7 +149,7 @@ class BlobStore {
   // Returns:
   //   BlobProto with all the blob info on success
   //   InternalError on IO error
-  BlobProto GetAllBlobInfos();
+  BlobProto GetAllBlobInfos() const;
 
   // Puts the blob info protos from the blob proto to the blob info proto log
   // file.

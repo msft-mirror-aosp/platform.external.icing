@@ -545,8 +545,35 @@ void IcingMonkeyTestRunner::DoSearch() {
   ICING_LOG(INFO) << exp_documents.size() << " documents found by query.";
 }
 
+void IcingMonkeyTestRunner::DoGetDebugInfo() {
+  ICING_LOG(INFO) << "Monkey getting debug info";
+  int verbosity_code = GetRandomInt(
+          &random_, DebugInfoVerbosity::Code_MIN, DebugInfoVerbosity::Code_MAX);
+  DebugInfoVerbosity::Code verbosity =
+      static_cast<DebugInfoVerbosity::Code>(verbosity_code);
+  DebugInfoResultProto get_debug_info_result = icing_->GetDebugInfo(verbosity);
+  ASSERT_THAT(get_debug_info_result.status(), ProtoIsOk());
+}
+
+void IcingMonkeyTestRunner::DoPersistToDisk() {
+  PersistType::Code persist_type = static_cast<PersistType::Code>(
+      GetRandomInt(&random_, 1, PersistType::Code_MAX));
+  ICING_LOG(INFO) << "Monkey persisting to disk type: " << persist_type;
+  ASSERT_THAT(icing_->PersistToDisk(persist_type).status(), ProtoIsOk());
+}
+
 void IcingMonkeyTestRunner::ReloadFromDisk() {
   ICING_LOG(INFO) << "Monkey reloading from disk";
+
+  // The IcingSearchEngine destructor does not automatically persist data to
+  // disk in the monkey test environment. We introduce a 50% probability of
+  // invoking PersistToDisk() (with a randomly selected persist type) and a 50%
+  // probability of skipping it to simulate an unclean shutdown (e.g. crash or
+  // power loss).
+  if (GetRandomBoolean(&random_)) {
+    ASSERT_NO_FATAL_FAILURE(DoPersistToDisk());
+  }
+
   // Destruct the icing search engine by resetting the unique pointer.
   icing_.reset();
   ASSERT_NO_FATAL_FAILURE(CreateIcingSearchEngine());
@@ -571,17 +598,26 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   // flip this flag to test document store's compatibility.
   icing_options.set_document_store_namespace_id_fingerprint(
       GetRandomBoolean(&random_));
-  icing_options.set_enable_embedding_index(true);
-  icing_options.set_enable_embedding_quantization(true);
   icing_options.set_compression_threshold_bytes(
       GetRandomInt(&random_, /*min=*/0, /*max=*/10000));
-  icing_options.set_enable_eigen_embedding_scoring(GetRandomBoolean(&random_));
   icing_options.set_enable_passing_filter_to_children(
       GetRandomBoolean(&random_));
-  icing_options.set_enable_embedding_iterator_v2(GetRandomBoolean(&random_));
   // Randomly choose the number of shards from 1, 2, 4, 8, 16, 32.
   uint32_t num_shards = 1 << GetRandomInt(&random_, /*min=*/0, /*max=*/5);
   icing_options.set_embedding_index_num_shards(num_shards);
+  icing_options.set_enable_schema_database(GetRandomBoolean(&random_));
+  icing_options.set_enable_schema_type_id_optimization(
+      GetRandomBoolean(&random_));
+  icing_options.set_enable_skip_set_schema_type_equality_check(
+      GetRandomBoolean(&random_));
+  icing_options.set_enable_embed_query_optimization(GetRandomBoolean(&random_));
+  icing_options.set_enable_optimize_improvements(true);
+  icing_options.set_enable_manual_persist_to_disk(true);
+  icing_options.set_enable_proto_log_new_header_format(true);
+  icing_options.set_enable_qualified_id_join_index_v3(true);
+  icing_options.set_enable_soft_index_restoration(true);
+  icing_options.set_enable_repeated_field_joins(true);
+  icing_options.set_enable_non_existent_qualified_id_join(true);
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }

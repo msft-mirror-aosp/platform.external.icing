@@ -136,7 +136,6 @@ constexpr int64_t kDefaultCreationTimestampMs = 1575492852000;
 
 IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
-  icing_options.set_enable_scorable_properties(true);
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_calculate_time_since_last_attempted_optimize(true);
   icing_options.set_enable_qualified_id_join_index_v3(true);
@@ -245,6 +244,7 @@ TEST_F(IcingSearchEngineOptimizeTest,
   optimize_result_proto.mutable_status()->set_message("");
   OptimizeResultProto actual_result = icing.Optimize();
   actual_result.clear_optimize_stats();
+  actual_result.clear_vm_binder_transaction_latency_start_time_ms();
   ASSERT_THAT(actual_result, EqualsProto(optimize_result_proto));
 
   // Tries to fetch the second page, no results since all tokens have been
@@ -2262,6 +2262,7 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
   expected_persist_stats.set_document_store_checksum_update_latency_ms(5);
   expected_persist_stats.set_document_log_checksum_update_latency_ms(5);
   expected_persist_stats.set_document_log_data_sync_latency_ms(5);
+  expected_persist_stats.set_blob_store_persist_latency_ms(5);
   expected_persist_stats.set_index_persist_latency_ms(5);
   expected_persist_stats.set_integer_index_persist_latency_ms(5);
   expected_persist_stats.set_qualified_id_join_index_persist_latency_ms(5);
@@ -2293,6 +2294,7 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
       ->set_document_store_components_persist_latency_ms(5);
   expected_persist_stats_before_optimize
       ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_before_optimize->set_blob_store_persist_latency_ms(5);
   expected_persist_stats_before_optimize->set_index_persist_latency_ms(5);
   expected_persist_stats_before_optimize->set_integer_index_persist_latency_ms(
       5);
@@ -2312,6 +2314,7 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
       ->set_document_store_components_persist_latency_ms(5);
   expected_persist_stats_after_optimize
       ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_after_optimize->set_blob_store_persist_latency_ms(5);
   expected_persist_stats_after_optimize->set_index_persist_latency_ms(5);
   expected_persist_stats_after_optimize->set_integer_index_persist_latency_ms(
       5);
@@ -2371,6 +2374,7 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
       ->set_document_store_components_persist_latency_ms(5);
   expected_persist_stats_before_optimize
       ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_before_optimize->set_blob_store_persist_latency_ms(5);
   expected_persist_stats_before_optimize->set_index_persist_latency_ms(5);
   expected_persist_stats_before_optimize->set_integer_index_persist_latency_ms(
       5);
@@ -2390,6 +2394,7 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
       ->set_document_store_components_persist_latency_ms(5);
   expected_persist_stats_after_optimize
       ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_after_optimize->set_blob_store_persist_latency_ms(5);
   expected_persist_stats_after_optimize->set_index_persist_latency_ms(5);
   expected_persist_stats_after_optimize->set_integer_index_persist_latency_ms(
       5);
@@ -2437,6 +2442,7 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
       ->set_document_store_components_persist_latency_ms(5);
   expected_persist_stats_before_optimize
       ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_before_optimize->set_blob_store_persist_latency_ms(5);
   expected_persist_stats_before_optimize->set_index_persist_latency_ms(5);
   expected_persist_stats_before_optimize->set_integer_index_persist_latency_ms(
       5);
@@ -2456,6 +2462,7 @@ TEST_F(IcingSearchEngineOptimizeTest, OptimizeStatsProtoTest) {
       ->set_document_store_components_persist_latency_ms(5);
   expected_persist_stats_after_optimize
       ->set_document_store_checksum_update_latency_ms(5);
+  expected_persist_stats_after_optimize->set_blob_store_persist_latency_ms(5);
   expected_persist_stats_after_optimize->set_index_persist_latency_ms(5);
   expected_persist_stats_after_optimize->set_integer_index_persist_latency_ms(
       5);
