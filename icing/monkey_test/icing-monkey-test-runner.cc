@@ -614,10 +614,9 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   icing_options.set_enable_optimize_improvements(true);
   icing_options.set_enable_manual_persist_to_disk(true);
   icing_options.set_enable_proto_log_new_header_format(true);
-  icing_options.set_enable_qualified_id_join_index_v3(true);
-  icing_options.set_enable_soft_index_restoration(true);
   icing_options.set_enable_repeated_field_joins(true);
   icing_options.set_enable_non_existent_qualified_id_join(true);
+  icing_options.set_enable_schema_definition_deduping(true);
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }

@@ -75,7 +75,7 @@ GetAndRestoreQuantizedEmbeddingVectorFromIndex(
     uint32_t dimension, std::string_view model_signature,
     std::string_view schema_name) {
   uint32_t shard_id =
-      embedding_index->GetShardId(dimension, model_signature, schema_name);
+      GetShardId(embedding_index, dimension, model_signature, schema_name);
   ICING_ASSIGN_OR_RETURN(
       const char* data,
       embedding_index->GetQuantizedEmbeddingVector(hit, dimension, shard_id));

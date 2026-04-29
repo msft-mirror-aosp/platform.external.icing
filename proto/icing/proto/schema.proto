@@ -553,7 +553,7 @@ message SetSchemaResultProto {
 }
 
 // Stats and latencies for IcingSearchEngine::SetSchema.
-// Next tag: 7
+// Next tag: 8
 message SetSchemaStatsProto {
   // Overall time used for the function call. This is the sum of the latencies
   // recorded in the other fields (schema_store_set_schema_latency,
@@ -580,6 +580,9 @@ message SetSchemaStatsProto {
 
   // Latency for regenerating the scorable property cache.
   optional int32 scorable_property_cache_regeneration_latency_ms = 6;
+
+  // Byte size of the full schema proto written by this SetSchema call.
+  optional int64 schema_proto_byte_size = 7;
 }
 
 // Result of a call to IcingSearchEngine.GetSchema

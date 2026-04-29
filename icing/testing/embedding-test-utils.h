@@ -26,7 +26,9 @@
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/proto/document.pb.h"
+#include "icing/schema/schema-store.h"
 #include "icing/store/document-id.h"
+#include "icing/util/embedding-util.h"
 
 namespace icing {
 namespace lib {
@@ -53,6 +55,15 @@ GetEmbeddingHitsFromIndex(const EmbeddingIndex* embedding_index,
 
 std::vector<float> GetRawEmbeddingDataFromIndex(
     const EmbeddingIndex* embedding_index, uint32_t shard_id);
+
+inline uint32_t GetShardId(const EmbeddingIndex* embedding_index,
+                           uint32_t dimension, std::string_view model_signature,
+                           std::string_view schema_name) {
+  return embedding_index->GetShardId(
+      embedding_util::GetPostingListKeyHash(
+          embedding_util::GetPostingListKey(dimension, model_signature)),
+      SchemaStore::GetSchemaNameHash(schema_name));
+}
 
 // Gets the quantized embedding vector from the index based on the given hit,
 // and returns the dequantized version of the vector.

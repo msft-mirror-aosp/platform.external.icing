@@ -1345,16 +1345,24 @@ TEST_P(SchemaStoreDeduplicationTest,
 
   if (db_scoped_set_schema) {
     // Set full schema using empty database.
-    EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                    schema, /*database=*/"db/",
-                    /*ignore_errors_and_delete_documents=*/false)),
-                IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        SchemaStore::SetSchemaResult actual_result,
+        schema_store->SetSchema(CreateSetSchemaRequestProto(
+            schema, /*database=*/"db/",
+            /*ignore_errors_and_delete_documents=*/false)));
+    EXPECT_THAT(actual_result,
+                EqualsSetSchemaResultIgnoringStats(expected_result));
+    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
   } else {
     // Set full schema using empty database.
-    EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                    schema, /*database=*/"",
-                    /*ignore_errors_and_delete_documents=*/false)),
-                IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        SchemaStore::SetSchemaResult actual_result,
+        schema_store->SetSchema(CreateSetSchemaRequestProto(
+            schema, /*database=*/"",
+            /*ignore_errors_and_delete_documents=*/false)));
+    EXPECT_THAT(actual_result,
+                EqualsSetSchemaResultIgnoringStats(expected_result));
+    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
   }
 
   // Check that the file-backed schema proto is deduped.
@@ -1443,21 +1451,26 @@ TEST_P(SchemaStoreDeduplicationTest,
     expected_result.success = true;
     expected_result.schema_types_new_by_name.insert("db1/message");
     expected_result.schema_types_new_by_name.insert("db1/email");
-    EXPECT_THAT(
+    ICING_ASSERT_OK_AND_ASSIGN(
+        SchemaStore::SetSchemaResult actual_result,
         schema_store->SetSchema(CreateSetSchemaRequestProto(
-            db1_schema,
-            /*database=*/"db1/", /*ignore_errors_and_delete_documents=*/false)),
-        IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+            db1_schema, /*database=*/"db1/",
+            /*ignore_errors_and_delete_documents=*/false)));
+    EXPECT_THAT(actual_result,
+                EqualsSetSchemaResultIgnoringStats(expected_result));
+    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
 
     expected_result = SchemaStore::SetSchemaResult();
     expected_result.success = true;
     expected_result.schema_types_new_by_name.insert("db2/message");
     expected_result.schema_types_new_by_name.insert("db2/email");
-    EXPECT_THAT(
-        schema_store->SetSchema(CreateSetSchemaRequestProto(
-            db2_schema,
-            /*database=*/"db2/", /*ignore_errors_and_delete_documents=*/false)),
-        IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        actual_result, schema_store->SetSchema(CreateSetSchemaRequestProto(
+                           db2_schema, /*database=*/"db2/",
+                           /*ignore_errors_and_delete_documents=*/false)));
+    EXPECT_THAT(actual_result,
+                EqualsSetSchemaResultIgnoringStats(expected_result));
+    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
   } else {
     // Set schema for the 2 dbs together using the empty database name.
     SchemaStore::SetSchemaResult expected_result;
@@ -1466,11 +1479,14 @@ TEST_P(SchemaStoreDeduplicationTest,
     expected_result.schema_types_new_by_name.insert("db1/email");
     expected_result.schema_types_new_by_name.insert("db2/message");
     expected_result.schema_types_new_by_name.insert("db2/email");
-    EXPECT_THAT(
+    ICING_ASSERT_OK_AND_ASSIGN(
+        SchemaStore::SetSchemaResult actual_result,
         schema_store->SetSchema(CreateSetSchemaRequestProto(
             full_schema,
-            /*database=*/"", /*ignore_errors_and_delete_documents=*/false)),
-        IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+            /*database=*/"", /*ignore_errors_and_delete_documents=*/false)));
+    EXPECT_THAT(actual_result,
+                EqualsSetSchemaResultIgnoringStats(expected_result));
+    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
   }
 
   // Check that the file-backed schema proto is deduped.
@@ -1567,31 +1583,39 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaRemoveCanonicalTypes_ok) {
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("db1/message");
   expected_result.schema_types_new_by_name.insert("db1/email");
-  EXPECT_THAT(
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaStore::SetSchemaResult actual_result,
       schema_store->SetSchema(CreateSetSchemaRequestProto(
           db1_schema,
-          /*database=*/"db1/", /*ignore_errors_and_delete_documents=*/false)),
-      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
-
+          /*database=*/"db1/", /*ignore_errors_and_delete_documents=*/false)));
+  EXPECT_THAT(actual_result,
+              EqualsSetSchemaResultIgnoringStats(expected_result));
+  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("db2/message");
   expected_result.schema_types_new_by_name.insert("db2/email");
-  EXPECT_THAT(
+  ICING_ASSERT_OK_AND_ASSIGN(
+      actual_result,
       schema_store->SetSchema(CreateSetSchemaRequestProto(
           db2_schema,
-          /*database=*/"db2/", /*ignore_errors_and_delete_documents=*/false)),
-      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+          /*database=*/"db2/", /*ignore_errors_and_delete_documents=*/false)));
+  EXPECT_THAT(actual_result,
+              EqualsSetSchemaResultIgnoringStats(expected_result));
+  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
 
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("db3/message");
   expected_result.schema_types_new_by_name.insert("db3/email");
-  EXPECT_THAT(
+  ICING_ASSERT_OK_AND_ASSIGN(
+      actual_result,
       schema_store->SetSchema(CreateSetSchemaRequestProto(
           db3_schema,
-          /*database=*/"db3/", /*ignore_errors_and_delete_documents=*/false)),
-      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+          /*database=*/"db3/", /*ignore_errors_and_delete_documents=*/false)));
+  EXPECT_THAT(actual_result,
+              EqualsSetSchemaResultIgnoringStats(expected_result));
+  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
 
   // Check that the file-backed schema proto is deduped.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* stored_schema,
@@ -1620,11 +1644,15 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaRemoveCanonicalTypes_ok) {
 
   bool db_scoped_set_schema = GetParam();
   if (db_scoped_set_schema) {
-    EXPECT_THAT(
+    ICING_ASSERT_OK_AND_ASSIGN(
+        SchemaStore::SetSchemaResult actual_result,
         schema_store->SetSchema(CreateSetSchemaRequestProto(
             SchemaBuilder().Build(),
-            /*database=*/"db1/", /*ignore_errors_and_delete_documents=*/true)),
-        IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+            /*database=*/"db1/",
+            /*ignore_errors_and_delete_documents=*/true)));
+    EXPECT_THAT(actual_result,
+                EqualsSetSchemaResultIgnoringStats(expected_result));
+    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
   } else {
     SchemaProto full_schema = SchemaBuilder()
                                   .AddType(db2_message)
@@ -1632,10 +1660,14 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaRemoveCanonicalTypes_ok) {
                                   .AddType(db3_message)
                                   .AddType(db3_email)
                                   .Build();
-    EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                    full_schema, /*database=*/"",
-                    /*ignore_errors_and_delete_documents=*/true)),
-                IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        SchemaStore::SetSchemaResult actual_result,
+        schema_store->SetSchema(CreateSetSchemaRequestProto(
+            full_schema, /*database=*/"",
+            /*ignore_errors_and_delete_documents=*/true)));
+    EXPECT_THAT(actual_result,
+                EqualsSetSchemaResultIgnoringStats(expected_result));
+    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
   }
 
   // Remaining db2 and db3 types should still be deduped
@@ -1736,31 +1768,40 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeCanonicalTypes_ok) {
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("db1/message");
   expected_result.schema_types_new_by_name.insert("db1/email");
-  EXPECT_THAT(
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaStore::SetSchemaResult actual_result,
       schema_store->SetSchema(CreateSetSchemaRequestProto(
-          db1_schema,
-          /*database=*/"db1/", /*ignore_errors_and_delete_documents=*/false)),
-      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+          db1_schema, /*database=*/"db1/",
+          /*ignore_errors_and_delete_documents=*/false)));
+  EXPECT_THAT(actual_result,
+              EqualsSetSchemaResultIgnoringStats(expected_result));
+  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
 
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("db2/message");
   expected_result.schema_types_new_by_name.insert("db2/email");
-  EXPECT_THAT(
-      schema_store->SetSchema(CreateSetSchemaRequestProto(
-          db2_schema,
-          /*database=*/"db2/", /*ignore_errors_and_delete_documents=*/false)),
-      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      actual_result, schema_store->SetSchema(CreateSetSchemaRequestProto(
+                         db2_schema,
+                         /*database=*/"db2/",
+                         /*ignore_errors_and_delete_documents=*/false)));
+  EXPECT_THAT(actual_result,
+              EqualsSetSchemaResultIgnoringStats(expected_result));
+  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
 
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("db3/message");
   expected_result.schema_types_new_by_name.insert("db3/email");
-  EXPECT_THAT(
-      schema_store->SetSchema(CreateSetSchemaRequestProto(
-          db3_schema,
-          /*database=*/"db3/", /*ignore_errors_and_delete_documents=*/false)),
-      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      actual_result, schema_store->SetSchema(CreateSetSchemaRequestProto(
+                         db3_schema,
+                         /*database=*/"db3/",
+                         /*ignore_errors_and_delete_documents=*/false)));
+  EXPECT_THAT(actual_result,
+              EqualsSetSchemaResultIgnoringStats(expected_result));
+  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
 
   // Check that the file-backed schema proto is deduped.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* stored_schema,
@@ -1827,15 +1868,23 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeCanonicalTypes_ok) {
       "db1/message");
   expected_result.schema_types_index_incompatible_by_name.insert("db1/email");
   if (db_scoped_set_schema) {
-    EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                    db1_schema_new, /*database=*/"db1/",
-                    /*ignore_errors_and_delete_documents=*/true)),
-                IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        SchemaStore::SetSchemaResult actual_result,
+        schema_store->SetSchema(CreateSetSchemaRequestProto(
+            db1_schema_new, /*database=*/"db1/",
+            /*ignore_errors_and_delete_documents=*/true)));
+    EXPECT_THAT(actual_result,
+                EqualsSetSchemaResultIgnoringStats(expected_result));
+    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
   } else {
-    EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                    full_schema_new, /*database=*/"",
-                    /*ignore_errors_and_delete_documents=*/true)),
-                IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        SchemaStore::SetSchemaResult actual_result,
+        schema_store->SetSchema(CreateSetSchemaRequestProto(
+            full_schema_new, /*database=*/"",
+            /*ignore_errors_and_delete_documents=*/true)));
+    EXPECT_THAT(actual_result,
+                EqualsSetSchemaResultIgnoringStats(expected_result));
+    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
   }
 
   // Remaining db2 and db3 types should still be deduped
@@ -1931,31 +1980,40 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeOrRemoveDedupedTypes_ok) {
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("db1/message");
   expected_result.schema_types_new_by_name.insert("db1/email");
-  EXPECT_THAT(
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaStore::SetSchemaResult actual_result,
       schema_store->SetSchema(CreateSetSchemaRequestProto(
-          db1_schema,
-          /*database=*/"db1/", /*ignore_errors_and_delete_documents=*/false)),
-      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+          db1_schema, /*database=*/"db1/",
+          /*ignore_errors_and_delete_documents=*/false)));
+  EXPECT_THAT(actual_result,
+              EqualsSetSchemaResultIgnoringStats(expected_result));
+  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
 
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("db2/message");
   expected_result.schema_types_new_by_name.insert("db2/email");
-  EXPECT_THAT(
-      schema_store->SetSchema(CreateSetSchemaRequestProto(
-          db2_schema,
-          /*database=*/"db2/", /*ignore_errors_and_delete_documents=*/false)),
-      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      actual_result, schema_store->SetSchema(CreateSetSchemaRequestProto(
+                         db2_schema,
+                         /*database=*/"db2/",
+                         /*ignore_errors_and_delete_documents=*/false)));
+  EXPECT_THAT(actual_result,
+              EqualsSetSchemaResultIgnoringStats(expected_result));
+  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
 
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("db3/message");
   expected_result.schema_types_new_by_name.insert("db3/email");
-  EXPECT_THAT(
-      schema_store->SetSchema(CreateSetSchemaRequestProto(
-          db3_schema,
-          /*database=*/"db3/", /*ignore_errors_and_delete_documents=*/false)),
-      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      actual_result, schema_store->SetSchema(CreateSetSchemaRequestProto(
+                         db3_schema,
+                         /*database=*/"db3/",
+                         /*ignore_errors_and_delete_documents=*/false)));
+  EXPECT_THAT(actual_result,
+              EqualsSetSchemaResultIgnoringStats(expected_result));
+  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
 
   // Check that the file-backed schema proto is deduped.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* stored_schema,
@@ -2019,17 +2077,25 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeOrRemoveDedupedTypes_ok) {
 
   bool db_scoped_set_schema = GetParam();
   if (db_scoped_set_schema) {
-    EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                    db2_schema_new,
-                    /*database=*/"db2/",
-                    /*ignore_errors_and_delete_documents=*/true)),
-                IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        SchemaStore::SetSchemaResult actual_result,
+        schema_store->SetSchema(CreateSetSchemaRequestProto(
+            db2_schema_new,
+            /*database=*/"db2/",
+            /*ignore_errors_and_delete_documents=*/true)));
+    EXPECT_THAT(actual_result,
+                EqualsSetSchemaResultIgnoringStats(expected_result));
+    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
   } else {
-    EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                    full_schema_new,
-                    /*database=*/"",
-                    /*ignore_errors_and_delete_documents=*/true)),
-                IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+    ICING_ASSERT_OK_AND_ASSIGN(
+        SchemaStore::SetSchemaResult actual_result,
+        schema_store->SetSchema(CreateSetSchemaRequestProto(
+            full_schema_new,
+            /*database=*/"",
+            /*ignore_errors_and_delete_documents=*/true)));
+    EXPECT_THAT(actual_result,
+                EqualsSetSchemaResultIgnoringStats(expected_result));
+    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
   }
 
   // Remaining db1 and db3 types should still be deduped

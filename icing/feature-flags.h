@@ -26,8 +26,6 @@ class FeatureFlags {
                         bool enable_repeated_field_joins,
                         bool enable_embedding_backup_generation,
                         bool enable_schema_database,
-                        bool release_backup_schema_file_if_overlay_present,
-                        bool enable_strict_page_byte_size_limit,
                         bool enable_smaller_decompression_buffer_size,
                         bool enable_passing_filter_to_children,
                         bool enable_proto_log_new_header_format,
@@ -43,9 +41,6 @@ class FeatureFlags {
         enable_repeated_field_joins_(enable_repeated_field_joins),
         enable_embedding_backup_generation_(enable_embedding_backup_generation),
         enable_schema_database_(enable_schema_database),
-        release_backup_schema_file_if_overlay_present_(
-            release_backup_schema_file_if_overlay_present),
-        enable_strict_page_byte_size_limit_(enable_strict_page_byte_size_limit),
         enable_smaller_decompression_buffer_size_(
             enable_smaller_decompression_buffer_size),
         enable_passing_filter_to_children_(enable_passing_filter_to_children),
@@ -76,14 +71,6 @@ class FeatureFlags {
   }
 
   bool enable_schema_database() const { return enable_schema_database_; }
-
-  bool release_backup_schema_file_if_overlay_present() const {
-    return release_backup_schema_file_if_overlay_present_;
-  }
-
-  bool enable_strict_page_byte_size_limit() const {
-    return enable_strict_page_byte_size_limit_;
-  }
 
   bool enable_smaller_decompression_buffer_size() const {
     return enable_smaller_decompression_buffer_size_;
@@ -143,11 +130,8 @@ class FeatureFlags {
 
   bool enable_schema_database_;
 
-  bool release_backup_schema_file_if_overlay_present_;
-
   // Whether to enable strict page byte size limit enforcement in
   // ResultRetrieverV2.
-  bool enable_strict_page_byte_size_limit_;
 
   bool enable_smaller_decompression_buffer_size_;
 

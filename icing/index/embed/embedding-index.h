@@ -47,6 +47,7 @@
 #include "icing/store/key-mapper.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
+#include "icing/util/embedding-util.h"
 #include "icing/util/logging.h"
 
 namespace icing {
@@ -146,7 +147,7 @@ class EmbeddingIndex : public PersistentStorage {
         : embedding_index_(*embedding_index),
           pl_accessor_(std::move(pl_accessor)),
           posting_list_key_hash_(
-              EmbeddingIndex::GetPostingListKeyHash(posting_list_key)) {}
+              embedding_util::GetPostingListKeyHash(posting_list_key)) {}
 
     libtextclassifier3::StatusOr<std::vector<EmbeddingHit>> GetNextHitsBatch() {
       return pl_accessor_->GetNextHitsBatch();
@@ -297,8 +298,10 @@ class EmbeddingIndex : public PersistentStorage {
 
   bool is_empty() const { return info().is_empty; }
 
-  uint32_t GetShardId(uint32_t dimension, std::string_view model_signature,
-                      std::string_view schema_name) const;
+  uint32_t GetShardId(uint32_t posting_list_key_hash,
+                      uint32_t schema_name_hash) const {
+    return (posting_list_key_hash * 31 + schema_name_hash) % num_shards_;
+  }
 
   uint32_t num_shards() const { return num_shards_; }
 
@@ -327,15 +330,6 @@ class EmbeddingIndex : public PersistentStorage {
 
   friend class EmbeddingHitAccessor;
   friend class EmbeddingIndexTest;
-
-  static uint32_t GetPostingListKeyHash(std::string_view posting_list_key) {
-    return Crc32(posting_list_key).Get();
-  }
-
-  uint32_t GetShardId(uint32_t posting_list_key_hash,
-                      uint32_t schema_name_hash) const {
-    return (posting_list_key_hash * 31 + schema_name_hash) % num_shards_;
-  }
 
   // Creates the storage data. This will initialize flash_index_storage_,
   // embedding_posting_list_mapper_, and scan and initialize for existing vector

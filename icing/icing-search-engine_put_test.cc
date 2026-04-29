@@ -140,8 +140,6 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_enable_repeated_field_joins(true);
-  icing_options.set_enable_soft_index_restoration(true);
-  icing_options.set_enable_qualified_id_join_index_v3(true);
   icing_options.set_enable_delete_propagation_from(true);
   return icing_options;
 }
@@ -766,8 +764,6 @@ TEST_F(
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
   options.set_enable_background_task_scheduler(false);
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -858,8 +854,6 @@ TEST_F(IcingSearchEnginePutTest,
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
   options.set_enable_background_task_scheduler(true);
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -981,8 +975,6 @@ TEST_F(IcingSearchEnginePutTest,
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
   options.set_enable_background_task_scheduler(true);
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -1114,8 +1106,6 @@ TEST_F(IcingSearchEnginePutTest,
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
   options.set_enable_background_task_scheduler(true);
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -1235,8 +1225,6 @@ TEST_F(IcingSearchEnginePutTest,
                             .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -1299,8 +1287,6 @@ TEST_F(
           .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -1361,8 +1347,6 @@ TEST_F(
                             .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -1417,8 +1401,6 @@ TEST_F(IcingSearchEnginePutTest,
           .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -1478,8 +1460,6 @@ TEST_F(IcingSearchEnginePutTest,
                             .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -1543,8 +1523,6 @@ TEST_F(IcingSearchEnginePutTest,
                             .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -1641,8 +1619,6 @@ TEST_F(
                              .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 

@@ -72,6 +72,14 @@ class InMemoryIcingSearchEngine {
   PickDocumentResult RandomPickDocument(float p_alive, float p_all,
                                         float p_other) const;
 
+  const std::vector<DocumentId>& GetExistingDocumentIds() const {
+    return existing_doc_ids_;
+  }
+
+  const MonkeyTokenizedDocument& GetDocumentById(DocumentId doc_id) const {
+    return documents_[doc_id];
+  }
+
   // Puts the document into the in-memory Icing. If the (namespace, uri) pair
   // already exists, the old document will be overwritten.
   void Put(const MonkeyTokenizedDocument &document);
@@ -131,24 +139,6 @@ class InMemoryIcingSearchEngine {
   libtextclassifier3::StatusOr<std::vector<DocumentProto>> Search(
       const MonkeyAbstractQueryNode* node) const;
 
- private:
-  // Finds and returns the internal document id for the document identified by
-  // the given key (namespace, uri)
-  //
-  // Returns:
-  //   The document id found on success
-  //   NOT_FOUND if the key doesn't exist or doc has been deleted
-  libtextclassifier3::StatusOr<DocumentId> InternalGet(
-      const std::string &name_space, const std::string &uri) const;
-
-  // A helper method for DeleteByQuery and Search to get matched internal doc
-  // ids.
-  libtextclassifier3::StatusOr<std::vector<DocumentId>> InternalSearch(
-      const SearchSpecProto &search_spec) const;
-
-  libtextclassifier3::StatusOr<const PropertyConfigProto *> GetPropertyConfig(
-      const std::string &schema_type, const std::string &property_name) const;
-
   struct PropertyIndexInfo {
     // Data type of the property.
     PropertyConfigProto::DataType::Code data_type =
@@ -170,6 +160,24 @@ class InMemoryIcingSearchEngine {
   };
   libtextclassifier3::StatusOr<PropertyIndexInfo> GetPropertyIndexInfo(
       const std::string& schema_type, std::string_view property_path) const;
+
+ private:
+  // Finds and returns the internal document id for the document identified by
+  // the given key (namespace, uri)
+  //
+  // Returns:
+  //   The document id found on success
+  //   NOT_FOUND if the key doesn't exist or doc has been deleted
+  libtextclassifier3::StatusOr<DocumentId> InternalGet(
+      const std::string &name_space, const std::string &uri) const;
+
+  // A helper method for DeleteByQuery and Search to get matched internal doc
+  // ids.
+  libtextclassifier3::StatusOr<std::vector<DocumentId>> InternalSearch(
+      const SearchSpecProto &search_spec) const;
+
+  libtextclassifier3::StatusOr<const PropertyConfigProto *> GetPropertyConfig(
+      const std::string &schema_type, const std::string &property_name) const;
 
   libtextclassifier3::StatusOr<bool> DoesDocumentMatchQuery(
       const MonkeyTokenizedDocument &document,
