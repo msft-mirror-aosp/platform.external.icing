@@ -25,6 +25,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
@@ -73,16 +74,13 @@ class Index {
  public:
   struct Options {
     explicit Options(const std::string& base_dir, uint32_t index_merge_size,
-                     bool lite_index_sort_at_indexing,
                      uint32_t lite_index_sort_size)
         : base_dir(base_dir),
           index_merge_size(index_merge_size),
-          lite_index_sort_at_indexing(lite_index_sort_at_indexing),
           lite_index_sort_size(lite_index_sort_size) {}
 
     std::string base_dir;
     int32_t index_merge_size;
-    bool lite_index_sort_at_indexing;
     int32_t lite_index_sort_size;
   };
 
@@ -95,7 +93,8 @@ class Index {
   //   INTERNAL on I/O error
   static libtextclassifier3::StatusOr<std::unique_ptr<Index>> Create(
       const Options& options, const Filesystem* filesystem,
-      const IcingFilesystem* icing_filesystem);
+      const IcingFilesystem* icing_filesystem,
+      const FeatureFlags* feature_flags);
 
   // Reads magic from existing flash (main) index file header. We need this
   // during Icing initialization phase to determine the version.
@@ -320,8 +319,7 @@ class Index {
   // Icing has enabled sorting during indexing time, and the HitBuffer's
   // unsorted tail has exceeded the lite_index_sort_size.
   bool LiteIndexNeedSort() const {
-    return options_.lite_index_sort_at_indexing &&
-           lite_index_->HasUnsortedHitsExceedingSortThreshold();
+    return lite_index_->HasUnsortedHitsExceedingSortThreshold();
   }
 
   // Sorts the LiteIndex HitBuffer.
@@ -340,14 +338,18 @@ class Index {
       DocumentId new_last_added_document_id);
 
  private:
-  Index(const Options& options, std::unique_ptr<TermIdCodec> term_id_codec,
-        std::unique_ptr<LiteIndex> lite_index,
-        std::unique_ptr<MainIndex> main_index, const Filesystem* filesystem)
+  explicit Index(const Options& options,
+                 std::unique_ptr<TermIdCodec> term_id_codec,
+                 std::unique_ptr<LiteIndex> lite_index,
+                 std::unique_ptr<MainIndex> main_index,
+                 const Filesystem* filesystem,
+                 const FeatureFlags* feature_flags)
       : lite_index_(std::move(lite_index)),
         main_index_(std::move(main_index)),
         options_(options),
         term_id_codec_(std::move(term_id_codec)),
-        filesystem_(filesystem) {}
+        filesystem_(filesystem),
+        feature_flags_(*feature_flags) {}
 
   libtextclassifier3::StatusOr<std::vector<TermMetadata>> FindLiteTermsByPrefix(
       const std::string& prefix,
@@ -358,7 +360,8 @@ class Index {
   std::unique_ptr<MainIndex> main_index_;
   const Options options_;
   std::unique_ptr<TermIdCodec> term_id_codec_;
-  const Filesystem* filesystem_;
+  const Filesystem* filesystem_;       // Does not own.
+  const FeatureFlags& feature_flags_;  // Does not own.
 };
 
 }  // namespace lib

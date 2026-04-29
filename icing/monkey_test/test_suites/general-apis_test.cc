@@ -17,23 +17,23 @@
 #include <utility>
 
 #include "gtest/gtest.h"
+#include "testing/fuzzing/fuzztest.h"
 #include "icing/monkey_test/icing-monkey-test-runner.h"
 #include "icing/monkey_test/monkey-test-util.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/schema/section.h"
-#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
 
-TEST(IcingSearchEngineMonkeyTest, MonkeyTest) {
+void TestGeneralApis(uint32_t seed) {
   IcingMonkeyTestRunnerConfiguration config(
-      /*seed=*/std::random_device()(),
+      /*seed=*/seed,
       /*num_types=*/30,
       /*num_namespaces=*/100,
       /*num_uris=*/1000,
-      /*index_merge_size=*/1024 * 1024,
+      /*index_merge_size=*/1024 * 512,
       /*initialize_by_existing_data=*/false);
   config.possible_num_properties = {0,
                                     1,
@@ -46,59 +46,40 @@ TEST(IcingSearchEngineMonkeyTest, MonkeyTest) {
                                     kTotalNumSections + 1,
                                     kTotalNumSections * 2};
   config.possible_num_tokens = {0, 1, 4, 16, 64, 256};
-  config.possible_num_vectors = {0, 1, 4};
-  config.possible_vector_dimensions = {128, 512, 768};
+  config.possible_num_vectors = {0, 1, 4, 8};
+  config.possible_vector_dimensions = {8, 16, 128, 512, 768};
   config.monkey_api_schedules = {
       {&IcingMonkeyTestRunner::DoPut, 500},
       {&IcingMonkeyTestRunner::DoSearch, 200},
-      {&IcingMonkeyTestRunner::DoGet, 70},
+      {&IcingMonkeyTestRunner::DoGet, 50},
       {&IcingMonkeyTestRunner::DoGetAllNamespaces, 50},
       {&IcingMonkeyTestRunner::DoDelete, 50},
       {&IcingMonkeyTestRunner::DoDeleteByNamespace, 50},
       {&IcingMonkeyTestRunner::DoDeleteBySchemaType, 45},
       {&IcingMonkeyTestRunner::DoDeleteByQuery, 20},
-      {&IcingMonkeyTestRunner::DoOptimize, 5},
-      {&IcingMonkeyTestRunner::DoUpdateSchema, 5},
-      {&IcingMonkeyTestRunner::ReloadFromDisk, 5}};
+      {&IcingMonkeyTestRunner::DoOptimize, 4},
+      {&IcingMonkeyTestRunner::DoUpdateSchema, 4},
+      {&IcingMonkeyTestRunner::DoPersistToDisk, 4},
+      {&IcingMonkeyTestRunner::DoGetDebugInfo, 3},
+      {&IcingMonkeyTestRunner::ReloadFromDisk, 20}};
   uint32_t num_iterations = IsAndroidArm() ? 1000 : 5000;
   IcingMonkeyTestRunner runner(std::move(config));
   ASSERT_NO_FATAL_FAILURE(runner.Initialize());
   ASSERT_NO_FATAL_FAILURE(runner.Run(num_iterations));
 }
 
-TEST(DISABLED_IcingSearchEngineMonkeyTest, MonkeyManyDocTest) {
-  IcingMonkeyTestRunnerConfiguration config(
-      /*seed=*/std::random_device()(),
-      /*num_types=*/30,
-      /*num_namespaces=*/200,
-      /*num_uris=*/100000,
-      /*index_merge_size=*/1024 * 1024,
-      /*initialize_by_existing_data=*/false);
+FUZZ_TEST(IcingSearchEngineMonkeyTest, TestGeneralApis);
 
-  // Due to the large amount of documents, we need to make each document smaller
-  // to finish the test.
-  config.possible_num_properties = {0, 1, 2};
-  config.possible_num_tokens = {0, 1, 4};
-  config.possible_num_vectors = {0, 1, 2};
-  config.possible_vector_dimensions = {128};
-
-  // No deletion is performed to preserve a large number of documents.
-  config.monkey_api_schedules = {
-      {&IcingMonkeyTestRunner::DoPut, 500},
-      {&IcingMonkeyTestRunner::DoSearch, 200},
-      {&IcingMonkeyTestRunner::DoGet, 70},
-      {&IcingMonkeyTestRunner::DoGetAllNamespaces, 50},
-      {&IcingMonkeyTestRunner::DoOptimize, 5},
-      {&IcingMonkeyTestRunner::ReloadFromDisk, 5}};
-  IcingMonkeyTestRunner runner(std::move(config));
-  ASSERT_NO_FATAL_FAILURE(runner.Initialize());
-  // Pre-fill with 4 million documents
-  SetLoggingLevel(LogSeverity::WARNING);
-  for (int i = 0; i < 4000000; i++) {
-    ASSERT_NO_FATAL_FAILURE(runner.DoPut());
-  }
-  SetLoggingLevel(LogSeverity::INFO);
-  ASSERT_NO_FATAL_FAILURE(runner.Run(1000));
+// To run the monkey test many times locally, do not rely on the fuzz test,
+// since it would generate similar seeds multiple times. Instead, use this
+// target to run it many times:
+// blaze test -c opt --runs_per_test=1000 \
+//   --test_filter=*LocalMonkeyTest* \
+//   --test_arg=--gunit_also_run_disabled_tests \
+//   //icing/monkey_test/test_suites:general-apis_test
+TEST(DISABLED_IcingSearchEngineMonkeyTest, LocalMonkeyTest) {
+  uint32_t seed = std::random_device()();  // NOLINT
+  ASSERT_NO_FATAL_FAILURE(TestGeneralApis(seed));
 }
 
 }  // namespace lib

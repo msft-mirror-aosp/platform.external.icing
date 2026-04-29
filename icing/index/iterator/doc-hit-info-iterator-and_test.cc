@@ -90,7 +90,12 @@ TEST(DocHitInfoIteratorAndTest, GetCallStats) {
       /*num_leaf_advance_calls_main_index_in=*/5,
       /*num_leaf_advance_calls_integer_index_in=*/3,
       /*num_leaf_advance_calls_no_index_in=*/1,
-      /*num_blocks_inspected_in=*/4);  // arbitrary value
+      /*num_blocks_inspected_in=*/4,
+      /*embedding_stats_in=*/
+      {.num_unquantized_embeddings_scored = 2,
+       .num_quantized_embeddings_scored = 3,
+       .unquantized_shards_read = {1, 2},
+       .quantized_shards_read{3, 4}});  // arbitrary value
   auto first_iter = std::make_unique<DocHitInfoIteratorDummy>();
   first_iter->SetCallStats(first_iter_call_stats);
 
@@ -99,7 +104,12 @@ TEST(DocHitInfoIteratorAndTest, GetCallStats) {
       /*num_leaf_advance_calls_main_index_in=*/2,
       /*num_leaf_advance_calls_integer_index_in=*/10,
       /*num_leaf_advance_calls_no_index_in=*/3,
-      /*num_blocks_inspected_in=*/7);  // arbitrary value
+      /*num_blocks_inspected_in=*/7,
+      /*embedding_stats_in=*/
+      {.num_unquantized_embeddings_scored = 4,
+       .num_quantized_embeddings_scored = 5,
+       .unquantized_shards_read = {5, 6},
+       .quantized_shards_read{7}});  // arbitrary value
   auto second_iter = std::make_unique<DocHitInfoIteratorDummy>();
   second_iter->SetCallStats(second_iter_call_stats);
 
@@ -453,7 +463,12 @@ TEST(DocHitInfoIteratorAndNaryTest, GetCallStats) {
       /*num_leaf_advance_calls_main_index_in=*/5,
       /*num_leaf_advance_calls_integer_index_in=*/3,
       /*num_leaf_advance_calls_no_index_in=*/1,
-      /*num_blocks_inspected_in=*/4);  // arbitrary value
+      /*num_blocks_inspected_in=*/4,
+      /*embedding_stats_in=*/
+      {.num_unquantized_embeddings_scored = 2,
+       .num_quantized_embeddings_scored = 3,
+       .unquantized_shards_read = {1, 2},
+       .quantized_shards_read{3, 4}});  // arbitrary value
   auto first_iter = std::make_unique<DocHitInfoIteratorDummy>();
   first_iter->SetCallStats(first_iter_call_stats);
 
@@ -462,7 +477,12 @@ TEST(DocHitInfoIteratorAndNaryTest, GetCallStats) {
       /*num_leaf_advance_calls_main_index_in=*/2,
       /*num_leaf_advance_calls_integer_index_in=*/10,
       /*num_leaf_advance_calls_no_index_in=*/3,
-      /*num_blocks_inspected_in=*/7);  // arbitrary value
+      /*num_blocks_inspected_in=*/7,
+      /*embedding_stats_in=*/
+      {.num_unquantized_embeddings_scored = 4,
+       .num_quantized_embeddings_scored = 5,
+       .unquantized_shards_read = {5, 6},
+       .quantized_shards_read{7}});  // arbitrary value
   auto second_iter = std::make_unique<DocHitInfoIteratorDummy>();
   second_iter->SetCallStats(second_iter_call_stats);
 
@@ -471,7 +491,12 @@ TEST(DocHitInfoIteratorAndNaryTest, GetCallStats) {
       /*num_leaf_advance_calls_main_index_in=*/2000,
       /*num_leaf_advance_calls_integer_index_in=*/3000,
       /*num_leaf_advance_calls_no_index_in=*/0,
-      /*num_blocks_inspected_in=*/200);  // arbitrary value
+      /*num_blocks_inspected_in=*/200,
+      /*embedding_stats_in=*/
+      {.num_unquantized_embeddings_scored = 1,
+       .num_quantized_embeddings_scored = 1,
+       .unquantized_shards_read = {0},
+       .quantized_shards_read{0}});  // arbitrary value
   auto third_iter = std::make_unique<DocHitInfoIteratorDummy>();
   third_iter->SetCallStats(third_iter_call_stats);
 
@@ -480,7 +505,12 @@ TEST(DocHitInfoIteratorAndNaryTest, GetCallStats) {
       /*num_leaf_advance_calls_main_index_in=*/400,
       /*num_leaf_advance_calls_integer_index_in=*/100,
       /*num_leaf_advance_calls_no_index_in=*/20,
-      /*num_blocks_inspected_in=*/50);  // arbitrary value
+      /*num_blocks_inspected_in=*/50,
+      /*embedding_stats_in=*/
+      {.num_unquantized_embeddings_scored = 10,
+       .num_quantized_embeddings_scored = 10,
+       .unquantized_shards_read = {5, 6, 7},
+       .quantized_shards_read{9, 10, 11}});  // arbitrary value
   auto fourth_iter = std::make_unique<DocHitInfoIteratorDummy>();
   fourth_iter->SetCallStats(fourth_iter_call_stats);
 

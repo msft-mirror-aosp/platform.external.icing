@@ -18,6 +18,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/feature-flags.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/schema/schema-util.h"
 #include "icing/schema/section-manager.h"
 
 namespace icing {
@@ -34,7 +35,7 @@ class BackupSchemaProducer {
   // false. No guarantee is made about the state of
   // `BackupSchemaResult::backup_schema` in this case.
   // If schema *does* require a backup schema, then
-  //`BackupSchemaResult::backup_schema_produced` will be true and
+  // `BackupSchemaResult::backup_schema_produced` will be true and
   // `BackupSchemaResult::backup_schema` will be populated accordingly.
   // Returns:
   //   - On success, a BackupSchemaResult
@@ -48,7 +49,8 @@ class BackupSchemaProducer {
     bool backup_schema_produced;
   };
   libtextclassifier3::StatusOr<BackupSchemaProducer::BackupSchemaResult>
-  Produce(const SchemaProto& schema, const SectionManager& type_manager);
+  Produce(const SchemaProto& schema, const SectionManager& type_manager,
+          const SchemaUtil::TypeConfigInfoCache& type_config_info_cache);
 
  private:
   const FeatureFlags& feature_flags_;

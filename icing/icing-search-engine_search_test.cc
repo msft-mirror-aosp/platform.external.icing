@@ -68,6 +68,7 @@ namespace lib {
 namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
+using ::testing::AnyOf;
 using ::testing::DoubleEq;
 using ::testing::DoubleNear;
 using ::testing::ElementsAre;
@@ -136,12 +137,12 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_document_store_namespace_id_fingerprint(true);
   icing_options.set_enable_schema_database(true);
-  icing_options.set_enable_embedding_index(true);
-  icing_options.set_enable_scorable_properties(true);
-  icing_options.set_enable_embedding_quantization(true);
+  icing_options.set_enable_repeated_field_joins(true);
+  icing_options.set_enable_soft_index_restoration(true);
   icing_options.set_enable_qualified_id_join_index_v3(true);
-  icing_options.set_enable_delete_propagation_from(false);
+  icing_options.set_enable_delete_propagation_from(true);
   icing_options.set_enable_passing_filter_to_children(true);
+  icing_options.set_enable_non_existent_qualified_id_join(true);
   return icing_options;
 }
 
@@ -1424,7 +1425,7 @@ TEST_F(IcingSearchEngineSearchTest, SearchDoesntIncludeDocumentsPastTtl) {
   // Time just has to be greater than the document's creation timestamp (100) +
   // the document's ttl (500)
   auto fake_clock = std::make_unique<FakeClock>();
-  fake_clock->SetSystemTimeMilliseconds(700);
+  FakeClock* fake_clock_ptr = fake_clock.get();
 
   TestIcingSearchEngine icing(GetDefaultIcingOptions(),
                               std::make_unique<Filesystem>(),
@@ -1434,6 +1435,10 @@ TEST_F(IcingSearchEngineSearchTest, SearchDoesntIncludeDocumentsPastTtl) {
   EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
   EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Adjust the clock to be greater than the document's creation timestamp (100)
+  // + the document's ttl (500).
+  fake_clock_ptr->SetSystemTimeMilliseconds(700);
 
   // Check that the document is not returned as part of search results
   SearchResultProto search_result_proto =
@@ -4795,6 +4800,10 @@ TEST_F(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   exp_parent_search_stats->set_query_processor_parser_consume_query_latency_ms(
       5);
   exp_parent_search_stats->set_query_processor_query_visitor_latency_ms(5);
+  exp_parent_search_stats->set_num_unquantized_embeddings_scored(0);
+  exp_parent_search_stats->set_num_quantized_embeddings_scored(0);
+  exp_parent_search_stats->set_num_embedding_shards_read(0);
+  exp_parent_search_stats->set_num_embedding_bytes_read(0);
 
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
@@ -5147,6 +5156,10 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_parent_search_stats->set_query_processor_parser_consume_query_latency_ms(
       5);
   exp_parent_search_stats->set_query_processor_query_visitor_latency_ms(5);
+  exp_parent_search_stats->set_num_unquantized_embeddings_scored(0);
+  exp_parent_search_stats->set_num_quantized_embeddings_scored(0);
+  exp_parent_search_stats->set_num_embedding_shards_read(0);
+  exp_parent_search_stats->set_num_embedding_bytes_read(0);
 
   QueryStatsProto::SearchStats* exp_child_search_stats =
       exp_stats.mutable_child_search_stats();
@@ -5166,6 +5179,10 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   exp_child_search_stats->set_query_processor_parser_consume_query_latency_ms(
       5);
   exp_child_search_stats->set_query_processor_query_visitor_latency_ms(5);
+  exp_child_search_stats->set_num_unquantized_embeddings_scored(0);
+  exp_child_search_stats->set_num_quantized_embeddings_scored(0);
+  exp_child_search_stats->set_num_embedding_shards_read(0);
+  exp_child_search_stats->set_num_embedding_bytes_read(0);
 
   EXPECT_THAT(search_result.query_stats(), EqualsProto(exp_stats));
 
@@ -5706,6 +5723,361 @@ TEST_F(IcingSearchEngineSearchTest, JoinByQualifiedId) {
   EXPECT_THAT(next_page_token, Eq(kInvalidNextPageToken));
   EXPECT_THAT(result3,
               EqualsSearchResultIgnoreStatsAndScores(expected_result3));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
+       JoinByQualifiedId_ChildPutBeforeParent_FixDisabled) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("firstName")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person")
+          .SetSchema("Person")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("firstName", "first")
+          .Build();
+
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("subject", "test subject")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person")
+          .Build();
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_enable_non_existent_qualified_id_join(false);
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+
+  // Parent SearchSpec
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("firstName:first");
+
+  // JoinSpec
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("personQualifiedId");
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::PREFIX);
+  nested_search_spec->set_query("subject:test");
+
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  // Parent ScoringSpec
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Parent ResultSpec
+  ResultSpecProto result_spec;
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
+  // The join relationship should not be established.
+  SearchResultProto expected_result;
+  expected_result.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_result.mutable_results()->Add();
+  *result_proto->mutable_document() = person;
+
+  EXPECT_THAT(icing.Search(search_spec, scoring_spec, result_spec),
+              EqualsSearchResultIgnoreStatsAndScores(expected_result));
+}
+
+TEST_F(IcingSearchEngineSearchTest, JoinByQualifiedId_ChildPutBeforeParent) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("firstName")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person")
+          .SetSchema("Person")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("firstName", "first")
+          .Build();
+
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("subject", "test subject")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person")
+          .Build();
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_enable_non_existent_qualified_id_join(true);
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+
+  // Parent SearchSpec
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("firstName:first");
+
+  // JoinSpec
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("personQualifiedId");
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::PREFIX);
+  nested_search_spec->set_query("subject:test");
+
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  // Parent ScoringSpec
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Parent ResultSpec
+  ResultSpecProto result_spec;
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
+  // The join relationship should be established.
+  SearchResultProto expected_result;
+  expected_result.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_result.mutable_results()->Add();
+  *result_proto->mutable_document() = person;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = email;
+
+  EXPECT_THAT(icing.Search(search_spec, scoring_spec, result_spec),
+              EqualsSearchResultIgnoreStatsAndScores(expected_result));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
+       JoinByQualifiedId_ChildPutBeforeParent_DeleteAndPutParentAgain) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("firstName")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person")
+          .SetSchema("Person")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("firstName", "first")
+          .Build();
+
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("subject", "test subject")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person")
+          .Build();
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email).status(), ProtoIsOk());
+  // Put, delete and put again the parent document.
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Delete(person.namespace_(), person.uri()).status(),
+              ProtoIsOk());
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+
+  // Parent SearchSpec
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("firstName:first");
+
+  // JoinSpec
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("personQualifiedId");
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::PREFIX);
+  nested_search_spec->set_query("subject:test");
+
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  // Parent ScoringSpec
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Parent ResultSpec
+  ResultSpecProto result_spec;
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
+  // The join relationship should be established.
+  SearchResultProto expected_result;
+  expected_result.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_result.mutable_results()->Add();
+  *result_proto->mutable_document() = person;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = email;
+
+  EXPECT_THAT(icing.Search(search_spec, scoring_spec, result_spec),
+              EqualsSearchResultIgnoreStatsAndScores(expected_result));
+}
+
+TEST_F(
+    IcingSearchEngineSearchTest,
+    JoinByQualifiedId_ChildPutBeforeParent_DeleteAndPutParentAgain_Optimize) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("firstName")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personQualifiedId")
+                                        .SetDataTypeJoinableString(
+                                            JOINABLE_VALUE_TYPE_QUALIFIED_ID)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto person =
+      DocumentBuilder()
+          .SetKey("pkg$db/namespace", "person")
+          .SetSchema("Person")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("firstName", "first")
+          .Build();
+
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey("namespace", "email")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("subject", "test subject")
+          .AddStringProperty("personQualifiedId", "pkg$db/namespace#person")
+          .Build();
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  icing_options.set_optimize_rebuild_index_threshold(1.0);
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email).status(), ProtoIsOk());
+  // Put, delete, optimize and put again the parent document.
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Delete(person.namespace_(), person.uri()).status(),
+              ProtoIsOk());
+  ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(person).status(), ProtoIsOk());
+
+  // Parent SearchSpec
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("firstName:first");
+
+  // JoinSpec
+  JoinSpecProto* join_spec = search_spec.mutable_join_spec();
+  join_spec->set_parent_property_expression(
+      std::string(JoinProcessor::kQualifiedIdExpr));
+  join_spec->set_child_property_expression("personQualifiedId");
+  JoinSpecProto::NestedSpecProto* nested_spec =
+      join_spec->mutable_nested_spec();
+  SearchSpecProto* nested_search_spec = nested_spec->mutable_search_spec();
+  nested_search_spec->set_term_match_type(TermMatchType::PREFIX);
+  nested_search_spec->set_query("subject:test");
+
+  *nested_spec->mutable_scoring_spec() = GetDefaultScoringSpec();
+  *nested_spec->mutable_result_spec() = ResultSpecProto::default_instance();
+
+  // Parent ScoringSpec
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Parent ResultSpec
+  ResultSpecProto result_spec;
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int32_t>::max());
+
+  // The join relationship should be established.
+  SearchResultProto expected_result;
+  expected_result.mutable_status()->set_code(StatusProto::OK);
+  SearchResultProto::ResultProto* result_proto =
+      expected_result.mutable_results()->Add();
+  *result_proto->mutable_document() = person;
+  *result_proto->mutable_joined_results()->Add()->mutable_document() = email;
+
+  EXPECT_THAT(icing.Search(search_spec, scoring_spec, result_spec),
+              EqualsSearchResultIgnoreStatsAndScores(expected_result));
 }
 
 TEST_F(IcingSearchEngineSearchTest, JoinByQualifiedIdMultipleNamespaces) {
@@ -7410,6 +7782,10 @@ TEST_F(IcingSearchEngineSearchTest, NumericFilterQueryStatsProtoTest) {
   exp_parent_search_stats->set_query_processor_parser_consume_query_latency_ms(
       5);
   exp_parent_search_stats->set_query_processor_query_visitor_latency_ms(5);
+  exp_parent_search_stats->set_num_unquantized_embeddings_scored(0);
+  exp_parent_search_stats->set_num_quantized_embeddings_scored(0);
+  exp_parent_search_stats->set_num_embedding_shards_read(0);
+  exp_parent_search_stats->set_num_embedding_bytes_read(0);
 
   EXPECT_THAT(results.query_stats(), EqualsProto(exp_stats));
 }
@@ -7900,7 +8276,7 @@ TEST_F(IcingSearchEngineSearchTest, HasPropertyQueryNestedDocument) {
 }
 
 class IcingSearchEngineEmbeddingSearchTest
-    : public ::testing::TestWithParam<std::tuple<bool, bool>> {
+    : public ::testing::TestWithParam<bool> {
  protected:
   void SetUp() override {
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
@@ -7929,8 +8305,7 @@ class IcingSearchEngineEmbeddingSearchTest
 };
 
 TEST_P(IcingSearchEngineEmbeddingSearchTest, EmbeddingSearch) {
-  bool get_embedding_match_info = std::get<0>(GetParam());
-  bool enable_eigen_embedding_scoring = std::get<1>(GetParam());
+  bool get_embedding_match_info = GetParam();
 
   SchemaProto schema =
       SchemaBuilder()
@@ -7981,7 +8356,6 @@ TEST_P(IcingSearchEngineEmbeddingSearchTest, EmbeddingSearch) {
           .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_eigen_embedding_scoring(enable_eigen_embedding_scoring);
   IcingSearchEngine icing(options, GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -8327,12 +8701,9 @@ TEST_P(IcingSearchEngineEmbeddingSearchTest, EmbeddingSearch) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    IcingSearchEngineEmbeddingSearchTest, IcingSearchEngineEmbeddingSearchTest,
-    testing::Values(std::make_tuple(/*get_embedding_match_info=*/false,
-                                    /*enable_eigen_embedding_scoring=*/false),
-                    std::make_tuple(false, true), std::make_tuple(true, false),
-                    std::make_tuple(true, true)));
+INSTANTIATE_TEST_SUITE_P(IcingSearchEngineEmbeddingSearchTest,
+                         IcingSearchEngineEmbeddingSearchTest,
+                         testing::Values(false, true));
 
 TEST_F(IcingSearchEngineSearchTest, CannotScoreUnqueriedEmbedding) {
   SchemaProto schema =
@@ -8501,7 +8872,7 @@ TEST_F(IcingSearchEngineSearchTest, AdditionalScores) {
 }
 
 class IcingSearchEngineEmbeddingSearchQuantizationTest
-    : public ::testing::TestWithParam<bool> {
+    : public ::testing::Test {
  protected:
   void SetUp() override {
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
@@ -8529,7 +8900,7 @@ class IcingSearchEngineEmbeddingSearchQuantizationTest
   Filesystem filesystem_;
 };
 
-TEST_P(IcingSearchEngineEmbeddingSearchQuantizationTest,
+TEST_F(IcingSearchEngineEmbeddingSearchQuantizationTest,
        EmbeddingSearchWithQuantizedProperty) {
   constexpr float eps = 0.0001f;
 
@@ -8577,7 +8948,6 @@ TEST_P(IcingSearchEngineEmbeddingSearchQuantizationTest,
           .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_eigen_embedding_scoring(GetParam());
   IcingSearchEngine icing(options, GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
   ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
@@ -8650,11 +9020,6 @@ TEST_P(IcingSearchEngineEmbeddingSearchQuantizationTest,
   EXPECT_THAT(results.results(1).additional_scores(0), DoubleNear(256.45, eps));
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    IcingSearchEngineEmbeddingSearchQuantizationTest,
-    IcingSearchEngineEmbeddingSearchQuantizationTest,
-    testing::Values(/*enable_eigen_embedding_scoring=*/true, false));
-
 TEST_F(IcingSearchEngineSearchTest,
        AdditionalScoresOnlyAllowedInAdvancedScoring) {
   SchemaProto schema =
@@ -8688,6 +9053,216 @@ TEST_F(IcingSearchEngineSearchTest,
   SearchResultProto results = icing.Search(search_spec, scoring_spec,
                                            ResultSpecProto::default_instance());
   EXPECT_THAT(results.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineSearchTest, EmbeddingSearchStats) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email1")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embeddingQuantized")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                            QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email2")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embeddingQuantized")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                            QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  // Unquantized size: 12 bytes
+  // Quantized size: 3 + sizeof(Quantizer) = 11 bytes.
+  PropertyProto::VectorProto model1_vector =
+      CreateVector("my_model1", {-1, -1, -1});
+  PropertyProto::VectorProto model2_vector =
+      CreateVector("my_model2", {-1, -1, -1});
+  DocumentProto email1_document =
+      DocumentBuilder()
+          .SetKey("icing", "uri0")
+          .SetSchema("Email1")
+          .SetCreationTimestampMs(1)
+          .AddStringProperty("body", "foo")
+          .AddVectorProperty("embedding", model1_vector, model2_vector)
+          .AddVectorProperty("embeddingQuantized", model1_vector, model2_vector)
+          .Build();
+  DocumentProto email2_document =
+      DocumentBuilder()
+          .SetKey("icing", "uri1")
+          .SetSchema("Email2")
+          .SetCreationTimestampMs(1)
+          .AddStringProperty("body", "foo")
+          .AddVectorProperty("embedding", model1_vector, model2_vector)
+          .AddVectorProperty("embeddingQuantized", model1_vector, model2_vector)
+          .Build();
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  // Set the number of shards to a large number to avoid hash collisions.
+  icing_options.set_embedding_index_num_shards(8192);
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email1_document).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(email2_document).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  *search_spec.add_embedding_query_vectors() = model1_vector;
+  *search_spec.add_embedding_query_vectors() = model2_vector;
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Perform an embedding query that matches all embeddings.
+  search_spec.set_query(
+      "semanticSearch(getEmbeddingParameter(0)) OR "
+      "semanticSearch(getEmbeddingParameter(1))");
+  SearchResultProto results = icing.Search(search_spec, scoring_spec,
+                                           ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(email2_document));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(email1_document));
+  // Check embedding search stats.
+  QueryStatsProto::SearchStats search_stats =
+      results.query_stats().parent_search_stats();
+  // We have 8 embeddings in total in the two documents. 4 of them are
+  // unquantized and 4 of them are quantized.
+  EXPECT_THAT(search_stats.num_unquantized_embeddings_scored(), Eq(4));
+  EXPECT_THAT(search_stats.num_quantized_embeddings_scored(), Eq(4));
+  // We have 2 types and 2 models, which corresponds to 4 shards for unquantized
+  // embeddings and 4 shards for quantized embeddings.
+  EXPECT_THAT(search_stats.num_embedding_shards_read(), Eq(8));
+  // 4 unquantized embeddings * 12 bytes + 4 quantized embeddings * 11 bytes.
+  EXPECT_THAT(search_stats.num_embedding_bytes_read(), Eq(92));
+
+  // Perform an embedding query that only matches model1 embeddings.
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
+  results = icing.Search(search_spec, scoring_spec,
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(2));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(email2_document));
+  EXPECT_THAT(results.results(1).document(), EqualsProto(email1_document));
+  // Check embedding search stats.
+  search_stats = results.query_stats().parent_search_stats();
+  // We have 4 embeddings in total in the two documents. 2 of them are
+  // unquantized and 2 of them are quantized.
+  EXPECT_THAT(search_stats.num_unquantized_embeddings_scored(), Eq(2));
+  EXPECT_THAT(search_stats.num_quantized_embeddings_scored(), Eq(2));
+  // We have 2 types and 1 models matched, which corresponds to 2 shards for
+  // unquantized embeddings and 2 shards for quantized embeddings.
+  EXPECT_THAT(search_stats.num_embedding_shards_read(), Eq(4));
+  // 2 unquantized embeddings * 12 bytes + 2 quantized embeddings * 11 bytes.
+  EXPECT_THAT(search_stats.num_embedding_bytes_read(), Eq(46));
+
+  // Perform an embedding query that only matches model1 embeddings and filter
+  // on Email1.
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
+  search_spec.add_schema_type_filters("Email1");
+  results = icing.Search(search_spec, scoring_spec,
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(email1_document));
+  // Check embedding search stats.
+  search_stats = results.query_stats().parent_search_stats();
+  // We have 2 embeddings in total in the Email1 document. 1 of them are
+  // unquantized and 1 of them are quantized.
+  EXPECT_THAT(search_stats.num_unquantized_embeddings_scored(), Eq(1));
+  EXPECT_THAT(search_stats.num_quantized_embeddings_scored(), Eq(1));
+  // We have 1 types and 1 models matched, which corresponds to 1 shards for
+  // unquantized embeddings and 1 shards for quantized embeddings.
+  EXPECT_THAT(search_stats.num_embedding_shards_read(), Eq(2));
+  // 1 unquantized embeddings * 12 bytes + 1 quantized embeddings * 11 bytes.
+  EXPECT_THAT(search_stats.num_embedding_bytes_read(), Eq(23));
+
+  // Now add a property filter on Email1.embeddingQuantized, which will only
+  // score quantized embeddings in Email1.
+  TypePropertyMask* property_filters = search_spec.add_type_property_filters();
+  property_filters->set_schema_type("Email1");
+  property_filters->add_paths("embeddingQuantized");
+  results = icing.Search(search_spec, scoring_spec,
+                         ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), SizeIs(1));
+  EXPECT_THAT(results.results(0).document(), EqualsProto(email1_document));
+  // Check embedding search stats.
+  search_stats = results.query_stats().parent_search_stats();
+  // We have 1 quantized embeddings in the Email1 document.
+  EXPECT_THAT(search_stats.num_unquantized_embeddings_scored(), Eq(0));
+  EXPECT_THAT(search_stats.num_quantized_embeddings_scored(), Eq(1));
+  // We have 1 types and 1 models matched, which corresponds to 0 shard for
+  // unquantized embeddings and 1 shard for quantized embeddings.
+  EXPECT_THAT(search_stats.num_embedding_shards_read(), Eq(1));
+  // 1 quantized embeddings * 11 bytes.
+  EXPECT_THAT(search_stats.num_embedding_bytes_read(), Eq(11));
+}
+
+TEST_F(IcingSearchEngineSearchTest, EmbeddingSearchStats_EmptyIndex) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+  IcingSearchEngine icing(icing_options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model", {-1, -1, -1});
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // Perform an embedding query.
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
+  SearchResultProto results = icing.Search(search_spec, scoring_spec,
+                                           ResultSpecProto::default_instance());
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  EXPECT_THAT(results.results(), IsEmpty());
+  // Check embedding search stats.
+  QueryStatsProto::SearchStats search_stats =
+      results.query_stats().parent_search_stats();
+  EXPECT_THAT(search_stats.num_unquantized_embeddings_scored(), Eq(0));
+  EXPECT_THAT(search_stats.num_quantized_embeddings_scored(), Eq(0));
+  EXPECT_THAT(search_stats.num_embedding_shards_read(), Eq(0));
+  EXPECT_THAT(search_stats.num_embedding_bytes_read(), Eq(0));
 }
 
 TEST_F(IcingSearchEngineSearchTest,
@@ -8931,6 +9506,137 @@ TEST_F(IcingSearchEngineSearchTest, SearchWithTypeFiltersEmbedding) {
   EXPECT_THAT(results.results(0).document(), EqualsProto(doc_b));
   // Score should be 0.4 + 0.5 + 0.6 = 1.5
   EXPECT_THAT(results.results(0).score(), DoubleNear(1.5, kEps));
+}
+
+TEST_F(IcingSearchEngineSearchTest, SearchWithTypeFiltersEmbedding_manyHits) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeA").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeB").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("TypeC").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("embedding")
+                  .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                  .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  // Add 600 documents of TypeA, each of which has two embedding hits.
+  for (int i = 0; i < 600; ++i) {
+    DocumentProto doc =
+        DocumentBuilder()
+            .SetKey("icing", "uriA" + std::to_string(i))
+            .SetSchema("TypeA")
+            .SetCreationTimestampMs(1)
+            .AddVectorProperty("embedding",
+                               CreateVector("my_model", {0.1, 0.2, 0.3}),
+                               CreateVector("my_model", {0.1, 0.2, 0.3}))
+            .Build();
+    ASSERT_THAT(icing.Put(doc).status(), ProtoIsOk());
+  }
+  // Add 600 documents of TypeB, each of which has two embedding hits.
+  for (int i = 0; i < 600; ++i) {
+    DocumentProto doc =
+        DocumentBuilder()
+            .SetKey("icing", "uriB" + std::to_string(i))
+            .SetSchema("TypeB")
+            .SetCreationTimestampMs(1)
+            .AddVectorProperty("embedding",
+                               CreateVector("my_model", {0.4, 0.5, 0.6}),
+                               CreateVector("my_model", {0.4, 0.5, 0.6}))
+            .Build();
+    ASSERT_THAT(icing.Put(doc).status(), ProtoIsOk());
+  }
+  // Add 600 documents of TypeC, each of which has two embedding hits.
+  for (int i = 0; i < 600; ++i) {
+    DocumentProto doc =
+        DocumentBuilder()
+            .SetKey("icing", "uriC" + std::to_string(i))
+            .SetSchema("TypeC")
+            .SetCreationTimestampMs(1)
+            .AddVectorProperty("embedding",
+                               CreateVector("my_model", {0.7, 0.8, 0.9}),
+                               CreateVector("my_model", {0.7, 0.8, 0.9}))
+            .Build();
+    ASSERT_THAT(icing.Put(doc).status(), ProtoIsOk());
+  }
+
+  SearchSpecProto search_spec;
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model", {1, 1, 1});
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0))");
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  // Let the score be the number of embedding hits.
+  scoring_spec.set_advanced_scoring_expression(
+      "len(this.matchedSemanticScores(getEmbeddingParameter(0)))");
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(10000);
+
+  // Filter for TypeA only
+  search_spec.add_schema_type_filters("TypeA");
+  SearchResultProto results =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(600));
+  for (int i = 0; i < 600; ++i) {
+    EXPECT_THAT(results.results(i).document().schema(), Eq("TypeA"));
+    // Each document has 2 embedding hits.
+    EXPECT_THAT(results.results(i).score(), Eq(2));
+  }
+
+  // Filter for TypeB only
+  search_spec.clear_schema_type_filters();
+  search_spec.add_schema_type_filters("TypeB");
+  results = icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(600));
+  for (int i = 0; i < 600; ++i) {
+    EXPECT_THAT(results.results(i).document().schema(), Eq("TypeB"));
+    // Each document has 2 embedding hits.
+    EXPECT_THAT(results.results(i).score(), Eq(2));
+  }
+
+  // Filter for TypeC only
+  search_spec.clear_schema_type_filters();
+  search_spec.add_schema_type_filters("TypeC");
+  results = icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(600));
+  for (int i = 0; i < 600; ++i) {
+    EXPECT_THAT(results.results(i).document().schema(), Eq("TypeC"));
+    // Each document has 2 embedding hits.
+    EXPECT_THAT(results.results(i).score(), Eq(2));
+  }
+
+  // Filter for TypeA and TypeC
+  search_spec.clear_schema_type_filters();
+  search_spec.add_schema_type_filters("TypeA");
+  search_spec.add_schema_type_filters("TypeC");
+  results = icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results.status(), ProtoIsOk());
+  ASSERT_THAT(results.results(), SizeIs(1200));
+  for (int i = 0; i < 1200; ++i) {
+    EXPECT_THAT(results.results(i).document().schema(),
+                AnyOf(Eq("TypeA"), Eq("TypeC")));
+    // Each document has 2 embedding hits.
+    EXPECT_THAT(results.results(i).score(), Eq(2));
+  }
 }
 
 TEST_F(IcingSearchEngineSearchTest, SearchWithUriFilters) {
@@ -9290,6 +9996,242 @@ TEST_F(IcingSearchEngineSearchTest,
 }
 
 TEST_F(IcingSearchEngineSearchTest,
+       SearchWithRankingByScorableProperty_WithCircularSchemaDependency) {
+  SchemaProto schema_proto =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Person")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("income")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_REPEATED))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("age")
+                          .SetDataType(PropertyConfigProto::DataType::INT64)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("isStarred")
+                          .SetDataType(PropertyConfigProto::DataType::BOOLEAN)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("lastEmail")
+                                   .SetDataTypeDocument(
+                                       "Email", {"sender.income", "sender.age",
+                                                 "sender.isStarred"})
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("Email")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("sender")
+                                   .SetDataTypeDocument(
+                                       "Person", {"income", "age", "isStarred"})
+                                   .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("scoreInt64")
+                                   .SetScorableType(SCORABLE_TYPE_ENABLED)
+                                   .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                   .SetCardinality(CARDINALITY_REPEATED)))
+          .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_allow_circular_schema_definitions(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(schema_proto).status(), ProtoIsOk());
+
+  // person_id0 -> email_id0 -> person_id1
+  DocumentProto person_id0 =
+      DocumentBuilder()
+          .SetKey("namespace", "person_id0")
+          .SetSchema("Person")
+          .SetScore(5)
+          .AddDoubleProperty("income", 100.0)
+          .AddInt64Property("age", 30)
+          .AddBooleanProperty("isStarred", true)
+          .AddDocumentProperty(
+              "lastEmail",
+              DocumentBuilder()
+                  .SetKey("namespace", "email_id0")
+                  .SetSchema("Email")
+                  .AddInt64Property("scoreInt64", 10)
+                  .AddDocumentProperty(
+                      "sender", DocumentBuilder()
+                                    .SetKey("namespace", "person_id1")
+                                    .SetSchema("Person")
+                                    .AddDoubleProperty("income", 20.0, 30.0)
+                                    .AddInt64Property("age", 40)
+                                    .AddBooleanProperty("isStarred", false)
+                                    .Build())
+                  .Build())
+          .Build();
+
+  DocumentProto person_id2 = DocumentBuilder()
+                                 .SetKey("namespace", "person_id2")
+                                 .SetSchema("Person")
+                                 .SetScore(1)
+                                 .AddDoubleProperty("income", 50.0)
+                                 .Build();
+
+  EXPECT_THAT(icing.Put(person_id0).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(person_id2).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  scoring_spec.set_advanced_scoring_expression(
+      "this.documentScore() + "
+      "sum(getScorableProperty(\"Person\", \"income\")) + "
+      "sum(getScorableProperty(\"Person\", \"age\")) + "
+      "sum(getScorableProperty(\"Person\", \"isStarred\")) + "
+      "sum(getScorableProperty(\"Person\", \"lastEmail.scoreInt64\")) + "
+      "sum(getScorableProperty(\"Person\", \"lastEmail.sender.income\")) + "
+      "sum(getScorableProperty(\"Person\", \"lastEmail.sender.age\")) + "
+      "sum(getScorableProperty(\"Person\", \"lastEmail.sender.isStarred\"))");
+  AddSchemaTypeAliasMap(&scoring_spec, "Person", {"Person"});
+  AddSchemaTypeAliasMap(&scoring_spec, "Email", {"Email"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
+
+  // person_id0: 5 (doc score) + 100 (income) + 30 (age) + 1 (isStarred) +
+  //              10 (email score) + (20+30) (sender income) + 40 (sender age) +
+  //              0 (sender isStarred)
+  //            = 5 + 100 + 30 + 1 + 10 + 50 + 40 + 0 = 236.0
+  // person_id2: 1 (doc score) + 50 (income) = 51.0
+  double expected_score0 = 236.0;
+  double expected_score2 = 51.0;
+
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+
+  EXPECT_THAT(GetUrisFromSearchResults(search_result_proto),
+              ElementsAre("person_id0", "person_id2"));
+  EXPECT_THAT(GetScoresFromSearchResults(search_result_proto),
+              ElementsAre(expected_score0, expected_score2));
+}
+
+TEST_F(IcingSearchEngineSearchTest,
+       SearchWithRankingByScorableProperty_CircularDependency_MissingNestedProperty) {
+  SchemaProto schema_proto =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TypeA")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("p1")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("nextB")
+                                   .SetDataTypeDocument("TypeB",
+                                      std::vector<std::string>() = {"p1"})
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TypeB")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("p1")
+                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
+                          .SetScorableType(SCORABLE_TYPE_ENABLED)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("a1")
+                                   .SetDataTypeDocument(
+                                       "TypeA", std::vector<std::string>() = {"p1", "nextB.p1"})
+                                   .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("a2")
+                                   .SetDataTypeDocument(
+                                       "TypeA", std::vector<std::string>() = {"p1", "nextB.p1"})
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_allow_circular_schema_definitions(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(schema_proto).status(), ProtoIsOk());
+
+  // b1: p1=10, a1.p1=5, a2.p1=3. Total score = 18
+  DocumentProto b1 =
+      DocumentBuilder()
+          .SetKey("namespace", "b1")
+          .SetSchema("TypeB")
+          .AddDoubleProperty("p1", 10.0)
+          .AddDocumentProperty("a1", DocumentBuilder()
+                                         .SetKey("namespace", "a1_1")
+                                         .SetSchema("TypeA")
+                                         .AddDoubleProperty("p1", 5.0)
+                                         .Build())
+          .AddDocumentProperty("a2", DocumentBuilder()
+                                         .SetKey("namespace", "a2_1")
+                                         .SetSchema("TypeA")
+                                         .AddDoubleProperty("p1", 3.0)
+                                         .Build())
+          .Build();
+
+  // b2: p1=10, a1.p1=5, a1.nextB.p1=1, Total score = 16 (a1, a2 missing)
+  DocumentProto b2 =
+      DocumentBuilder()
+          .SetKey("namespace", "b2")
+          .SetSchema("TypeB")
+          .AddDoubleProperty("p1", 10.0)
+          .AddDocumentProperty("a1", DocumentBuilder()
+                                         .SetKey("namespace", "a1_1")
+                                         .SetSchema("TypeA")
+                                         .AddDoubleProperty("p1", 5.0)
+                                         .AddDocumentProperty(
+                                            "nextB", DocumentBuilder()
+                                                .SetKey("namespace", "b1")
+                                                .SetSchema("TypeB")
+                                                .AddDoubleProperty("p1", 1.0)
+                                                .Build())
+                                         .Build())
+          .Build();
+
+  EXPECT_THAT(icing.Put(b1).status(), ProtoIsOk());
+  EXPECT_THAT(icing.Put(b2).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+  scoring_spec.set_advanced_scoring_expression(
+      "sum(getScorableProperty(\"TypeB\", \"p1\")) + "
+      "sum(getScorableProperty(\"TypeB\", \"a1.p1\")) + "
+      "sum(getScorableProperty(\"TypeB\", \"a1.nextB.p1\")) + "
+      "sum(getScorableProperty(\"TypeB\", \"a2.p1\"))");
+  AddSchemaTypeAliasMap(&scoring_spec, "TypeA", {"TypeA"});
+  AddSchemaTypeAliasMap(&scoring_spec, "TypeB", {"TypeB"});
+  scoring_spec.add_scoring_feature_types_enabled(
+      ScoringFeatureType::SCORABLE_PROPERTY_RANKING);
+
+  SearchResultProto search_result_proto = icing.Search(
+      search_spec, scoring_spec, ResultSpecProto::default_instance());
+  EXPECT_THAT(search_result_proto.status(), ProtoIsOk());
+
+  EXPECT_THAT(GetUrisFromSearchResults(search_result_proto),
+              ElementsAre("b1", "b2"));
+  EXPECT_THAT(GetScoresFromSearchResults(search_result_proto),
+              ElementsAre(18, 16));
+}
+
+
+TEST_F(IcingSearchEngineSearchTest,
        SearchWithRankingByScorableProperty_WithInvalidPropertyName) {
   SchemaProto schema =
       SchemaBuilder()
@@ -9335,53 +10277,6 @@ TEST_F(IcingSearchEngineSearchTest,
               ElementsAre(expected_score));
 }
 
-TEST_F(IcingSearchEngineSearchTest,
-       SearchWithRankingByScorableProperty_ScorablePropertyDisabled) {
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(
-              SchemaTypeConfigBuilder()
-                  .SetType("Person")
-                  .AddProperty(
-                      PropertyConfigBuilder()
-                          .SetName("name")
-                          .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-                          .SetCardinality(CARDINALITY_OPTIONAL))
-                  .AddProperty(
-                      PropertyConfigBuilder()
-                          .SetName("income")
-                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
-                          .SetScorableType(SCORABLE_TYPE_ENABLED)
-                          .SetCardinality(CARDINALITY_REPEATED)))
-          .Build();
-  DocumentProto document0 = DocumentBuilder()
-                                .SetKey("icing", "person0")
-                                .SetSchema("Person")
-                                .SetScore(10)
-                                .SetCreationTimestampMs(1)
-                                .AddStringProperty("name", "John")
-                                .AddDoubleProperty("income", 10000, 20000)
-                                .Build();
-  IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_scorable_properties(false);
-  IcingSearchEngine icing(options, GetTestJniCache());
-  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
-  EXPECT_THAT(icing.Put(document0).status(), ProtoIsOk());
-
-  SearchSpecProto search_spec;
-  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
-  scoring_spec.set_rank_by(
-      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
-  scoring_spec.set_advanced_scoring_expression(
-      "this.documentScore() + sum(getScorableProperty(\"Person\", "
-      "\"not_exist\"))");
-  AddSchemaTypeAliasMap(&scoring_spec, "Person", {"Person"});
-
-  SearchResultProto results = icing.Search(search_spec, scoring_spec,
-                                           ResultSpecProto::default_instance());
-  EXPECT_THAT(results.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-}
 
 TEST_F(IcingSearchEngineSearchTest, JoinSearchWithRankingByScorableProperty) {
   SchemaProto schema =
@@ -9602,98 +10497,6 @@ TEST_F(IcingSearchEngineSearchTest, JoinSearchWithRankingByScorableProperty) {
                   person_tim_expected_score));
 }
 
-TEST_F(IcingSearchEngineSearchTest,
-       JoinSearchWithRankingByScorableProperty_ScorablePropertyDisabled) {
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
-              PropertyConfigBuilder()
-                  .SetName("name")
-                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-                  .SetCardinality(CARDINALITY_OPTIONAL)))
-          .AddType(
-              SchemaTypeConfigBuilder()
-                  .SetType("CallLogSignalDoc")
-                  .AddProperty(PropertyConfigBuilder()
-                                   .SetName("personQualifiedId")
-                                   .SetDataTypeJoinableString(
-                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID)
-                                   .SetCardinality(CARDINALITY_OPTIONAL))
-                  .AddProperty(
-                      PropertyConfigBuilder()
-                          .SetName("rfsScore")
-                          .SetDataType(PropertyConfigProto::DataType::DOUBLE)
-                          .SetScorableType(SCORABLE_TYPE_ENABLED)
-                          .SetCardinality(CARDINALITY_REPEATED)))
-          .Build();
-
-  // John has 2 call logs and 1 sms log to join.
-  DocumentProto person_john_doc =
-      DocumentBuilder()
-          .SetKey("namespace", "person_john_id")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .SetSchema("Person")
-          .SetScore(10)
-          .AddStringProperty("name", "John")
-          .Build();
-  DocumentProto john_call_log_doc1 =
-      DocumentBuilder()
-          .SetKey("namespace", "call_log_id1")
-          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
-          .SetSchema("CallLogSignalDoc")
-          .SetScore(5)
-          .AddDoubleProperty("rfsScore", 100, 200)
-          .AddStringProperty("personQualifiedId", "namespace#person_john_id")
-          .Build();
-
-  IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_scorable_properties(false);
-  IcingSearchEngine icing(options, GetTestJniCache());
-  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
-  EXPECT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
-  EXPECT_THAT(icing.Put(person_john_doc).status(), ProtoIsOk());
-  EXPECT_THAT(icing.Put(john_call_log_doc1).status(), ProtoIsOk());
-
-  // all people will be matched.
-  SearchSpecProto parent_search_spec;
-  parent_search_spec.add_schema_type_filters("Person");
-
-  // Child scoring spec: ranking by call logs and sms logs' rfsScore.
-  ScoringSpecProto child_scoring_spec = GetDefaultScoringSpec();
-  child_scoring_spec.set_rank_by(
-      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
-  child_scoring_spec.set_advanced_scoring_expression(
-      "sum(getScorableProperty(\"CallLogSignalDoc\", \"rfsScore\"))");
-  AddSchemaTypeAliasMap(&child_scoring_spec, "Person", {"Person"});
-  AddSchemaTypeAliasMap(&child_scoring_spec, "CallLogSignalDoc",
-                        {"CallLogSignalDoc"});
-
-  JoinSpecProto* join_spec = parent_search_spec.mutable_join_spec();
-  join_spec->set_parent_property_expression(
-      std::string(JoinProcessor::kQualifiedIdExpr));
-  join_spec->set_child_property_expression("personQualifiedId");
-  JoinSpecProto::NestedSpecProto* nested_spec =
-      join_spec->mutable_nested_spec();
-  *nested_spec->mutable_scoring_spec() = child_scoring_spec;
-  nested_spec->mutable_search_spec()->add_schema_type_filters(
-      "CallLogSignalDoc");
-
-  // Parent ScoringSpec
-  ScoringSpecProto parent_scoring_spec = GetDefaultScoringSpec();
-  parent_scoring_spec.set_rank_by(
-      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
-  parent_scoring_spec.set_advanced_scoring_expression(
-      "this.documentScore() + "
-      "maxOrDefault(this.childrenRankingSignals(), 0)");
-  AddSchemaTypeAliasMap(&parent_scoring_spec, "Person", {"Person"});
-  AddSchemaTypeAliasMap(&parent_scoring_spec, "CallLogSignalDoc",
-                        {"CallLogSignalDoc"});
-
-  SearchResultProto results =
-      icing.Search(parent_search_spec, parent_scoring_spec,
-                   ResultSpecProto::default_instance());
-  EXPECT_THAT(results.status(), ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-}
 
 TEST_F(IcingSearchEngineSearchTest,
        SearchWithScorableProperty_DocumentsFromMultipleMatchedSchemaTypes) {
@@ -9913,11 +10716,16 @@ TEST_F(IcingSearchEngineSearchTest,
   SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
   // Ignore latency numbers as they're covered elsewhere
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result
       .mutable_scorable_property_incompatible_changed_schema_types()
       ->Add("Person");
+  // Since it is a scorable property incompatible change, we need to do a
+  // recovery proof flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   actual_search_result_proto = icing.Search(
@@ -9996,11 +10804,16 @@ TEST_F(IcingSearchEngineSearchTest,
   SetSchemaResultProto set_schema_result = icing.SetSchema(schema);
   // Ignore latency numbers as they're covered elsewhere
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result
       .mutable_scorable_property_incompatible_changed_schema_types()
       ->Add("Person");
+  // Since it is a scorable property incompatible change, we need to do a
+  // recovery proof flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   SearchResultProto search_result_proto = icing.Search(
@@ -10096,11 +10909,16 @@ TEST_F(IcingSearchEngineSearchTest,
   SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
   // Ignore latency numbers as they're covered elsewhere
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result
       .mutable_scorable_property_incompatible_changed_schema_types()
       ->Add("Person");
+  // Since it is a scorable property incompatible change, we need to do a
+  // recovery proof flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   SearchSpecProto search_spec;
@@ -10203,6 +11021,9 @@ TEST_F(IcingSearchEngineSearchTest,
   EXPECT_THAT(
       set_schema_result.scorable_property_incompatible_changed_schema_types(),
       IsEmpty());
+  // Flush is not needed since the schema change is (scorable property)
+  // compatible.
+  EXPECT_THAT(set_schema_result.needs_persist_type(), PersistType::UNKNOWN);
 
   SearchSpecProto search_spec;
   ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
@@ -10335,6 +11156,7 @@ TEST_F(IcingSearchEngineSearchTest,
   SetSchemaResultProto set_schema_result = icing.SetSchema(schema_proto);
   // Ignore latency numbers as they're covered elsewhere
   set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
   SetSchemaResultProto expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result
@@ -10343,6 +11165,10 @@ TEST_F(IcingSearchEngineSearchTest,
   expected_set_schema_result
       .mutable_scorable_property_incompatible_changed_schema_types()
       ->Add("Person");
+  // Since it is a scorable property incompatible change, we need to do a
+  // recovery proof flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   SearchSpecProto search_spec;

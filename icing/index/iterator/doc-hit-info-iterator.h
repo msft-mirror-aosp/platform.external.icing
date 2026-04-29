@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -117,18 +118,60 @@ class DocHitInfoIterator {
     // - Internal nodes: should aggregate values from all children.
     int32_t num_blocks_inspected;
 
+    // Stats related to embedding index scoring.
+    struct EmbeddingStats {
+      // The number of unquantized embeddings that have been scored.
+      int32_t num_unquantized_embeddings_scored = 0;
+      // The number of quantized embeddings that have been scored.
+      int32_t num_quantized_embeddings_scored = 0;
+      // The set of shards that have been read for unquantized embeddings.
+      std::unordered_set<uint32_t> unquantized_shards_read;
+      // The set of shards that have been read for quantized embeddings.
+      std::unordered_set<uint32_t> quantized_shards_read;
+      // The number of raw embedding bytes read.
+      int64_t num_embedding_bytes_read = 0;
+
+      bool operator==(const EmbeddingStats& other) const {
+        return num_unquantized_embeddings_scored ==
+                   other.num_unquantized_embeddings_scored &&
+               num_quantized_embeddings_scored ==
+                   other.num_quantized_embeddings_scored &&
+               unquantized_shards_read == other.unquantized_shards_read &&
+               quantized_shards_read == other.quantized_shards_read &&
+               num_embedding_bytes_read == other.num_embedding_bytes_read;
+      }
+
+      EmbeddingStats operator+(const EmbeddingStats& other) const {
+        EmbeddingStats result = *this;
+        result.num_unquantized_embeddings_scored +=
+            other.num_unquantized_embeddings_scored;
+        result.num_quantized_embeddings_scored +=
+            other.num_quantized_embeddings_scored;
+        result.unquantized_shards_read.insert(
+            other.unquantized_shards_read.begin(),
+            other.unquantized_shards_read.end());
+        result.quantized_shards_read.insert(other.quantized_shards_read.begin(),
+                                            other.quantized_shards_read.end());
+        result.num_embedding_bytes_read += other.num_embedding_bytes_read;
+        return result;
+      }
+    };
+    EmbeddingStats embedding_stats;
+
     explicit CallStats()
         : CallStats(/*num_leaf_advance_calls_lite_index_in=*/0,
                     /*num_leaf_advance_calls_main_index_in=*/0,
                     /*num_leaf_advance_calls_integer_index_in=*/0,
                     /*num_leaf_advance_calls_no_index_in=*/0,
-                    /*num_blocks_inspected_in=*/0) {}
+                    /*num_blocks_inspected_in=*/0,
+                    /*embedding_stats_in=*/{}) {}
 
     explicit CallStats(int32_t num_leaf_advance_calls_lite_index_in,
                        int32_t num_leaf_advance_calls_main_index_in,
                        int32_t num_leaf_advance_calls_integer_index_in,
                        int32_t num_leaf_advance_calls_no_index_in,
-                       int32_t num_blocks_inspected_in)
+                       int32_t num_blocks_inspected_in,
+                       EmbeddingStats embedding_stats_in)
         : num_leaf_advance_calls_lite_index(
               num_leaf_advance_calls_lite_index_in),
           num_leaf_advance_calls_main_index(
@@ -136,7 +179,8 @@ class DocHitInfoIterator {
           num_leaf_advance_calls_integer_index(
               num_leaf_advance_calls_integer_index_in),
           num_leaf_advance_calls_no_index(num_leaf_advance_calls_no_index_in),
-          num_blocks_inspected(num_blocks_inspected_in) {}
+          num_blocks_inspected(num_blocks_inspected_in),
+          embedding_stats(std::move(embedding_stats_in)) {}
 
     int32_t num_leaf_advance_calls() const {
       return num_leaf_advance_calls_lite_index +
@@ -154,7 +198,8 @@ class DocHitInfoIterator {
                  other.num_leaf_advance_calls_integer_index &&
              num_leaf_advance_calls_no_index ==
                  other.num_leaf_advance_calls_no_index &&
-             num_blocks_inspected == other.num_blocks_inspected;
+             num_blocks_inspected == other.num_blocks_inspected &&
+             embedding_stats == other.embedding_stats;
     }
 
     CallStats operator+(const CallStats& other) const {
@@ -166,7 +211,8 @@ class DocHitInfoIterator {
                            other.num_leaf_advance_calls_integer_index,
                        num_leaf_advance_calls_no_index +
                            other.num_leaf_advance_calls_no_index,
-                       num_blocks_inspected + other.num_blocks_inspected);
+                       num_blocks_inspected + other.num_blocks_inspected,
+                       embedding_stats + other.embedding_stats);
     }
 
     CallStats& operator+=(const CallStats& other) {
@@ -289,6 +335,18 @@ class DocHitInfoIterator {
     return false;
   }
 
+  // Whether this iterator can adopt a delegate iterator.
+  //
+  // If true, then AdoptDelegate can be called to adopt a delegate iterator.
+  virtual bool CanAdoptDelegate() const { return false; }
+
+  // If CanAdoptDelegate returns false, then this method will have no effect.
+  //
+  // This iterator instance will then filter all of its hits to only include
+  // documents that are returned by the delegate iterator.
+  virtual void AdoptDelegate(std::unique_ptr<DocHitInfoIterator> delegate,
+                     bool delegate_node_is_right_most) {}
+
   virtual ~DocHitInfoIterator() = default;
 
   // Returns:
@@ -336,8 +394,7 @@ class DocHitInfoIterator {
     // Didn't find anything for the other iterator, reset to invalid values and
     // return.
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
 };
 

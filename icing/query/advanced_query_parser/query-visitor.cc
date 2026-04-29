@@ -33,7 +33,7 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
-#include "icing/index/embed/doc-hit-info-iterator-embedding.h"
+#include "icing/index/embed/doc-hit-info-iterator-embedding-v2.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
@@ -50,6 +50,7 @@
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
 #include "icing/query/advanced_query_parser/function.h"
 #include "icing/query/advanced_query_parser/lexer.h"
+#include "icing/query/advanced_query_parser/optimizer/query-optimization-util.h"
 #include "icing/query/advanced_query_parser/param.h"
 #include "icing/query/advanced_query_parser/parser.h"
 #include "icing/query/advanced_query_parser/pending-value.h"
@@ -466,9 +467,10 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
       EmbeddingQueryResults::EmbeddingQueryMatchInfoMap * info_map,
       embedding_query_results_.GetOrCreateMatchInfoMap(vector_index,
                                                        metric_type));
+  std::unique_ptr<DocHitInfoIterator> iterator;
   ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<DocHitInfoIterator> iterator,
-      DocHitInfoIteratorEmbedding::Create(
+      iterator,
+      DocHitInfoIteratorEmbeddingV2::Create(
           &search_spec_.embedding_query_vectors(vector_index), metric_type, low,
           high, info_map, embedding_query_results_.global_scores.get(),
           get_embedding_match_info_
@@ -724,7 +726,8 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::ProcessAndOperator(
   ICING_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<DocHitInfoIterator>> iterators,
       PopAllPendingIterators());
-  return PendingValue(CreateAndIterator(std::move(iterators)));
+  return PendingValue(query_optimization_util::OptimizeAndIteratorsIfPossible(
+      std::move(iterators), feature_flags_));
 }
 
 libtextclassifier3::StatusOr<PendingValue> QueryVisitor::ProcessOrOperator(

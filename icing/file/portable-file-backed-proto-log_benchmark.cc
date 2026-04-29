@@ -70,7 +70,8 @@ std::unique_ptr<PortableFileBackedProtoLog<DocumentProto>> CreateProtoLog(
                      DocumentProto>::kDefaultCompressionThresholdBytes,
                  protobuf_ports::kDefaultMemLevel,
                  /*enable_smaller_decompression_buffer_size=*/true,
-                 /*enable_new_header_format=*/true))
+                 /*enable_new_header_format=*/true,
+                 /*enable_reusable_decompression_buffer=*/true))
       .ValueOrDie()
       .proto_log;
 }

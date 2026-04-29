@@ -14,6 +14,7 @@
 
 #include "icing/index/embedding-indexing-handler.h"
 
+#include <cstdint>
 #include <initializer_list>
 #include <memory>
 #include <string>
@@ -216,7 +217,8 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
         EmbeddingIndex::Create(&filesystem_, embedding_index_working_path_,
-                               &fake_clock_, feature_flags_.get()));
+                               &fake_clock_, feature_flags_.get(),
+                               /*num_shards=*/32));
   }
 
   void TearDown() override {
@@ -246,13 +248,11 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
 
 TEST_F(EmbeddingIndexingHandlerTest, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(EmbeddingIndexingHandler::Create(/*clock=*/nullptr,
-                                               embedding_index_.get(),
-                                               /*enable_embedding_index=*/true),
+                                               embedding_index_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   EXPECT_THAT(EmbeddingIndexingHandler::Create(&fake_clock_,
-                                               /*embedding_index=*/nullptr,
-                                               /*enable_embedding_index=*/true),
+                                               /*embedding_index=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
@@ -274,6 +274,9 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
           .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
                              CreateVector("model", {1.1, 1.2, 1.3}))
           .Build();
+  uint32_t shard_id = embedding_index_->GetShardId(
+      /*dimension=*/3, /*model_signature=*/"model",
+      /*schema_name=*/kFakeType);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(
@@ -290,8 +293,7 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
   // Handle document.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
-                                       /*enable_embedding_index=*/true));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
   EXPECT_THAT(handler->Handle(
                   tokenized_document, document_id, put_result.old_document_id,
                   /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
@@ -317,71 +319,27 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
               IsOkAndHolds(ElementsAre(hit1, hit2, quantized_hit1,
                                        quantized_hit2, hit3)));
   // Check unquantized embedding data
-  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
               ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.2, 0.3));
   // Check quantized embedding data
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(shard_id),
               Eq(6 + 2 * sizeof(Quantizer)));
   EXPECT_THAT(
-      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
-                                                     quantized_hit1,
-                                                     /*dimension=*/3),
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(
+          embedding_index_.get(), quantized_hit1,
+          /*dimension=*/3, /*model_signature=*/"model",
+          /*schema_name=*/kFakeType),
       IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.1, 0.2, 0.3})));
   EXPECT_THAT(
-      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
-                                                     quantized_hit2,
-                                                     /*dimension=*/3),
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(
+          embedding_index_.get(), quantized_hit2,
+          /*dimension=*/3, /*model_signature=*/"model",
+          /*schema_name=*/kFakeType),
       IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.4, 0.5, 0.6})));
 
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id));
 }
 
-TEST_F(EmbeddingIndexingHandlerTest, EmbeddingShouldNotBeIndexedIfDisabled) {
-  DocumentProto document =
-      DocumentBuilder()
-          .SetKey("icing", "fake_type/1")
-          .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kPropertyTitle), "title")
-          .AddVectorProperty(std::string(kPropertyTitleEmbedding),
-                             CreateVector("model", {0.1, 0.2, 0.3}))
-          .AddStringProperty(std::string(kPropertyBody), "body")
-          .AddVectorProperty(std::string(kPropertyBodyEmbedding),
-                             CreateVector("model", {0.4, 0.5, 0.6}),
-                             CreateVector("model", {0.7, 0.8, 0.9}))
-          .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
-                             CreateVector("model", {1.1, 1.2, 1.3}))
-          .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(
-          schema_store_.get(), lang_segmenter_.get(),
-          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
-          std::move(document)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document_wrapper()));
-  DocumentId document_id = put_result.new_document_id;
-
-  ASSERT_THAT(embedding_index_->last_added_document_id(),
-              Eq(kInvalidDocumentId));
-  // If enable_embedding_index is false, the handler should not index any
-  // embeddings.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
-                                       /*enable_embedding_index=*/false));
-  EXPECT_THAT(handler->Handle(
-                  tokenized_document, document_id, put_result.old_document_id,
-                  /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
-              IsOk());
-
-  // Check that the embedding index is empty.
-  EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
-                                        /*model_signature=*/"model"),
-              IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
-  EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id));
-}
 
 TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
   DocumentProto document =
@@ -410,6 +368,9 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
           .AddVectorProperty(std::string(kPropertyFullDocEmbedding),
                              CreateVector("model", {2.1, 2.2, 2.3}))
           .Build();
+  uint32_t shard_id = embedding_index_->GetShardId(
+      /*dimension=*/3, /*model_signature=*/"model",
+      /*schema_name=*/kFakeCollectionType);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(
@@ -426,8 +387,7 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
   // Handle document.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
-                                       /*enable_embedding_index=*/true));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
   EXPECT_THAT(handler->Handle(
                   tokenized_document, document_id, put_result.old_document_id,
                   /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
@@ -456,20 +416,22 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
                                        quantized_hit2, hit3, hit4)));
   // Check unquantized embedding data
   EXPECT_THAT(
-      GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+      GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
       ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.2, 0.3, 2.1, 2.2, 2.3));
   // Check quantized embedding data
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(),
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(shard_id),
               Eq(6 + 2 * sizeof(Quantizer)));
   EXPECT_THAT(
-      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
-                                                     quantized_hit1,
-                                                     /*dimension=*/3),
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(
+          embedding_index_.get(), quantized_hit1,
+          /*dimension=*/3, /*model_signature=*/"model",
+          /*schema_name=*/kFakeCollectionType),
       IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.1, 0.2, 0.3})));
   EXPECT_THAT(
-      GetAndRestoreQuantizedEmbeddingVectorFromIndex(embedding_index_.get(),
-                                                     quantized_hit2,
-                                                     /*dimension=*/3),
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(
+          embedding_index_.get(), quantized_hit2,
+          /*dimension=*/3, /*model_signature=*/"model",
+          /*schema_name=*/kFakeCollectionType),
       IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.4, 0.5, 0.6})));
 
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id));
@@ -491,6 +453,9 @@ TEST_F(EmbeddingIndexingHandlerTest,
           .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
                              CreateVector("model", {1.1, 1.2, 1.3}))
           .Build();
+  uint32_t shard_id = embedding_index_->GetShardId(
+      /*dimension=*/3, /*model_signature=*/"model",
+      /*schema_name=*/kFakeType);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(
@@ -506,8 +471,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
-                                       /*enable_embedding_index=*/true));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
 
   // Handling document with kInvalidDocumentId should cause a failure, and both
   // index data and last_added_document_id should remain unchanged.
@@ -523,7 +487,8 @@ TEST_F(EmbeddingIndexingHandlerTest,
                                         /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
   EXPECT_TRUE(embedding_index_->is_empty());
-  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
+              IsEmpty());
 
   // Recovery mode should get the same result.
   EXPECT_THAT(
@@ -538,7 +503,8 @@ TEST_F(EmbeddingIndexingHandlerTest,
                                         /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
   EXPECT_TRUE(embedding_index_->is_empty());
-  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
+              IsEmpty());
 }
 
 TEST_F(EmbeddingIndexingHandlerTest,
@@ -557,6 +523,9 @@ TEST_F(EmbeddingIndexingHandlerTest,
           .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
                              CreateVector("model", {1.1, 1.2, 1.3}))
           .Build();
+  uint32_t shard_id = embedding_index_->GetShardId(
+      /*dimension=*/3, /*model_signature=*/"model",
+      /*schema_name=*/kFakeType);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(
@@ -570,8 +539,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
-                                       /*enable_embedding_index=*/true));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
 
   // Handling document with document_id == last_added_document_id should cause a
   // failure, and both index data and last_added_document_id should remain
@@ -589,7 +557,8 @@ TEST_F(EmbeddingIndexingHandlerTest,
                                         /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
   EXPECT_TRUE(embedding_index_->is_empty());
-  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
+              IsEmpty());
 
   // Handling document with document_id < last_added_document_id should cause a
   // failure, and both index data and last_added_document_id should remain
@@ -607,7 +576,8 @@ TEST_F(EmbeddingIndexingHandlerTest,
                                         /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
   EXPECT_TRUE(embedding_index_->is_empty());
-  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()), IsEmpty());
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
+              IsEmpty());
 }
 
 TEST_F(EmbeddingIndexingHandlerTest,
@@ -640,6 +610,9 @@ TEST_F(EmbeddingIndexingHandlerTest,
           .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
                              CreateVector("model", {11.1, 11.2, 11.3}))
           .Build();
+  uint32_t shard_id = embedding_index_->GetShardId(
+      /*dimension=*/3, /*model_signature=*/"model",
+      /*schema_name=*/kFakeType);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document1,
       TokenizedDocument::Create(
@@ -663,8 +636,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
-                                       /*enable_embedding_index=*/true));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
 
   // Handle document with document_id > last_added_document_id in recovery mode.
   // The handler should index this document and update last_added_document_id.
@@ -686,7 +658,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
                        /*location=*/3),
           EmbeddingHit(BasicHit(kSectionIdTitleEmbedding, /*document_id=*/0),
                        /*location=*/6))));
-  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
               ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.2, 0.3));
 
   // Handle document with document_id == last_added_document_id in recovery
@@ -713,7 +685,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
                        /*location=*/3),
           EmbeddingHit(BasicHit(kSectionIdTitleEmbedding, /*document_id=*/0),
                        /*location=*/6))));
-  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
               ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.2, 0.3));
 
   // Handle document with document_id < last_added_document_id in recovery mode.
@@ -739,7 +711,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
                        /*location=*/3),
           EmbeddingHit(BasicHit(kSectionIdTitleEmbedding, /*document_id=*/0),
                        /*location=*/6))));
-  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get()),
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
               ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.2, 0.3));
 }
 
