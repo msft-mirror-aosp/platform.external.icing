@@ -36,6 +36,7 @@
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/embed/embedding-hit.h"
+#include "icing/index/embed/embedding-reference.h"
 #include "icing/index/embed/embedding-scorer.h"
 #include "icing/index/embed/posting-list-embedding-hit-accessor.h"
 #include "icing/index/embed/quantizer.h"
@@ -359,42 +360,62 @@ EmbeddingIndex::GetAccessor(uint32_t dimension,
 }
 
 libtextclassifier3::StatusOr<uint32_t> EmbeddingIndex::AppendEmbeddingVector(
-    const PropertyProto::VectorProto& vector,
-    EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
+    const EmbeddingReference& embedding, uint32_t dimension,
     uint32_t shard_id) {
-  uint32_t dimension = vector.values().size();
+  ICING_RETURN_IF_ERROR(embedding.Validate());
+  if (dimension == 0) {
+    return absl_ports::InvalidArgumentError("Dimension is 0");
+  }
+  if (dimension > std::numeric_limits<int32_t>::max() - sizeof(Quantizer)) {
+    return absl_ports::InvalidArgumentError(
+        "Dimension is too large and exceeds maximum supported size.");
+  }
+
   uint32_t location;
-  if (!feature_flags_->enable_embedding_quantization() ||
-      quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
+  if (embedding.float_vector != nullptr) {
     ICING_ASSIGN_OR_RETURN(FileBackedVector<float> * fbv_ptr,
                            GetOrCreateEmbeddingVector(shard_id));
     location = fbv_ptr->num_elements();
     ICING_ASSIGN_OR_RETURN(
         FileBackedVector<float>::MutableArrayView mutable_arr,
-        fbv_ptr->Allocate(dimension));
-    mutable_arr.SetArray(/*idx=*/0, vector.values().data(), dimension);
+        fbv_ptr->Allocate(static_cast<int32_t>(dimension)));
+    mutable_arr.SetArray(/*idx=*/0, embedding.float_vector,
+                         static_cast<int32_t>(dimension));
   } else {
     ICING_ASSIGN_OR_RETURN(FileBackedVector<char> * fbv_ptr,
                            GetOrCreateQuantizedEmbeddingVector(shard_id));
-    ICING_ASSIGN_OR_RETURN(Quantizer quantizer, CreateQuantizer(vector));
-    // Quantize the vector
-    std::vector<uint8_t> quantized_values;
-    quantized_values.reserve(vector.values().size());
-    for (float value : vector.values()) {
-      quantized_values.push_back(quantizer.Quantize(value));
-    }
-
-    // Store the quantizer and the quantized vector
     location = fbv_ptr->num_elements();
-    ICING_ASSIGN_OR_RETURN(FileBackedVector<char>::MutableArrayView mutable_arr,
-                           fbv_ptr->Allocate(sizeof(Quantizer) + dimension));
-    mutable_arr.SetArray(/*idx=*/0, reinterpret_cast<char*>(&quantizer),
-                         sizeof(Quantizer));
-    mutable_arr.SetArray(/*idx=*/sizeof(Quantizer),
-                         reinterpret_cast<char*>(quantized_values.data()),
-                         dimension);
+    ICING_ASSIGN_OR_RETURN(
+        FileBackedVector<char>::MutableArrayView mutable_arr,
+        fbv_ptr->Allocate(static_cast<int32_t>(sizeof(Quantizer) + dimension)));
+    mutable_arr.SetArray(/*idx=*/0, embedding.quantized_vector,
+                         static_cast<int32_t>(sizeof(Quantizer) + dimension));
   }
   return location;
+}
+
+libtextclassifier3::StatusOr<uint32_t> EmbeddingIndex::AppendEmbeddingVector(
+    const PropertyProto::VectorProto& vector,
+    EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
+    uint32_t shard_id) {
+  uint32_t dimension = vector.values().size();
+  EmbeddingReference reference;
+  std::vector<char> quantized_data;
+  if (quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
+    reference.float_vector = vector.values().data();
+  } else {
+    ICING_ASSIGN_OR_RETURN(Quantizer quantizer, CreateQuantizer(vector));
+    quantized_data.resize(sizeof(Quantizer) + dimension);
+    memcpy(quantized_data.data(), &quantizer, sizeof(Quantizer));
+    // Quantize the vector
+    uint8_t* quantized_values =
+        reinterpret_cast<uint8_t*>(quantized_data.data() + sizeof(Quantizer));
+    for (int i = 0; i < dimension; ++i) {
+      quantized_values[i] = quantizer.Quantize(vector.values(i));
+    }
+    reference.quantized_vector = quantized_data.data();
+  }
+  return AppendEmbeddingVector(reference, dimension, shard_id);
 }
 
 libtextclassifier3::Status EmbeddingIndex::BufferEmbedding(
@@ -485,35 +506,16 @@ libtextclassifier3::StatusOr<uint32_t> EmbeddingIndex::TransferEmbeddingVector(
     const EmbeddingHit& old_hit, uint32_t dimension,
     EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
     uint32_t shard_id, EmbeddingIndex* new_index) const {
-  uint32_t new_location;
-  if (!feature_flags_->enable_embedding_quantization() ||
-      quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
-    ICING_ASSIGN_OR_RETURN(const float* old_vector,
+  EmbeddingReference embedding;
+  if (quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
+    ICING_ASSIGN_OR_RETURN(embedding.float_vector,
                            GetEmbeddingVector(old_hit, dimension, shard_id));
-
-    // Copy the embedding vector of the hit to the new index.
-    ICING_ASSIGN_OR_RETURN(FileBackedVector<float> * fbv_ptr,
-                           new_index->GetOrCreateEmbeddingVector(shard_id));
-    new_location = fbv_ptr->num_elements();
-    ICING_ASSIGN_OR_RETURN(
-        FileBackedVector<float>::MutableArrayView mutable_arr,
-        fbv_ptr->Allocate(dimension));
-    mutable_arr.SetArray(/*idx=*/0, old_vector, dimension);
   } else {
     ICING_ASSIGN_OR_RETURN(
-        const char* old_data,
+        embedding.quantized_vector,
         GetQuantizedEmbeddingVector(old_hit, dimension, shard_id));
-
-    // Copy the embedding vector of the hit to the new index.
-    ICING_ASSIGN_OR_RETURN(
-        FileBackedVector<char> * fbv_ptr,
-        new_index->GetOrCreateQuantizedEmbeddingVector(shard_id));
-    new_location = fbv_ptr->num_elements();
-    ICING_ASSIGN_OR_RETURN(FileBackedVector<char>::MutableArrayView mutable_arr,
-                           fbv_ptr->Allocate(sizeof(Quantizer) + dimension));
-    mutable_arr.SetArray(/*idx=*/0, old_data, sizeof(Quantizer) + dimension);
   }
-  return new_location;
+  return new_index->AppendEmbeddingVector(embedding, dimension, shard_id);
 }
 
 libtextclassifier3::Status EmbeddingIndex::TransferIndex(
@@ -708,20 +710,13 @@ EmbeddingIndex::EmbeddingHitAccessor::ScoreEmbeddingHit(
       embedding_index_.GetShardId(posting_list_key_hash_, schema_name_hash);
   int dimension = query.values().size();
   float semantic_score;
-  if (!embedding_index_.feature_flags_->enable_embedding_quantization() ||
-      quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
+  if (quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
     ICING_ASSIGN_OR_RETURN(
         const float* vector,
         embedding_index_.GetEmbeddingVector(hit, dimension, shard_id));
-    if (embedding_index_.feature_flags_->enable_eigen_embedding_scoring()) {
-      semantic_score = scorer.EigenScore(dimension,
-                                         /*v1=*/query.values().data(),
-                                         /*v2=*/vector);
-    } else {
-      semantic_score = scorer.Score(dimension,
-                                    /*v1=*/query.values().data(),
-                                    /*v2=*/vector);
-    }
+    semantic_score = scorer.EigenScore(dimension,
+                                       /*v1=*/query.values().data(),
+                                       /*v2=*/vector);
     ++embedding_stats_.num_unquantized_embeddings_scored;
     embedding_stats_.unquantized_shards_read.insert(shard_id);
     embedding_stats_.num_embedding_bytes_read +=
@@ -733,15 +728,9 @@ EmbeddingIndex::EmbeddingHitAccessor::ScoreEmbeddingHit(
     Quantizer quantizer(data);
     const uint8_t* quantized_vector =
         reinterpret_cast<const uint8_t*>(data + sizeof(Quantizer));
-    if (embedding_index_.feature_flags_->enable_eigen_embedding_scoring()) {
-      semantic_score = scorer.EigenScore(dimension,
-                                         /*v1=*/query.values().data(),
-                                         /*v2=*/quantized_vector, quantizer);
-    } else {
-      semantic_score = scorer.Score(dimension,
-                                    /*v1=*/query.values().data(),
-                                    /*v2=*/quantized_vector, quantizer);
-    }
+    semantic_score = scorer.EigenScore(dimension,
+                                       /*v1=*/query.values().data(),
+                                       /*v2=*/quantized_vector, quantizer);
     ++embedding_stats_.num_quantized_embeddings_scored;
     embedding_stats_.quantized_shards_read.insert(shard_id);
     embedding_stats_.num_embedding_bytes_read +=

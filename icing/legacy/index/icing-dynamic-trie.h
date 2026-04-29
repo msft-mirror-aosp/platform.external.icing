@@ -265,10 +265,10 @@ class IcingDynamicTrie : public IIcingStorage {
   // Returns true if successfully created all files or files already
   // exist. Does not do a complete sanity check for when files seem to
   // exist. Cleans up files if creation fails midstream.
-  bool CreateIfNotExist(const Options &options);
+  libtextclassifier3::Status CreateIfNotExist(const Options& options);
 
   bool UpgradeTo(int new_version) override { return true; }
-  bool Init() override;
+  libtextclassifier3::Status Init() override;
   void Close() override;
   bool Remove() override;
   uint64_t GetDiskUsage() const override;
@@ -295,7 +295,7 @@ class IcingDynamicTrie : public IIcingStorage {
                 std::vector<std::string> *keys) const;
 
   // Empty out the trie without closing or removing.
-  void Clear();
+  libtextclassifier3::Status Clear();
 
   // Clears the suffix and value at the given index. Returns OK on success.
   libtextclassifier3::Status ClearSuffixAndValue(uint32_t suffix_value_index);
@@ -308,10 +308,10 @@ class IcingDynamicTrie : public IIcingStorage {
   libtextclassifier3::Status SortNextArray(const Node *node);
 
   // Sync to disk.
-  bool Sync() override;
+  libtextclassifier3::Status Sync() override;
 
   // Tell kernel we will access the memory shortly.
-  void Warm() const;
+  libtextclassifier3::Status Warm() const;
 
   // Insert value at key. If key already exists and replace == true,
   // replaces old value with value. We take a copy of value.
@@ -613,7 +613,7 @@ class IcingDynamicTrie : public IIcingStorage {
   friend class IcingDynamicTrieTest_SyncErrorRecovery_Test;
   friend class IcingDynamicTrieTest_BitmapsClosedWhenInitFails_Test;
   void GetHeader(IcingDynamicTrieHeader *hdr) const;
-  void SetHeader(const IcingDynamicTrieHeader &new_hdr);
+  libtextclassifier3::Status SetHeader(const IcingDynamicTrieHeader& new_hdr);
 
   static const uint32_t kInvalidSuffixIndex;
 
@@ -645,7 +645,7 @@ class IcingDynamicTrie : public IIcingStorage {
 
   // For value properties.  This truncates the data by clearing it, but leaving
   // the storage intact.
-  bool InitPropertyBitmaps();
+  libtextclassifier3::Status InitPropertyBitmaps();
 
   // Returns a pointer to a bitmap that is successfully opened.
   static std::unique_ptr<IcingFlashBitmap> OpenAndInitBitmap(
