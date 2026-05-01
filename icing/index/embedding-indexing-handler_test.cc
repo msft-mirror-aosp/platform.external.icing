@@ -274,9 +274,9 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
           .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
                              CreateVector("model", {1.1, 1.2, 1.3}))
           .Build();
-  uint32_t shard_id = embedding_index_->GetShardId(
-      /*dimension=*/3, /*model_signature=*/"model",
-      /*schema_name=*/kFakeType);
+  uint32_t shard_id = GetShardId(embedding_index_.get(),
+                                 /*dimension=*/3, /*model_signature=*/"model",
+                                 /*schema_name=*/kFakeType);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(
@@ -368,9 +368,9 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
           .AddVectorProperty(std::string(kPropertyFullDocEmbedding),
                              CreateVector("model", {2.1, 2.2, 2.3}))
           .Build();
-  uint32_t shard_id = embedding_index_->GetShardId(
-      /*dimension=*/3, /*model_signature=*/"model",
-      /*schema_name=*/kFakeCollectionType);
+  uint32_t shard_id = GetShardId(embedding_index_.get(),
+                                 /*dimension=*/3, /*model_signature=*/"model",
+                                 /*schema_name=*/kFakeCollectionType);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(
@@ -453,9 +453,9 @@ TEST_F(EmbeddingIndexingHandlerTest,
           .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
                              CreateVector("model", {1.1, 1.2, 1.3}))
           .Build();
-  uint32_t shard_id = embedding_index_->GetShardId(
-      /*dimension=*/3, /*model_signature=*/"model",
-      /*schema_name=*/kFakeType);
+  uint32_t shard_id = GetShardId(embedding_index_.get(),
+                                 /*dimension=*/3, /*model_signature=*/"model",
+                                 /*schema_name=*/kFakeType);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(
@@ -523,9 +523,9 @@ TEST_F(EmbeddingIndexingHandlerTest,
           .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
                              CreateVector("model", {1.1, 1.2, 1.3}))
           .Build();
-  uint32_t shard_id = embedding_index_->GetShardId(
-      /*dimension=*/3, /*model_signature=*/"model",
-      /*schema_name=*/kFakeType);
+  uint32_t shard_id = GetShardId(embedding_index_.get(),
+                                 /*dimension=*/3, /*model_signature=*/"model",
+                                 /*schema_name=*/kFakeType);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(
@@ -610,9 +610,9 @@ TEST_F(EmbeddingIndexingHandlerTest,
           .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
                              CreateVector("model", {11.1, 11.2, 11.3}))
           .Build();
-  uint32_t shard_id = embedding_index_->GetShardId(
-      /*dimension=*/3, /*model_signature=*/"model",
-      /*schema_name=*/kFakeType);
+  uint32_t shard_id = GetShardId(embedding_index_.get(),
+                                 /*dimension=*/3, /*model_signature=*/"model",
+                                 /*schema_name=*/kFakeType);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document1,
       TokenizedDocument::Create(

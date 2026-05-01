@@ -31,6 +31,7 @@
 #include "icing/schema/schema-store.h"
 #include "icing/schema/schema-util.h"
 #include "icing/store/document-filter-data.h"
+#include "icing/util/embedding-util.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
@@ -149,6 +150,15 @@ libtextclassifier3::Status DocumentValidator::Validate(
               "Property '", property.name(),
               "' contains empty vectors for key: (", document.namespace_(),
               ", ", document.uri(), ")."));
+        }
+        if (vector_value.model_signature().find(
+                embedding_util::kIvfPostingListKeySeparator) !=
+            std::string::npos) {
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Property '", property.name(),
+              "' contains model_signature with invalid "
+              "kIvfPostingListKeySeparator for key: (",
+              document.namespace_(), ", ", document.uri(), ")."));
         }
       }
     } else if (property_config.data_type() ==

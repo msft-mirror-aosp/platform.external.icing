@@ -49,6 +49,7 @@
 #include "icing/store/key-mapper.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
+#include "icing/util/embedding-util.h"
 #include "icing/util/encode-util.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
@@ -65,10 +66,6 @@ constexpr uint32_t kEmbeddingHitListMapperMaxSize = 128 * 1024 * 1024;
 #else
 constexpr uint32_t kEmbeddingHitListMapperMaxSize = 64 * 1024 * 1024;
 #endif
-
-// The maximum length returned by encode_util::EncodeIntToCString is 5 for
-// uint32_t.
-constexpr uint32_t kEncodedDimensionLength = 5;
 
 constexpr uint32_t kInvalidShardId = std::numeric_limits<uint32_t>::max();
 
@@ -108,31 +105,6 @@ std::string GetQuantizedEmbeddingVectorsFilePath(std::string_view working_path,
       shard_id, num_shards);
 }
 
-// An injective function that maps the ordered pair (dimension, model_signature)
-// to a string, which is used to form a key for embedding_posting_list_mapper_.
-std::string GetPostingListKey(uint32_t dimension,
-                              std::string_view model_signature) {
-  std::string encoded_dimension_str =
-      encode_util::EncodeIntToCString(dimension);
-  // Make encoded_dimension_str to fixed kEncodedDimensionLength bytes.
-  while (encoded_dimension_str.size() < kEncodedDimensionLength) {
-    // C string cannot contain 0 bytes, so we append it using 1, just like what
-    // we do in encode_util::EncodeIntToCString.
-    //
-    // The reason that this works is because DecodeIntToString decodes a byte
-    // value of 0x01 as 0x00. When EncodeIntToCString returns an encoded
-    // dimension that is less than 5 bytes, it means that the dimension contains
-    // unencoded leading 0x00. So here we're explicitly encoding those bytes as
-    // 0x01.
-    encoded_dimension_str.push_back(1);
-  }
-  return absl_ports::StrCat(encoded_dimension_str, model_signature);
-}
-
-std::string GetPostingListKey(const PropertyProto::VectorProto& vector) {
-  return GetPostingListKey(vector.values().size(), vector.model_signature());
-}
-
 libtextclassifier3::StatusOr<Quantizer> CreateQuantizer(
     const PropertyProto::VectorProto& vector) {
   if (vector.values().empty()) {
@@ -144,14 +116,6 @@ libtextclassifier3::StatusOr<Quantizer> CreateQuantizer(
 }
 
 }  // namespace
-
-uint32_t EmbeddingIndex::GetShardId(uint32_t dimension,
-                                    std::string_view model_signature,
-                                    std::string_view schema_name) const {
-  return GetShardId(
-      GetPostingListKeyHash(GetPostingListKey(dimension, model_signature)),
-      SchemaStore::GetSchemaNameHash(schema_name));
-}
 
 libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingIndex>>
 EmbeddingIndex::Create(const Filesystem* filesystem, std::string working_path,
@@ -347,7 +311,8 @@ EmbeddingIndex::GetAccessor(uint32_t dimension,
     return absl_ports::NotFoundError("EmbeddingIndex is empty");
   }
 
-  std::string key = GetPostingListKey(dimension, model_signature);
+  std::string key =
+      embedding_util::GetPostingListKey(dimension, model_signature);
   ICING_ASSIGN_OR_RETURN(PostingListIdentifier posting_list_id,
                          embedding_posting_list_mapper_->Get(key));
   ICING_ASSIGN_OR_RETURN(
@@ -427,8 +392,8 @@ libtextclassifier3::Status EmbeddingIndex::BufferEmbedding(
   }
   ICING_RETURN_IF_ERROR(MarkIndexNonEmpty());
 
-  std::string key = GetPostingListKey(vector);
-  uint32_t shard_id = GetShardId(GetPostingListKeyHash(key),
+  std::string key = embedding_util::GetPostingListKey(vector);
+  uint32_t shard_id = GetShardId(embedding_util::GetPostingListKeyHash(key),
                                  SchemaStore::GetSchemaNameHash(schema_name));
   ICING_ASSIGN_OR_RETURN(
       uint32_t location,
@@ -533,12 +498,12 @@ libtextclassifier3::Status EmbeddingIndex::TransferIndex(
     std::string_view key = itr->GetKey();
     // This should never happen unless there is an inconsistency, or the index
     // is corrupted.
-    if (key.size() < kEncodedDimensionLength) {
+    if (key.size() < embedding_util::kEncodedDimensionLength) {
       return absl_ports::InternalError(
           "Got invalid key from embedding posting list mapper.");
     }
-    uint32_t dimension = encode_util::DecodeIntFromCString(
-        std::string_view(key.begin(), kEncodedDimensionLength));
+    ICING_ASSIGN_OR_RETURN(embedding_util::ParsedPostingListKey parsed_key,
+                           embedding_util::ParsePostingListKey(key));
 
     // Transfer hits
     std::vector<EmbeddingHit> new_hits;
@@ -585,7 +550,7 @@ libtextclassifier3::Status EmbeddingIndex::TransferIndex(
           // the shard id here for a new document, since it can have a
           // different schema type.
           if (schema_name_hash_or.ok()) {
-            shard_id = GetShardId(GetPostingListKeyHash(key),
+            shard_id = GetShardId(embedding_util::GetPostingListKeyHash(key),
                                   schema_name_hash_or.ValueOrDie());
           } else {
             shard_id = kInvalidShardId;
@@ -606,8 +571,8 @@ libtextclassifier3::Status EmbeddingIndex::TransferIndex(
 
         ICING_ASSIGN_OR_RETURN(
             uint32_t new_location,
-            TransferEmbeddingVector(old_hit, dimension, quantization_type,
-                                    shard_id, new_index));
+            TransferEmbeddingVector(old_hit, parsed_key.dimension,
+                                    quantization_type, shard_id, new_index));
         new_hits.push_back(EmbeddingHit(
             BasicHit(old_hit.basic_hit().section_id(), new_document_id),
             new_location));

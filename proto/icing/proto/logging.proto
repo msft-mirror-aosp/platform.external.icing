@@ -100,7 +100,7 @@ message IcingDatabaseStablenessProto {
 }
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 25
+// Next tag: 26
 message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -319,6 +319,9 @@ message InitializeStatsProto {
       [packed = true];
   repeated IcingApiCallType.Code after_last_flush_lite_call_types = 24
       [packed = true];
+
+  // The size of Icing's schema proto in bytes.
+  optional int64 schema_proto_byte_size = 25;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().

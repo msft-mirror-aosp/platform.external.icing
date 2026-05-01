@@ -131,7 +131,6 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_document_store_namespace_id_fingerprint(true);
   icing_options.set_enable_schema_database(true);
-  icing_options.set_enable_qualified_id_join_index_v3(true);
   icing_options.set_enable_delete_propagation_from(false);
   return icing_options;
 }
@@ -839,12 +838,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
   // we need to do a recovery proof flush.
   EXPECT_THAT(set_schema_result2.needs_persist_type(),
               Eq(PersistType::RECOVERY_PROOF));
-  // This will trigger join index restoration for JoinIndex V1 and V2.
-  if (options.enable_qualified_id_join_index_v3()) {
-    EXPECT_FALSE(set_schema_result2.has_qualified_id_join_index_restored());
-  } else {
-    EXPECT_TRUE(set_schema_result2.has_qualified_id_join_index_restored());
-  }
+  EXPECT_FALSE(set_schema_result2.has_qualified_id_join_index_restored());
 
   ResultSpecProto result_spec = ResultSpecProto::default_instance();
   result_spec.set_max_joined_children_per_parent_to_return(
@@ -1615,14 +1609,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   // Since a document was deleted, we need to do a recovery proof flush.
   expected_set_schema_result.set_needs_persist_type(
       PersistType::RECOVERY_PROOF);
-  // Deleting db1_schema results in a schema type id reassignment, which would
-  // trigger join index restoration if using join index v1 and v2.
-  if (!options.enable_qualified_id_join_index_v3()) {
-    expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
-    expected_set_schema_result.set_has_term_index_restored(false);
-    expected_set_schema_result.set_has_integer_index_restored(false);
-    expected_set_schema_result.set_has_embedding_index_restored(false);
-  }
+
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Adding new document fails because db1_type is deleted.
@@ -3744,8 +3731,6 @@ TEST_F(
     IcingSearchEngineSchemaTest,
     SetSchemaAddDeletePropagationTriggersIndexRestorationAndRevalidatesDependency) {
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -4752,6 +4737,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaStatsArePopulated) {
   EXPECT_THAT(
       set_schema_result.set_schema_stats().schema_store_set_schema_latency_ms(),
       Eq(1000));
+  EXPECT_GT(set_schema_result.set_schema_stats().schema_proto_byte_size(), 0);
 
   // Put a document to trigger index restoration later.
   DocumentProto message_document =
@@ -4805,6 +4791,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaStatsArePopulated) {
   EXPECT_THAT(set_schema_result.set_schema_stats()
                   .scorable_property_cache_regeneration_latency_ms(),
               Eq(1000));
+  EXPECT_GT(set_schema_result.set_schema_stats().schema_proto_byte_size(), 0);
 
   // Clear schema -- this should trigger and update document store and set
   // latencies for document store update schema
@@ -4822,6 +4809,8 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaStatsArePopulated) {
   EXPECT_THAT(set_schema_result.set_schema_stats()
                   .document_store_optimized_update_schema_latency_ms(),
               Eq(1000));
+  EXPECT_THAT(set_schema_result.set_schema_stats().schema_proto_byte_size(),
+              Eq(0));
 }
 
 }  // namespace

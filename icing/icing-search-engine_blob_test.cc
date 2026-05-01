@@ -90,7 +90,6 @@ class IcingSearchEngineBlobTest : public ::testing::TestWithParam<bool> {
     IcingSearchEngineOptions icing_options;
     icing_options.set_base_dir(GetTestBaseDir());
     icing_options.set_orphan_blob_time_to_live_ms(kBlobInfoTTLMs);
-    icing_options.set_enable_marker_file_for_optimize(true);
     icing_options.set_manage_blob_files(GetParam());
     return icing_options;
   }

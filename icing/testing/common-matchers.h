@@ -337,7 +337,7 @@ MATCHER_P(EqualsJoinedScoredDocumentHit, expected_joined_scored_document_hit,
   return true;
 }
 
-MATCHER_P(EqualsSetSchemaResult, expected, "") {
+MATCHER_P(EqualsSetSchemaResultIgnoringStats, expected, "") {
   const SchemaStore::SetSchemaResult& actual = arg;
 
   if (actual.success == expected.success &&

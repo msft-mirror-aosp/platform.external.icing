@@ -247,6 +247,9 @@ class SchemaStore {
     // needs to be re-generated.
     std::unordered_set<std::string>
         schema_types_scorable_property_inconsistent_by_name;
+
+    // Byte size of the full schema proto written by this SetSchema call.
+    int64_t schema_proto_byte_size = 0;
   };
 
   struct ExpandedTypePropertyMask {
@@ -797,13 +800,14 @@ class SchemaStore {
   //     Or an invalid schema configuration is present.
   libtextclassifier3::Status LoadSchema();
 
+  // Returns the size of the schema proto in bytes.
+  int64_t GetStoredSchemaProtoByteSize() const;
+
   // Resets the schema_file_'s cached FileBackedProto instance if needed.
   //
-  // This is the case if the overlay_schema_file_ is present and
-  // feature_flags_->release_backup_schema_file_if_overlay_present is true.
+  // This is the case if the overlay_schema_file_ is present.
   void ResetSchemaFileIfNeeded() {
-    if (feature_flags_->release_backup_schema_file_if_overlay_present() &&
-        overlay_schema_file_ != nullptr) {
+    if (overlay_schema_file_ != nullptr) {
       ICING_VLOG(2)
           << "Freeing schema store's base schema file's "
              "FileBackedProto instance since overlay_schema_file_ is present.";
@@ -1068,10 +1072,9 @@ class SchemaStore {
 
   // Caches a FileBackedProto instance and the checksum for the schema file.
   //
-  // If the overlay_schema_file_ is present and
-  // feature_flags_->release_backup_schema_file_if_overlay_present is true, then
-  // the cached schema FileBackedProto instance should be released and reloaded
-  // only during mutating SetSchema operations.
+  // If the overlay_schema_file_ is present, then the cached schema
+  // FileBackedProto instance should be released and reloaded only during
+  // mutating SetSchema operations.
   mutable SchemaFileCache schema_file_;
 
   // This schema holds the definition of any schema types that are not
