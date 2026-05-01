@@ -665,6 +665,8 @@ libtextclassifier3::Status SchemaStore::InitializeInternal(
   if (initialize_stats != nullptr) {
     initialize_stats->set_num_schema_types(
         static_cast<int32_t>(type_config_info_cache_.type_config_map().size()));
+    initialize_stats->set_schema_proto_byte_size(
+        GetStoredSchemaProtoByteSize());
   }
   has_schema_successfully_set_ = true;
   ResetSchemaFileIfNeeded();
@@ -886,6 +888,15 @@ SchemaStore::GetFileBackedSchemaProto() const {
   return schema_file_.Read();
 }
 
+int64_t SchemaStore::GetStoredSchemaProtoByteSize() const {
+  libtextclassifier3::StatusOr<const SchemaProto*> schema_proto =
+      GetFileBackedSchemaProto();
+  if (!schema_proto.ok()) {
+    return 0;
+  }
+  return static_cast<int64_t>(schema_proto.ValueOrDie()->ByteSizeLong());
+}
+
 libtextclassifier3::StatusOr<SchemaProto> SchemaStore::GetFullSchemaProto()
     const {
   if (!has_schema_successfully_set_) {
@@ -1062,6 +1073,8 @@ SchemaStore::SetInitialSchemaForDatabase(SchemaProto new_schema,
         full_new_schema,
         GetFullSchemaProtoWithUpdatedDb(std::move(new_schema), database));
   }
+  result.schema_proto_byte_size =
+      static_cast<int64_t>(full_new_schema.ByteSizeLong());
   ICING_RETURN_IF_ERROR(ApplySchemaChange(std::move(full_new_schema)));
   has_schema_successfully_set_ = true;
   ResetSchemaFileIfNeeded();
@@ -1186,6 +1199,8 @@ SchemaStore::SetSchemaWithDatabaseOverride(
   // Step 3: Apply the schema change if success. This updates persisted files
   // and derived data structures.
   if (result.success) {
+    result.schema_proto_byte_size =
+        static_cast<int64_t>(full_new_schema.ByteSizeLong());
     ICING_RETURN_IF_ERROR(ApplySchemaChange(std::move(full_new_schema)));
     has_schema_successfully_set_ = true;
     ResetSchemaFileIfNeeded();

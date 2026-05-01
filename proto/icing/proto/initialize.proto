@@ -94,27 +94,21 @@ message IcingSearchEngineFeatureInfoProto {
   }
 
   // Whether the feature requires the document store to be rebuilt.
-  // The default value is false.
   optional bool needs_document_store_rebuild = 2;
 
   // Whether the feature requires the schema store to be rebuilt.
-  // The default value is false.
   optional bool needs_schema_store_rebuild = 3;
 
   // Whether the feature requires the term index to be rebuilt.
-  // The default value is false.
   optional bool needs_term_index_rebuild = 4;
 
   // Whether the feature requires the integer index to be rebuilt.
-  // The default value is false.
   optional bool needs_integer_index_rebuild = 5;
 
   // Whether the feature requires the qualified id join index to be rebuilt.
-  // The default value is false.
   optional bool needs_qualified_id_join_index_rebuild = 6;
 
   // Whether the feature requires the embedding index to be rebuilt.
-  // The default value is false.
   optional bool needs_embedding_index_rebuild = 7;
 }
 
@@ -232,7 +226,6 @@ message IcingSearchEngineOptions {
   // This is because such a cycle would lead to an infinite number of
   // indexed/joinable properties:
   //
-  // The default value is false.
   optional bool allow_circular_schema_definitions = 8;
 
   // Whether memory map max possible file size for FileBackedVector before
@@ -254,8 +247,9 @@ message IcingSearchEngineOptions {
   // querying time, before the first query after inserting new elements into the
   // HitBuffer.
   //
-  // The default value is true.
-  optional bool lite_index_sort_at_indexing = 12 [default = true];
+  // DEPRECATED: The flag is always treated as true.
+  optional bool lite_index_sort_at_indexing = 12
+      [deprecated = true, default = true];
 
   // Size (in bytes) at which Icing's lite index should sort and merge the
   // HitBuffer's unsorted tail into the sorted head for sorting at indexing
@@ -267,7 +261,8 @@ message IcingSearchEngineOptions {
   optional int32 lite_index_sort_size = 13 [default = 8192];  // 8 KiB
 
   // DEPRECATED: qualified id join index v2 is fully rolled out.
-  optional bool use_new_qualified_id_join_index = 14;
+  optional bool use_new_qualified_id_join_index = 14
+      [deprecated = true, default = true];
 
   // Whether to build the metadata hits used for property existence check, which
   // is required to support the hasProperty function in advanced query.
@@ -275,7 +270,9 @@ message IcingSearchEngineOptions {
 
   // Whether to enable blob store.
   // If set to true, the BlobStore will be created to store and retrieve blobs.
-  optional bool enable_blob_store = 16 [default = true];
+  //
+  // DEPRECATED: The flag is always treated as true.
+  optional bool enable_blob_store = 16 [deprecated = true, default = true];
 
   // The time to live for an orphan blob. If the blob has no reference document
   // for this amount of time, it will be deleted.
@@ -295,24 +292,25 @@ message IcingSearchEngineOptions {
   // rolled out.
   optional bool enable_schema_database = 18;
 
-  // DEPRECATED: The flag is always treated as true.
   // Whether to enable embedding index.
   // If set to false, the EmbeddingIndex will only be created with a header, and
   // embedding properties will not be indexed.
-  // TODO(b/326656531): Change the default value to false when the flag is
-  // propagated from AppSearch.
+  //
+  // DEPRECATED: The flag is always treated as true.
   optional bool enable_embedding_index = 19 [deprecated = true, default = true];
 
   // Feature flag guarding the new scorable properties feature.
   // TODO - b/357105837: Remove this flag once the feature is fully rolled out.
   optional bool enable_scorable_properties = 21;
 
-  // DEPRECATED: The flag is always treated as true.
   // Whether to enable quantization for embedding vectors.
   // If set to false, all embedding vectors will not be quantized. Otherwise,
   // quantization will be controlled by the quantization type specified in the
   // schema.
-  optional bool enable_embedding_quantization = 22 [deprecated = true];
+  //
+  // DEPRECATED: The flag is always treated as true.
+  optional bool enable_embedding_quantization = 22
+      [deprecated = true, default = true];
 
   // Level of blob_info_file_log store compression in blob store ,
   // NO_COMPRESSION = 0, BEST_SPEED = 1, BEST_COMPRESSION = 9
@@ -349,14 +347,18 @@ message IcingSearchEngineOptions {
   // - Otherwise, time since last optimize is calculated using last successful
   //   optimize run time.
   //
-  // The default value is false.
-  optional bool calculate_time_since_last_attempted_optimize = 28;
+  // DEPRECATED: The flag is always treated as true.
+  optional bool calculate_time_since_last_attempted_optimize = 28
+      [deprecated = true, default = true];
 
   // Whether to use qualified id join index v3.
   //
   // If set to true, qualified id join index v3 will be created.
   // Otherwise, qualified id join index v2 will be created.
-  optional bool enable_qualified_id_join_index_v3 = 29;
+  //
+  // DEPRECATED: The flag is always treated as true.
+  optional bool enable_qualified_id_join_index_v3 = 29
+      [deprecated = true, default = true];
 
   // Whether to enable delete propagation PROPAGATE_FROM.
   //
@@ -369,14 +371,20 @@ message IcingSearchEngineOptions {
   // Whether to enable soft index restoration.
   // If set to true, then any error that occurs during index restoration will be
   // ignored, and the failed document will be deleted.
-  optional bool enable_soft_index_restoration = 31;
+  //
+  // DEPRECATED: The flag is always treated as true.
+  optional bool enable_soft_index_restoration = 31
+      [default = true, deprecated = true];
 
   // Whether to enable marker file for optimize API.
   // If set to true, then a general marker file will be created before any
   // optimize operation is performed, and deleted after the operation is
   // completed. This is to ensure that the optimize operation is not interrupted
   // by power loss or crash.
-  optional bool enable_marker_file_for_optimize = 32;
+  //
+  // DEPRECATED: The flag is always treated as true.
+  optional bool enable_marker_file_for_optimize = 32
+      [default = true, deprecated = true];
 
   // Whether to manage blob files.
   // If set to true, then Icing will manage blob files and all APIs will return
@@ -385,9 +393,9 @@ message IcingSearchEngineOptions {
   // caller.
   optional bool manage_blob_files = 33 [default = true];
 
-  // Whether to release the backup schema file instance in the schema-store if
-  // the overlay exists.
-  optional bool release_backup_schema_file_if_overlay_present = 34;
+  // DEPRECATED: The flag is always treated as true.
+  optional bool release_backup_schema_file_if_overlay_present = 34
+      [deprecated = true, default = true];
 
   // Whether to enable strict byte size enforcement on a result page.
   // - If set to true, then ResultRetrieverV2 will not include the next result
@@ -395,7 +403,8 @@ message IcingSearchEngineOptions {
   //   first document).
   // - Otherwise, the page byte size enforcement works as a soft limit, i.e. it
   //   will keep adding documents until exceeding the threshold.
-  optional bool enable_strict_page_byte_size_limit = 35;
+  optional bool enable_strict_page_byte_size_limit = 35
+      [deprecated = true, default = true];
 
   // The threshold in bytes for compressing documents. If a document is larger
   // than or equal to this threshold, it will be compressed based on
@@ -406,11 +415,13 @@ message IcingSearchEngineOptions {
   // If set to false, the default buffer size of 64kb will be used.
   optional bool enable_smaller_decompression_buffer_size = 39;
 
-  // DEPRECATED: The flag is always treated as true.
   // Whether to enable the Eigen library for embedding scoring.
   // If set to true **and** Eigen is compiled in (when ICING_DISABLE_EIGEN is
   // not defined), Eigen will be used for embedding scoring.
-  optional bool enable_eigen_embedding_scoring = 40 [deprecated = true];
+  //
+  // DEPRECATED: The flag is always treated as true.
+  optional bool enable_eigen_embedding_scoring = 40
+      [deprecated = true, default = true];
 
   // Whether to enable passing down filter predicates to child iterators during
   // DocHitInfo retrieval. If set to true, filter predicates may be passed to
@@ -422,11 +433,13 @@ message IcingSearchEngineOptions {
   // PortableFileBackedProtoLog.
   optional bool enable_proto_log_new_header_format = 42;
 
-  // DEPRECATED: The flag is always treated as true.
   // Whether to enable the new embedding iterator DocHitInfoIteratorEmbeddingV2.
   // This new iterator optimizes the access order of the embedding data for
   // sequential reads.
-  optional bool enable_embedding_iterator_v2 = 43 [deprecated = true];
+  //
+  // DEPRECATED: The flag is always treated as true.
+  optional bool enable_embedding_iterator_v2 = 43
+      [deprecated = true, default = true];
 
   // Whether PortableFileBackedProtoLog should retain a decompression buffer
   // that reads can reuse rather than allocating a new one for each read.

@@ -1548,10 +1548,8 @@ TEST(VersionUtilTest,
 }
 
 TEST(VersionUtilTest,
-     IcingSearchEngineOptionsToVersionProto_qualifiedIdJoinIndexV3_enabled) {
+     IcingSearchEngineOptionsToVersionProto_qualifiedIdJoinIndexV3_alwaysEnabled) {
   IcingSearchEngineOptions options;
-  options.set_enable_qualified_id_join_index_v3(true);
-
   IcingSearchEngineVersionProto version_proto;
   AddEnabledFeatures(options, &version_proto);
   EXPECT_THAT(
@@ -1559,20 +1557,6 @@ TEST(VersionUtilTest,
       Contains(Property(&IcingSearchEngineFeatureInfoProto::feature_type,
                         IcingSearchEngineFeatureInfoProto::
                             FEATURE_QUALIFIED_ID_JOIN_INDEX_V3)));
-}
-
-TEST(VersionUtilTest,
-     IcingSearchEngineOptionsToVersionProto_qualifiedIdJoinIndexV3_disabled) {
-  IcingSearchEngineOptions options;
-  options.set_enable_qualified_id_join_index_v3(false);
-
-  IcingSearchEngineVersionProto version_proto;
-  AddEnabledFeatures(options, &version_proto);
-  EXPECT_THAT(
-      version_proto.enabled_features(),
-      Not(Contains(Property(&IcingSearchEngineFeatureInfoProto::feature_type,
-                            IcingSearchEngineFeatureInfoProto::
-                                FEATURE_QUALIFIED_ID_JOIN_INDEX_V3))));
 }
 
 TEST(VersionUtilTest,

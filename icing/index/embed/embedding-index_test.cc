@@ -151,8 +151,8 @@ class EmbeddingIndexTest : public Test {
     ICING_ASSERT_OK(document_store_->Put(document_util::CreateDocumentWrapper(
         DocumentBuilder().SetKey("ns", "uri2").SetSchema("type").Build())));
 
-    default_shard_id_ = embedding_index_->GetShardId(
-        kDefaultDimension, kDefaultModelSignature, kDefaultSchemaName);
+    default_shard_id_ = GetShardId(embedding_index_.get(), kDefaultDimension,
+                                   kDefaultModelSignature, kDefaultSchemaName);
   }
 
   void TearDown() override {
@@ -200,22 +200,22 @@ class EmbeddingIndexTest : public Test {
 TEST_F(EmbeddingIndexTest, GetShardId) {
   // Hardcode some inputs to the GetShardId function, so that we can be aware of
   // any changes to the hashing function.
-  EXPECT_EQ(embedding_index_->GetShardId(768, "model1", "schema1"), 10);
-  EXPECT_EQ(embedding_index_->GetShardId(768, "model1", "schema2"), 4);
-  EXPECT_EQ(embedding_index_->GetShardId(768, "model2", "schema1"), 20);
-  EXPECT_EQ(embedding_index_->GetShardId(768, "model2", "schema2"), 14);
-  EXPECT_EQ(embedding_index_->GetShardId(1024, "model1", "schema1"), 27);
-  EXPECT_EQ(embedding_index_->GetShardId(1024, "model1", "schema2"), 21);
-  EXPECT_EQ(embedding_index_->GetShardId(1024, "model2", "schema1"), 1);
-  EXPECT_EQ(embedding_index_->GetShardId(1024, "model2", "schema2"), 27);
-  EXPECT_EQ(embedding_index_->GetShardId(100, "aa", "bb"), 4);
-  EXPECT_EQ(embedding_index_->GetShardId(100, "bb", "aa"), 20);
-  EXPECT_EQ(embedding_index_->GetShardId(100, "aa", "aa"), 27);
-  EXPECT_EQ(embedding_index_->GetShardId(100, "bb", "bb"), 29);
-  EXPECT_EQ(embedding_index_->GetShardId(100, "aa", "aaa"), 18);
-  EXPECT_EQ(embedding_index_->GetShardId(100, "bb", "bbb"), 11);
-  EXPECT_EQ(embedding_index_->GetShardId(100, "aaa", "aa"), 4);
-  EXPECT_EQ(embedding_index_->GetShardId(100, "bbb", "bb"), 13);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 768, "model1", "schema1"), 10);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 768, "model1", "schema2"), 4);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 768, "model2", "schema1"), 20);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 768, "model2", "schema2"), 14);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 1024, "model1", "schema1"), 27);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 1024, "model1", "schema2"), 21);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 1024, "model2", "schema1"), 1);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 1024, "model2", "schema2"), 27);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 100, "aa", "bb"), 4);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 100, "bb", "aa"), 20);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 100, "aa", "aa"), 27);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 100, "bb", "bb"), 29);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 100, "aa", "aaa"), 18);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 100, "bb", "bbb"), 11);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 100, "aaa", "aa"), 4);
+  EXPECT_EQ(GetShardId(embedding_index_.get(), 100, "bbb", "bb"), 13);
 }
 
 TEST_F(EmbeddingIndexTest, EmptyIndexContainsMetadataOnly) {
@@ -729,16 +729,14 @@ TEST_F(EmbeddingIndexTest, AddEmbeddingsFromDifferentModels) {
   // Check the shard for vector1.
   EXPECT_THAT(GetRawEmbeddingDataFromIndex(
                   embedding_index_.get(),
-                  embedding_index_->GetShardId(/*dimension=*/2,
-                                               /*model_signature=*/"model1",
-                                               kDefaultSchemaName)),
+                  GetShardId(embedding_index_.get(), /*dimension=*/2,
+                             /*model_signature=*/"model1", kDefaultSchemaName)),
               ElementsAre(0.1, 0.2));
   // Check the shard for vector2.
   EXPECT_THAT(GetRawEmbeddingDataFromIndex(
                   embedding_index_.get(),
-                  embedding_index_->GetShardId(/*dimension=*/3,
-                                               /*model_signature=*/"model2",
-                                               kDefaultSchemaName)),
+                  GetShardId(embedding_index_.get(), /*dimension=*/3,
+                             /*model_signature=*/"model2", kDefaultSchemaName)),
               ElementsAre(-0.1, -0.2, -0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
@@ -769,21 +767,21 @@ TEST_F(EmbeddingIndexTest,
                   EmbeddingHit(BasicHit(/*section_id=*/0, /*document_id=*/0),
                                /*location=*/0))));
   // Check the shard for vector1.
-  EXPECT_THAT(
-      GetRawEmbeddingDataFromIndex(
-          embedding_index_.get(),
-          embedding_index_->GetShardId(
-              /*dimension=*/2,
-              /*model_signature=*/kDefaultModelSignature, kDefaultSchemaName)),
-      ElementsAre(0.1, 0.2));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(
+                  embedding_index_.get(),
+                  GetShardId(embedding_index_.get(),
+                             /*dimension=*/2,
+                             /*model_signature=*/kDefaultModelSignature,
+                             kDefaultSchemaName)),
+              ElementsAre(0.1, 0.2));
   // Check the shard for vector2.
-  EXPECT_THAT(
-      GetRawEmbeddingDataFromIndex(
-          embedding_index_.get(),
-          embedding_index_->GetShardId(
-              /*dimension=*/3,
-              /*model_signature=*/kDefaultModelSignature, kDefaultSchemaName)),
-      ElementsAre(-0.1, -0.2, -0.3));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(
+                  embedding_index_.get(),
+                  GetShardId(embedding_index_.get(),
+                             /*dimension=*/3,
+                             /*model_signature=*/kDefaultModelSignature,
+                             kDefaultSchemaName)),
+              ElementsAre(-0.1, -0.2, -0.3));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
 
@@ -1399,10 +1397,12 @@ TEST_F(EmbeddingIndexTest, OptimizeEmbeddingsFromDifferentModels) {
   PropertyProto::VectorProto vector2 = CreateVector("model1", {1, 2});
   PropertyProto::VectorProto vector3 =
       CreateVector("model2", {-0.1, -0.2, -0.3});
-  uint32_t vector1_and_vector2_shard_id = embedding_index_->GetShardId(
-      /*dimension=*/2, "model1", kDefaultSchemaName);
-  uint32_t vector3_shard_id = embedding_index_->GetShardId(
-      /*dimension=*/3, "model2", kDefaultSchemaName);
+  uint32_t vector1_and_vector2_shard_id =
+      GetShardId(embedding_index_.get(),
+                 /*dimension=*/2, "model1", kDefaultSchemaName);
+  uint32_t vector3_shard_id =
+      GetShardId(embedding_index_.get(),
+                 /*dimension=*/3, "model2", kDefaultSchemaName);
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(/*section_id=*/0, /*document_id=*/0), vector1,
       QUANTIZATION_TYPE_NONE, kDefaultSchemaName));
@@ -1494,10 +1494,12 @@ TEST_F(EmbeddingIndexTest,
   PropertyProto::VectorProto vector1 = CreateVector("model1", {0.1, 0.2});
   PropertyProto::VectorProto vector2 =
       CreateVector("model2", {-0.1, -0.2, -0.3});
-  uint32_t vector1_shard_id = embedding_index_->GetShardId(
-      /*dimension=*/2, "model1", kDefaultSchemaName);
-  uint32_t vector2_shard_id = embedding_index_->GetShardId(
-      /*dimension=*/3, "model2", kDefaultSchemaName);
+  uint32_t vector1_shard_id =
+      GetShardId(embedding_index_.get(),
+                 /*dimension=*/2, "model1", kDefaultSchemaName);
+  uint32_t vector2_shard_id =
+      GetShardId(embedding_index_.get(),
+                 /*dimension=*/3, "model2", kDefaultSchemaName);
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(/*section_id=*/0, /*document_id=*/0), vector1,
       QUANTIZATION_TYPE_NONE, kDefaultSchemaName));
@@ -1564,8 +1566,8 @@ TEST_F(EmbeddingIndexTest, ShardFileShouldBeLazilyCreated) {
   std::unordered_set<uint32_t> shard_ids;
   for (int i = 0; i < 5; i++) {
     std::string schema_name = "schema" + std::to_string(i);
-    uint32_t shard_id = embedding_index_->GetShardId(
-        kDefaultDimension, kDefaultModelSignature, schema_name);
+    uint32_t shard_id = GetShardId(embedding_index_.get(), kDefaultDimension,
+                                   kDefaultModelSignature, schema_name);
     shard_ids.insert(shard_id);
 
     // Add a non-quantized embedding, and check if its corresponding shard

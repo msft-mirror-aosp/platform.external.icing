@@ -72,6 +72,9 @@ class MonkeySchemaGenerator {
 
   SchemaTypeConfigProto GenerateType();
 
+  // Adds a duplicate type to the input schema in place.
+  void AddDuplicateType(SchemaProto& schema);
+
   void UpdateType(SchemaTypeConfigProto& type_config,
                   UpdateSchemaResult& result);
 

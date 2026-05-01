@@ -753,7 +753,6 @@ public final class IcingSearchEngineTest {
     IcingSearchEngineOptions options =
         IcingSearchEngineOptions.newBuilder()
             .setBaseDir(tempDir.getCanonicalPath())
-            .setEnableBlobStore(true)
             .build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
     assertStatusOk(icing.initialize().getStatus());
@@ -808,7 +807,6 @@ public final class IcingSearchEngineTest {
     IcingSearchEngineOptions options =
         IcingSearchEngineOptions.newBuilder()
             .setBaseDir(tempDir.getCanonicalPath())
-            .setEnableBlobStore(true)
             .build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
     assertStatusOk(icing.initialize().getStatus());
@@ -854,7 +852,6 @@ public final class IcingSearchEngineTest {
     IcingSearchEngineOptions options =
         IcingSearchEngineOptions.newBuilder()
             .setBaseDir(tempDir.getCanonicalPath())
-            .setEnableBlobStore(true)
             .build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
     assertStatusOk(icing.initialize().getStatus());
@@ -896,7 +893,6 @@ public final class IcingSearchEngineTest {
     IcingSearchEngineOptions options2 =
         IcingSearchEngineOptions.newBuilder()
             .setBaseDir(tempDir.getCanonicalPath())
-            .setEnableBlobStore(true)
             .setManageBlobFiles(false)
             .build();
     IcingSearchEngine icing2 = new IcingSearchEngine(options2);

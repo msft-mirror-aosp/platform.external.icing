@@ -34,6 +34,7 @@
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/embedding-util.h"
 
 namespace icing {
 namespace lib {
@@ -696,6 +697,30 @@ TEST_F(DocumentValidatorTest, ValidateEmbeddingNoSignatureOk) {
           .AddVectorProperty(kPropertyNoteEmbedding, vector)
           .Build();
   ICING_EXPECT_OK(document_validator_->Validate(email));
+}
+
+TEST_F(DocumentValidatorTest, ValidateEmbeddingInvalidSignatureSeparator) {
+  PropertyProto::VectorProto vector;
+  vector.add_values(0.1);
+  vector.add_values(0.2);
+  vector.add_values(0.3);
+  vector.set_model_signature(
+      "my_model" + std::string(embedding_util::kIvfPostingListKeySeparator));
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey(kDefaultNamespace, "email_with_note/1")
+          .SetSchema(kTypeEmailWithNote)
+          .AddStringProperty(kPropertySubject, kDefaultString)
+          .AddStringProperty(kPropertyText, kDefaultString)
+          .AddStringProperty(kPropertyRecipients, kDefaultString,
+                             kDefaultString, kDefaultString)
+          .AddStringProperty(kPropertyNote, kDefaultString)
+          .AddVectorProperty(kPropertyNoteEmbedding, vector)
+          .Build();
+  EXPECT_THAT(document_validator_->Validate(email),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("contains model_signature with invalid "
+                                 "kIvfPostingListKeySeparator")));
 }
 
 }  // namespace
