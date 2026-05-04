@@ -2985,6 +2985,17 @@ TEST_P(SchemaUtilTest, ChangingIndexedVectorPropertiesMakesIndexIncompatible) {
                                .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
+  SchemaProto schema_with_ann_property =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType(kPersonType)
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("Property")
+                                   .SetDataTypeVector(EMBEDDING_INDEXING_ANN)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_index_incompatible.insert(kPersonType);
 
@@ -2998,6 +3009,18 @@ TEST_P(SchemaUtilTest, ChangingIndexedVectorPropertiesMakesIndexIncompatible) {
   // New schema lost an indexed vector property.
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   schema_with_indexed_property, schema_with_unindexed_property,
+                  no_dependents_map, *feature_flags_),
+              Eq(schema_delta));
+
+  // New schema gained a new ANN vector property.
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  schema_with_unindexed_property, schema_with_ann_property,
+                  no_dependents_map, *feature_flags_),
+              Eq(schema_delta));
+
+  // Switch from linear search to ANN.
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  schema_with_indexed_property, schema_with_ann_property,
                   no_dependents_map, *feature_flags_),
               Eq(schema_delta));
 }
@@ -4493,8 +4516,6 @@ TEST_P(SchemaUtilTest,
       GetParam().allow_circular_schema_definitions(),
       /*enable_repeated_field_joins=*/false,
       /*enable_embedding_backup_generation=*/true,
-      /*enable_schema_database=*/true,
-      /*enable_smaller_decompression_buffer_size=*/true,
       /*enable_passing_filter_to_children=*/true,
       /*enable_proto_log_new_header_format=*/true,
       /*enable_reusable_decompression_buffer=*/true,
@@ -4503,7 +4524,6 @@ TEST_P(SchemaUtilTest,
       /*expired_document_purge_threshold_ms=*/0,
       /*enable_non_existent_qualified_id_join=*/true,
       /*enable_skip_set_schema_type_equality_check=*/true,
-      /*enable_embed_query_optimization=*/true,
       /*enable_schema_definition_deduping=*/true);
   SchemaProto schema =
       SchemaBuilder()
@@ -4563,8 +4583,6 @@ TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
       GetParam().allow_circular_schema_definitions(),
       /*enable_repeated_field_joins=*/true,
       /*enable_embedding_backup_generation=*/true,
-      /*enable_schema_database=*/true,
-      /*enable_smaller_decompression_buffer_size=*/true,
       /*enable_passing_filter_to_children=*/true,
       /*enable_proto_log_new_header_format=*/true,
       /*enable_reusable_decompression_buffer=*/true,
@@ -4573,7 +4591,6 @@ TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
       /*expired_document_purge_threshold_ms=*/0,
       /*enable_non_existent_qualified_id_join=*/true,
       /*enable_skip_set_schema_type_equality_check=*/true,
-      /*enable_embed_query_optimization=*/true,
       /*enable_schema_definition_deduping=*/true);
 
   SchemaProto schema =
@@ -5898,8 +5915,6 @@ INSTANTIATE_TEST_SUITE_P(
                         /*enable_circular_schema_definitions=*/false,
                         /*enable_repeated_field_joins=*/true,
                         /*enable_embedding_backup_generation=*/true,
-                        /*enable_schema_database=*/true,
-                        /*enable_smaller_decompression_buffer_size=*/true,
                         /*enable_passing_filter_to_children=*/true,
                         /*enable_proto_log_new_header_format=*/true,
                         /*enable_reusable_decompression_buffer=*/true,
@@ -5908,14 +5923,11 @@ INSTANTIATE_TEST_SUITE_P(
                         /*expired_document_purge_threshold_ms=*/0,
                         /*enable_non_existent_qualified_id_join=*/true,
                         /*enable_skip_set_schema_type_equality_check=*/true,
-                        /*enable_embed_query_optimization=*/true,
                         /*enable_schema_definition_deduping=*/false),
                     FeatureFlags(
                         /*enable_circular_schema_definitions=*/true,
                         /*enable_repeated_field_joins=*/true,
                         /*enable_embedding_backup_generation=*/true,
-                        /*enable_schema_database=*/true,
-                        /*enable_smaller_decompression_buffer_size=*/true,
                         /*enable_passing_filter_to_children=*/true,
                         /*enable_proto_log_new_header_format=*/true,
                         /*enable_reusable_decompression_buffer=*/true,
@@ -5924,7 +5936,6 @@ INSTANTIATE_TEST_SUITE_P(
                         /*expired_document_purge_threshold_ms=*/0,
                         /*enable_non_existent_qualified_id_join=*/true,
                         /*enable_skip_set_schema_type_equality_check=*/true,
-                        /*enable_embed_query_optimization=*/true,
                         /*enable_schema_definition_deduping=*/true)));
 
 struct IsIndexedPropertyTestParam {

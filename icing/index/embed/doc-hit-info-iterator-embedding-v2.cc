@@ -50,6 +50,7 @@ DocHitInfoIteratorEmbeddingV2::Create(
     std::vector<double>* global_scores,
     std::vector<EmbeddingMatchInfos::EmbeddingMatchSectionInfo>*
         global_section_infos,
+    const std::vector<uint32_t>& cluster_ids,
     const EmbeddingIndex* embedding_index, const DocumentStore* document_store,
     const SchemaStore* schema_store, int64_t current_time_ms) {
   ICING_RETURN_ERROR_IF_NULL(query);
@@ -61,7 +62,8 @@ DocHitInfoIteratorEmbeddingV2::Create(
 
   libtextclassifier3::StatusOr<
       std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor>>
-      embedding_hit_accessor_or = embedding_index->GetAccessorForVector(*query);
+      embedding_hit_accessor_or =
+          embedding_index->GetAccessorForVector(*query, cluster_ids);
   std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor> embedding_hit_accessor;
   if (embedding_hit_accessor_or.ok()) {
     embedding_hit_accessor = std::move(embedding_hit_accessor_or).ValueOrDie();
@@ -73,23 +75,36 @@ DocHitInfoIteratorEmbeddingV2::Create(
     // Otherwise, return the error as is.
     return embedding_hit_accessor_or.status();
   }
+  ICING_ASSIGN_OR_RETURN(int dimension, embedding_util::GetDimension(*query));
+  std::vector<float> query_floats;
+  if (!query->quantized_values().empty()) {
+    query_floats.resize(dimension);
+    embedding_util::Dequantize(query->quantized_values().data(), dimension,
+                               query_floats.data());
+  } else if (!query->values().empty()) {
+    query_floats.assign(query->values().begin(), query->values().end());
+  } else {
+    return absl_ports::InvalidArgumentError("Query vector is empty");
+  }
 
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<EmbeddingScorer> embedding_scorer,
                          EmbeddingScorer::Create(metric_type));
 
   return std::unique_ptr<DocHitInfoIteratorEmbeddingV2>(
       new DocHitInfoIteratorEmbeddingV2(
-          query, metric_type, std::move(embedding_scorer), score_low,
-          score_high, info_map, global_scores, global_section_infos,
+          std::move(query_floats), metric_type, std::move(embedding_scorer),
+          score_low, score_high, info_map, global_scores, global_section_infos,
           embedding_index, std::move(embedding_hit_accessor), document_store,
           schema_store, current_time_ms));
 }
 
 libtextclassifier3::Status
 DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
-  ICING_ASSIGN_OR_RETURN(std::vector<EmbeddingHit> embedding_hits,
-                         embedding_hit_accessor_->GetNextHitsBatch());
-  if (embedding_hits.empty()) {
+  ICING_ASSIGN_OR_RETURN(
+      std::vector<EmbeddingIndex::EmbeddingHitAccessor::HitInfo>
+          embedding_hit_infos,
+      embedding_hit_accessor_->GetNextHitsBatch());
+  if (embedding_hit_infos.empty()) {
     no_more_hit_ = true;
   }
 
@@ -97,32 +112,32 @@ DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
   // memory access for embedding data.
   cached_hit_scores_idx_ = 0;
   cached_hit_scores_.clear();
-  cached_hit_scores_.resize(embedding_hits.size());
+  cached_hit_scores_.resize(embedding_hit_infos.size());
   cached_section_id_masks_.clear();
   if (delegate_ != nullptr) {
-    cached_section_id_masks_.resize(embedding_hits.size());
+    cached_section_id_masks_.resize(embedding_hit_infos.size());
   }
 
-  std::vector<int> access_order(embedding_hits.size());
+  std::vector<int> access_order(embedding_hit_infos.size());
   std::iota(access_order.begin(), access_order.end(), 0);
   std::sort(access_order.begin(), access_order.end(),
-            [&embedding_hits](int i, int j) {
-              return embedding_hits[i].location() <
-                     embedding_hits[j].location();
+            [&embedding_hit_infos](int i, int j) {
+              return embedding_hit_infos[i].hit.location() <
+                     embedding_hit_infos[j].hit.location();
             });
   if (delegate_ != nullptr) {
     // Add to access_order and filter any docids that don't match the delegate.
-    for (int i = 0; i < embedding_hits.size(); ++i) {
+    for (int i = 0; i < embedding_hit_infos.size(); ++i) {
       while (delegate_->doc_hit_info().document_id() == kInvalidDocumentId ||
              delegate_->doc_hit_info().document_id() >
-                 embedding_hits[i].basic_hit().document_id()) {
+                 embedding_hit_infos[i].hit.basic_hit().document_id()) {
         if (!delegate_->Advance().ok()) {
           break;
         }
       }
       SectionIdMask section_id_mask = kSectionIdMaskNone;
       if (delegate_->doc_hit_info().document_id() ==
-          embedding_hits[i].basic_hit().document_id()) {
+          embedding_hit_infos[i].hit.basic_hit().document_id()) {
         section_id_mask = delegate_->doc_hit_info().hit_section_ids_mask();
       }
       cached_section_id_masks_[i] = section_id_mask;
@@ -132,9 +147,12 @@ DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
   DocumentId document_id = kInvalidDocumentId;
   SchemaTypeId schema_type_id = kInvalidSchemaTypeId;
   uint32_t schema_name_hash = 0;
+
   SectionIdMask allowed_sections_mask = kSectionIdMaskNone;
   for (int i = 0; i < access_order.size(); ++i) {
-    const EmbeddingHit& embedding_hit = embedding_hits[access_order[i]];
+    const EmbeddingIndex::EmbeddingHitAccessor::HitInfo& hit_info =
+        embedding_hit_infos[access_order[i]];
+    const EmbeddingHit& embedding_hit = hit_info.hit;
     // Update document id, schema type id, and allowed sections mask for the
     // new document.
     if (embedding_hit.basic_hit().document_id() != document_id) {
@@ -183,16 +201,18 @@ DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
     // allowed_sections_mask should be assigned to kSectionIdMaskNone, and the
     // embedding hit should have been skipped above.
     ICING_ASSIGN_OR_RETURN(
-        EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
-        schema_store_.GetQuantizationType(schema_type_id, section_id));
+        const SectionMetadata* section_metadata,
+        schema_store_.GetSectionMetadata(schema_type_id, section_id));
+    bool is_ann = section_metadata->embedding_indexing_type ==
+                  EmbeddingIndexingConfig::EmbeddingIndexingType::ANN;
 
-    // Calculate the semantic score.
-    ICING_ASSIGN_OR_RETURN(float semantic_score,
-                           embedding_hit_accessor_->ScoreEmbeddingHit(
-                               *embedding_scorer_, query_, embedding_hit,
-                               quantization_type, schema_name_hash));
+    ICING_ASSIGN_OR_RETURN(
+        float semantic_score,
+        embedding_hit_accessor_->ScoreEmbeddingHit(
+            *embedding_scorer_, query_floats_, hit_info,
+            section_metadata->quantization_type, schema_name_hash, is_ann));
     cached_hit_scores_[access_order[i]] = {embedding_hit.basic_hit(),
-                                           semantic_score};
+                                           semantic_score, is_ann};
   }
 
   // Remove the embedding hits that are filtered out.
@@ -277,9 +297,16 @@ DocHitInfoIteratorEmbeddingV2::AdvanceToNextUnfilteredDocument() {
           matched_infos->AppendScore(global_scores_, semantic_score));
       if (global_section_infos_ != nullptr) {
         // Add the section info for this embedding match.
+        // For ANN, we can't support retrieving the specific vector position yet
+        // because cluster hits for the same document and property may not be
+        // contiguous in the posting list, thus breaking the sequential
+        // current_section_match_count trick used by snippeting. Therefore, we
+        // use -1 as the position for ANN to indicate that the specific vector
+        // position is not supported.
+        int position =
+            embedding_hit_score->is_ann ? -1 : current_section_match_count;
         ICING_RETURN_IF_ERROR(matched_infos->AppendSectionInfo(
-            *global_section_infos_, current_section_id,
-            current_section_match_count));
+            *global_section_infos_, current_section_id, position));
       }
     }
     ++current_section_match_count;

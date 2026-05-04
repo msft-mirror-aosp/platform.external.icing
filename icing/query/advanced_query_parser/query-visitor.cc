@@ -34,6 +34,7 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
 #include "icing/index/embed/doc-hit-info-iterator-embedding-v2.h"
+#include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
@@ -465,19 +466,33 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
   // Create and return iterator.
   ICING_ASSIGN_OR_RETURN(
       EmbeddingQueryResults::EmbeddingQueryMatchInfoMap * info_map,
-      embedding_query_results_.GetOrCreateMatchInfoMap(vector_index,
-                                                       metric_type));
+      embedding_query_results_.GetOrCreateMatchInfoMap(
+          static_cast<int>(vector_index), metric_type));
+  const PropertyProto::VectorProto& query_vector =
+      search_spec_.embedding_query_vectors(static_cast<int>(vector_index));
   std::unique_ptr<DocHitInfoIterator> iterator;
+  std::vector<uint32_t> cluster_ids;
+  int32_t nprobe = search_spec_.embedding_query_nprobe();
+  if (nprobe > 0) {
+    // Positive nprobe value indicates that IVF search should be performed.
+    ICING_ASSIGN_OR_RETURN(
+        EmbeddingIndex::IvfContextManager ivf_context_manager,
+        EmbeddingIndex::IvfContextManager::Create(query_vector));
+    ICING_ASSIGN_OR_RETURN(cluster_ids,
+                           ivf_context_manager.GetClosestClusterIdsByDistance(
+                               &embedding_index_, query_vector, nprobe));
+    cluster_ids.push_back(embedding_util::kIvfDeltaStoreClusterId);
+  }
+  cluster_ids.push_back(embedding_util::kLinearSearchClusterId);
   ICING_ASSIGN_OR_RETURN(
-      iterator,
-      DocHitInfoIteratorEmbeddingV2::Create(
-          &search_spec_.embedding_query_vectors(vector_index), metric_type, low,
-          high, info_map, embedding_query_results_.global_scores.get(),
-          get_embedding_match_info_
-              ? embedding_query_results_.global_section_infos.get()
-              : nullptr,
-          &embedding_index_, &document_store_, &schema_store_,
-          current_time_ms_));
+      iterator, DocHitInfoIteratorEmbeddingV2::Create(
+                    &query_vector, metric_type, low, high, info_map,
+                    embedding_query_results_.global_scores.get(),
+                    get_embedding_match_info_
+                        ? embedding_query_results_.global_section_infos.get()
+                        : nullptr,
+                    cluster_ids, &embedding_index_, &document_store_,
+                    &schema_store_, current_time_ms_));
   return PendingValue(std::move(iterator));
 }
 
@@ -727,7 +742,7 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::ProcessAndOperator(
       std::vector<std::unique_ptr<DocHitInfoIterator>> iterators,
       PopAllPendingIterators());
   return PendingValue(query_optimization_util::OptimizeAndIteratorsIfPossible(
-      std::move(iterators), feature_flags_));
+      std::move(iterators)));
 }
 
 libtextclassifier3::StatusOr<PendingValue> QueryVisitor::ProcessOrOperator(

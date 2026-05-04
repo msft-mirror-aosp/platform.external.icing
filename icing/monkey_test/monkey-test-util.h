@@ -15,11 +15,17 @@
 #ifndef ICING_MONKEY_TEST_MONKEY_TEST_UTIL_H_
 #define ICING_MONKEY_TEST_MONKEY_TEST_UTIL_H_
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <random>
 #include <utility>
 #include <vector>
+
+#include "icing/index/embed/embedding-scorer.h"
+#include "icing/index/embed/quantizer.h"
+#include "icing/proto/document.pb.h"
+#include "icing/proto/schema.pb.h"
 
 namespace icing {
 namespace lib {
@@ -78,6 +84,13 @@ struct IcingMonkeyTestRunnerConfiguration {
   // The possible dimensions for the randomly generated embedding vectors.
   std::vector<int> possible_vector_dimensions;
 
+  // The possible number of int64 values that may appear in a repeated
+  // int64 property of generated documents.
+  std::vector<int> possible_num_int64s = {5, 10, 25};
+
+  // The range [min, max] of values for randomly generated int64 properties.
+  std::pair<int64_t, int64_t> int64_value_range = {-1000, 1000};
+
   // The possible random spaces for generating qualified ids for join
   // properties. When generating a qualified id:
   // - Pick a random space from this list.
@@ -105,6 +118,49 @@ struct IcingMonkeyTestRunnerConfiguration {
     return !possible_ref_qualified_id_random_spaces.empty();
   }
 };
+
+// REQUIRES: candidate.values() is not empty.
+//
+// TODO(b/491571627): Consider moving this helper function to
+// monkey-semantic-query-node after we switch InMemoryIcingSearchEngine to use
+// the new query node
+inline bool DoesVectorsMatch(
+    EmbeddingScorer* embedding_scorer, double min_score, double max_score,
+    EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
+    const PropertyProto::VectorProto& query,
+    const PropertyProto::VectorProto& candidate) {
+  if (query.model_signature() != candidate.model_signature() ||
+      query.values_size() != candidate.values_size()) {
+    return false;
+  }
+
+  const int dimension = query.values_size();
+  if (dimension == 0) {
+    return min_score <= 0 && 0 <= max_score;
+  }
+  float score;
+  if (quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
+    score = embedding_scorer->EigenScore(dimension, query.values().data(),
+                                         candidate.values().data());
+  } else {
+    // Quantize the candidate vector.
+    // The candidate vector should never be empty, so dereferencing should be
+    // safe.
+    auto minmax_pair = std::minmax_element(candidate.values().begin(),
+                                           candidate.values().end());
+    Quantizer quantizer =
+        Quantizer::Create(*minmax_pair.first, *minmax_pair.second).ValueOrDie();
+    std::vector<uint8_t> quantized_candidate;
+    quantized_candidate.reserve(dimension);
+    for (float value : candidate.values()) {
+      quantized_candidate.push_back(quantizer.Quantize(value));
+    }
+    // Score the quantized candidate against the original query.
+    score = embedding_scorer->EigenScore(dimension, query.values().data(),
+                                         quantized_candidate.data(), quantizer);
+  }
+  return min_score <= score && score <= max_score;
+}
 
 }  // namespace lib
 }  // namespace icing
