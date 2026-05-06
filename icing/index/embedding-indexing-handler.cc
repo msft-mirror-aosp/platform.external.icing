@@ -98,7 +98,8 @@ libtextclassifier3::Status EmbeddingIndexingHandler::Handle(
         ICING_RETURN_IF_ERROR(embedding_index_.BufferEmbedding(
             hit, vector, quantization_type, schema_name));
       } else if (embedding_indexing_type ==
-                 EmbeddingIndexingConfig::EmbeddingIndexingType::ANN) {
+                 EmbeddingIndexingConfig::EmbeddingIndexingType::
+                     APPROXIMATE_NEAREST_NEIGHBOR) {
         ICING_RETURN_IF_ERROR(embedding_index_.BufferEmbeddingIvf(
             hit, vector, quantization_type, schema_name));
       } else {

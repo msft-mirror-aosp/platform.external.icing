@@ -3959,7 +3959,8 @@ TEST_P(QueryVisitorTest, SemanticSearchANNFunctionAllPhases) {
           .AddType(SchemaTypeConfigBuilder().SetType("type").AddProperty(
               PropertyConfigBuilder()
                   .SetName("prop1")
-                  .SetDataTypeVector(EMBEDDING_INDEXING_ANN)
+                  .SetDataTypeVector(
+                      EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR)
                   .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
       /*ignore_errors_and_delete_documents=*/false));
@@ -5557,15 +5558,18 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionCallStats_Ann) {
           .AddType(
               SchemaTypeConfigBuilder()
                   .SetType("type")
-                  .AddProperty(PropertyConfigBuilder()
-                                   .SetName("prop1")
-                                   .SetDataTypeVector(EMBEDDING_INDEXING_ANN)
-                                   .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("prop1")
+                          .SetDataTypeVector(
+                              EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
                   .AddProperty(
                       PropertyConfigBuilder()
                           .SetName("prop2")
-                          .SetDataTypeVector(EMBEDDING_INDEXING_ANN,
-                                             QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                          .SetDataTypeVector(
+                              EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR,
+                              QUANTIZATION_TYPE_QUANTIZE_8_BIT)
                           .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build(),
       /*ignore_errors_and_delete_documents=*/false));
@@ -5848,10 +5852,12 @@ TEST_P(QueryVisitorTest, SemanticSearchFunctionMixedAnnAndLinear) {
           .AddType(
               SchemaTypeConfigBuilder()
                   .SetType("type")
-                  .AddProperty(PropertyConfigBuilder()
-                                   .SetName("annProp")
-                                   .SetDataTypeVector(EMBEDDING_INDEXING_ANN)
-                                   .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("annProp")
+                          .SetDataTypeVector(
+                              EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR)
+                          .SetCardinality(CARDINALITY_OPTIONAL))
                   .AddProperty(
                       PropertyConfigBuilder()
                           .SetName("linearProp")

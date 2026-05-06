@@ -2990,10 +2990,12 @@ TEST_P(SchemaUtilTest, ChangingIndexedVectorPropertiesMakesIndexIncompatible) {
           .AddType(
               SchemaTypeConfigBuilder()
                   .SetType(kPersonType)
-                  .AddProperty(PropertyConfigBuilder()
-                                   .SetName("Property")
-                                   .SetDataTypeVector(EMBEDDING_INDEXING_ANN)
-                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("Property")
+                          .SetDataTypeVector(
+                              EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR)
+                          .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;

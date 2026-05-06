@@ -161,15 +161,17 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
                     .AddProperty(
                         PropertyConfigBuilder()
                             .SetName(kPropertyAnnEmbedding)
-                            .SetDataTypeVector(EmbeddingIndexingConfig::
-                                                   EmbeddingIndexingType::ANN)
+                            .SetDataTypeVector(
+                                EmbeddingIndexingConfig::EmbeddingIndexingType::
+                                    APPROXIMATE_NEAREST_NEIGHBOR)
                             .SetCardinality(CARDINALITY_REPEATED))
                     .AddProperty(
                         PropertyConfigBuilder()
                             .SetName(kPropertyAnnQuantizedEmbedding)
-                            .SetDataTypeVector(EmbeddingIndexingConfig::
-                                                   EmbeddingIndexingType::ANN,
-                                               QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                            .SetDataTypeVector(
+                                EmbeddingIndexingConfig::EmbeddingIndexingType::
+                                    APPROXIMATE_NEAREST_NEIGHBOR,
+                                QUANTIZATION_TYPE_QUANTIZE_8_BIT)
                             .SetCardinality(CARDINALITY_REPEATED))
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kPropertyBody)

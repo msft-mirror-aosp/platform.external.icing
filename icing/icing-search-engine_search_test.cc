@@ -8713,10 +8713,12 @@ TEST_P(IcingSearchEngineEmbeddingSearchTest,
           .AddType(
               SchemaTypeConfigBuilder()
                   .SetType("type")
-                  .AddProperty(PropertyConfigBuilder()
-                                   .SetName("annProp")
-                                   .SetDataTypeVector(EMBEDDING_INDEXING_ANN)
-                                   .SetCardinality(CARDINALITY_REPEATED))
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("annProp")
+                          .SetDataTypeVector(
+                              EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR)
+                          .SetCardinality(CARDINALITY_REPEATED))
                   .AddProperty(
                       PropertyConfigBuilder()
                           .SetName("linearProp")
@@ -8810,7 +8812,8 @@ TEST_P(IcingSearchEngineEmbeddingSearchTest,
           .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
               PropertyConfigBuilder()
                   .SetName("embedding")
-                  .SetDataTypeVector(EMBEDDING_INDEXING_ANN)
+                  .SetDataTypeVector(
+                      EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR)
                   .SetCardinality(CARDINALITY_REPEATED)))
           .Build();
   DocumentProto document0 =

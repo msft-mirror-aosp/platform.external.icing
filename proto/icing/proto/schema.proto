@@ -233,7 +233,7 @@ message EmbeddingIndexingConfig {
 
       // Contents in this property will be indexed for Approximate Nearest
       // Neighbor (ANN) search.
-      ANN = 2;
+      APPROXIMATE_NEAREST_NEIGHBOR = 2;
     }
   }
   optional EmbeddingIndexingType.Code embedding_indexing_type = 1;

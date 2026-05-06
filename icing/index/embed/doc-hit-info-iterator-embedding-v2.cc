@@ -204,7 +204,8 @@ DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
         const SectionMetadata* section_metadata,
         schema_store_.GetSectionMetadata(schema_type_id, section_id));
     bool is_ann = section_metadata->embedding_indexing_type ==
-                  EmbeddingIndexingConfig::EmbeddingIndexingType::ANN;
+                  EmbeddingIndexingConfig::EmbeddingIndexingType::
+                      APPROXIMATE_NEAREST_NEIGHBOR;
 
     ICING_ASSIGN_OR_RETURN(
         float semantic_score,

@@ -156,6 +156,10 @@ class InMemoryIcingSearchEngine {
     EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
         EmbeddingIndexingConfig::QuantizationType::NONE;
 
+    // The numeric match type if the property is of type int64.
+    IntegerIndexingConfig::NumericMatchType::Code numeric_match_type =
+        IntegerIndexingConfig::NumericMatchType::UNKNOWN;
+
     // Whether the property is indexable.
     bool indexable = false;
   };

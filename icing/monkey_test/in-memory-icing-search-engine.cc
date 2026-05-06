@@ -113,6 +113,16 @@ InMemoryIcingSearchEngine::GetPropertyIndexInfo(
                                .indexable = indexable};
     }
 
+    if (prop->data_type() == PropertyConfigProto::DataType::INT64) {
+      IntegerIndexingConfig::NumericMatchType::Code numeric_match_type =
+          prop->integer_indexing_config().numeric_match_type();
+      bool indexable = numeric_match_type !=
+                       IntegerIndexingConfig::NumericMatchType::UNKNOWN;
+      return PropertyIndexInfo{.data_type = prop->data_type(),
+                               .numeric_match_type = numeric_match_type,
+                               .indexable = indexable};
+    }
+
     if (prop->data_type() != PropertyConfigProto::DataType::DOCUMENT) {
       return PropertyIndexInfo{.data_type = prop->data_type()};
     }
