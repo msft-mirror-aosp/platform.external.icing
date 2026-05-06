@@ -30,6 +30,7 @@
 #include "icing/index/embed/embedding-scorer.h"
 #include "icing/index/embed/quantizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/embedding-util.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -59,12 +60,8 @@ void Dequantize(const EmbeddingReference& embedding, std::vector<float>& out,
     std::copy(embedding.float_vector, embedding.float_vector + dimension,
               out.begin());
   } else {
-    Quantizer quantizer(embedding.quantized_vector);
-    const uint8_t* q_vec = reinterpret_cast<const uint8_t*>(
-        embedding.quantized_vector + sizeof(Quantizer));
-    for (int i = 0; i < dimension; ++i) {
-      out[i] = quantizer.Dequantize(q_vec[i]);
-    }
+    embedding_util::Dequantize(embedding.quantized_vector, dimension,
+                               out.data());
   }
 }
 
@@ -155,7 +152,7 @@ MiniBatchKMeans::Compute(const std::vector<EmbeddingReference>& embeddings,
       std::max<double>(expected_iterations, options.min_num_iterations()));
 
   std::unique_ptr<Timer> timer = clock->GetNewTimer();
-  uint32_t actual_iterations = 0;
+  int actual_iterations = 0;
 
   // Pre-allocate memory outside the loop to avoid repeated allocations.
   std::vector<int> mini_batch_indices(options.mini_batch_size());

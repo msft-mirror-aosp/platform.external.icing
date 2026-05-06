@@ -35,7 +35,7 @@ option objc_class_prefix = "ICNG";
 // TODO(cassiewang) Define a sample proto file that can be used by tests and for
 // documentation.
 //
-// Next tag: 11
+// Next tag: 12
 message SchemaTypeConfigProto {
   // REQUIRED: Named type that identifies the structured, logical schema being
   // defined.
@@ -91,6 +91,10 @@ message SchemaTypeConfigProto {
   // List of all account properties that need to be managed. All accounts under
   // this property should be existed in the account manager.
   repeated string account_properties = 9;
+
+  // If true, then this schema type is only ever used as a property of another
+  // type.
+  optional bool is_nested_only = 11;
 
   reserved 2, 3;
 }
@@ -226,6 +230,10 @@ message EmbeddingIndexingConfig {
 
       // Contents in this property will be indexed for linear search.
       LINEAR_SEARCH = 1;
+
+      // Contents in this property will be indexed for Approximate Nearest
+      // Neighbor (ANN) search.
+      APPROXIMATE_NEAREST_NEIGHBOR = 2;
     }
   }
   optional EmbeddingIndexingType.Code embedding_indexing_type = 1;

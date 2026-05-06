@@ -65,6 +65,7 @@
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/performance-configuration.h"
 #include "icing/portable/endian.h"
+#include "icing/proto/ann.pb.h"
 #include "icing/proto/blob.pb.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/document.pb.h"
@@ -124,7 +125,14 @@ namespace {
 
 using ::icing::lib::status_util::TransformStatus;
 
+// Next task ID: 3
 constexpr SimpleTaskScheduler::TaskId kHandleExpiredDocumentsTaskId = 1;
+constexpr SimpleTaskScheduler::TaskId kMaintainAnnIndexTaskId = 2;
+
+// Schedule the ANN index maintenance task 10 minutes after a Put or index
+// rebuild.
+constexpr int64_t kMaintainAnnIndexDelayMs = 600000;
+constexpr int kMaxMaintainAnnIndexRetries = 3;
 
 constexpr std::string_view kDocumentSubfolderName = "document_dir";
 constexpr std::string_view kBlobSubfolderName = "blob_dir";
@@ -587,8 +595,6 @@ IcingSearchEngine::IcingSearchEngine(
       feature_flags_(options_.allow_circular_schema_definitions(),
                      options_.enable_repeated_field_joins(),
                      options_.enable_embedding_backup_generation(),
-                     options_.enable_schema_database(),
-                     options_.enable_smaller_decompression_buffer_size(),
                      options_.enable_passing_filter_to_children(),
                      options_.enable_proto_log_new_header_format(),
                      options_.enable_reusable_decompression_buffer(),
@@ -597,7 +603,6 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.expired_document_purge_threshold_ms(),
                      options_.enable_non_existent_qualified_id_join(),
                      options_.enable_skip_set_schema_type_equality_check(),
-                     options_.enable_embed_query_optimization(),
                      options_.enable_schema_definition_deduping()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
@@ -878,8 +883,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   // Step 1: Perform schema migration if needed. This is a no-op if the schema
   // is fully compatible with the current version.
   bool perform_schema_database_migration =
-      version_util::SchemaDatabaseMigrationRequired(stored_version_proto) &&
-      options_.enable_schema_database();
+      version_util::SchemaDatabaseMigrationRequired(stored_version_proto);
   bool recalculate_schema_properties_digests =
       version_util::ShouldRecalculatePropertiesDigestsForDeduping(
           stored_version_proto) &&
@@ -2029,6 +2033,12 @@ PutResultProto IcingSearchEngine::PutLocked(DocumentProto&& document,
                                     expiration_timestamp_ms);
       }
     }
+    if (task_scheduler_ != nullptr &&
+        task_scheduler_->GetScheduledTimeMs(kMaintainAnnIndexTaskId) < 0) {
+      task_scheduler_->ScheduleAt(kMaintainAnnIndexTaskId,
+                                  CreateMaintainAnnIndexTask(),
+                                  current_time_ms + kMaintainAnnIndexDelayMs);
+    }
   } else if (absl_ports::IsInternal(index_status)) {
     // Getting an internal error from the index could possibly mean that the
     // index is broken. Try to rebuild them to recover.
@@ -2640,6 +2650,35 @@ PersistToDiskResultProto IcingSearchEngine::PersistToDisk(
   return result_proto;
 }
 
+MaintainAnnIndexResultProto IcingSearchEngine::MaintainAnnIndex(
+    const MaintainAnnIndexOptions& options) {
+  ICING_LOG(INFO) << "Maintaining ANN index";
+
+  MaintainAnnIndexResultProto result_proto;
+  StatusProto* result_status = result_proto.mutable_status();
+  std::unique_ptr<Timer> maintain_timer = clock_->GetNewTimer();
+
+  absl_ports::unique_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    return result_proto;
+  }
+  if (embedding_index_ == nullptr) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("Embedding search is not enabled!");
+    return result_proto;
+  }
+  auto iterations_or = embedding_index_->MaintainAllIvf(
+      *document_store_, *schema_store_, options);
+  if (iterations_or.ok()) {
+    result_proto.set_actual_iterations(iterations_or.ValueOrDie());
+  }
+  TransformStatus(iterations_or.status(), result_status);
+  result_proto.set_latency_ms(maintain_timer->GetElapsedMilliseconds());
+  return result_proto;
+}
+
 // Optimizes Icing's storage
 //
 // Steps:
@@ -2761,7 +2800,8 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
         clock_->GetSystemTimeMilliseconds());
     return result_proto;
   }
-  std::unique_ptr<MarkerFile> marker_file = std::move(marker_file_or).ValueOrDie();
+  std::unique_ptr<MarkerFile> marker_file =
+      std::move(marker_file_or).ValueOrDie();
 
   int64_t before_size = filesystem_->GetDiskUsage(options_.base_dir().c_str());
   optimize_stats->set_storage_size_before(
@@ -3201,7 +3241,7 @@ IcingSearchEngine::PersistDerivedDataRecoveryProofLocked(
       static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
 
   overall_timer = clock_->GetNewTimer();
-  index_->UpdateChecksum();
+  ICING_RETURN_IF_ERROR(index_->UpdateChecksum());
   persist_stats->set_index_persist_latency_ms(
       static_cast<int32_t>(overall_timer->GetElapsedMilliseconds()));
 
@@ -4315,8 +4355,8 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
       // This is pretty dire (and, hopefully, unlikely). Log the error and
       // skip it.
       ICING_LOG(WARNING) << "Cannot delete document " << document_id
-                          << " that which failed to index: "
-                          << deleted_metadata_or.status().error_message();
+                         << " that which failed to index: "
+                         << deleted_metadata_or.status().error_message();
     }
   }
 
@@ -4336,6 +4376,15 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
         << propagated_deleted_child_docs_or.ValueOrDie().size()
         << " child documents during index restoration.";
   }
+
+  if (truncate_result.embedding_index_needed_restoration &&
+      task_scheduler_ != nullptr &&
+      task_scheduler_->GetScheduledTimeMs(kMaintainAnnIndexTaskId) < 0) {
+    task_scheduler_->ScheduleAt(
+        kMaintainAnnIndexTaskId, CreateMaintainAnnIndexTask(),
+        clock_->GetSystemTimeMilliseconds() + kMaintainAnnIndexDelayMs);
+  }
+
   return IndexRestorationResult(std::move(overall_status),
                                 /*num_failed_reindexed_documents_in=*/
                                 static_cast<int>(failed_document_ids.size()),
@@ -4779,6 +4828,29 @@ std::function<void()> IcingSearchEngine::CreateHandleExpiredDocumentsTask() {
       ICING_LOG(ERROR)
           << "Failed to handle expired documents in the background: "
           << result.status().message();
+    }
+  };
+}
+
+std::function<void()> IcingSearchEngine::CreateMaintainAnnIndexTask(
+    int retry_count) {
+  return [this, retry_count]() -> void {
+    MaintainAnnIndexResultProto result =
+        MaintainAnnIndex(MaintainAnnIndexOptions::default_instance());
+    if (result.status().code() == StatusProto::OK) {
+      return;
+    }
+    ICING_LOG(ERROR) << "Failed to maintain ANN index in the background: "
+                     << result.status().message();
+    // Retry
+    if (retry_count < kMaxMaintainAnnIndexRetries) {
+      absl_ports::unique_lock l(&mutex_);
+      if (task_scheduler_ != nullptr) {
+        task_scheduler_->ScheduleAt(
+            kMaintainAnnIndexTaskId,
+            CreateMaintainAnnIndexTask(retry_count + 1),
+            clock_->GetSystemTimeMilliseconds() + kMaintainAnnIndexDelayMs);
+      }
     }
   };
 }

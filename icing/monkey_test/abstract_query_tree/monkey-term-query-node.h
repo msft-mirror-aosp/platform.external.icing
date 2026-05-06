@@ -16,10 +16,11 @@
 #define ICING_MONKEY_TEST_ABSTRACT_QUERY_TREE_MONKEY_TERM_QUERY_NODE_H_
 
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/monkey_test/abstract_query_tree/monkey-abstract-query-node.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-abstract-leaf-node.h"
 #include "icing/monkey_test/in-memory-icing-search-engine.h"
 #include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/proto/search.pb.h"
@@ -51,17 +52,23 @@ class InMemoryIcingSearchEngine;
 // treated as the query `"foo"*` i.e. the prefix of the quoted string "foo".
 //
 // MonkeyTermQueryNode is guaranteed to not have child nodes.
-class MonkeyTermQueryNode : public MonkeyAbstractLeafQueryNode {
+class MonkeyTermQueryNode : public MonkeyAbstractRestrictableLeafQueryNode {
  public:
   explicit MonkeyTermQueryNode(std::string term, bool is_prefix,
                                bool is_verbatim,
                                TermMatchType::Code term_match_type);
 
-  explicit MonkeyTermQueryNode(std::string term, bool is_prefix,
-                               bool is_verbatim,
-                               TermMatchType::Code term_match_type,
-                               std::vector<std::string> document_namespaces,
-                               std::vector<std::string> document_schema_types);
+  explicit MonkeyTermQueryNode(
+      std::string term, bool is_prefix, bool is_verbatim,
+      TermMatchType::Code term_match_type,
+      std::unordered_set<std::string> property_restricts);
+
+  explicit MonkeyTermQueryNode(
+      std::string term, bool is_prefix, bool is_verbatim,
+      TermMatchType::Code term_match_type,
+      std::vector<std::string> document_namespaces,
+      std::vector<std::string> document_schema_types,
+      std::unordered_set<std::string> property_restricts);
 
   std::string GenerateQueryString() const override;
 

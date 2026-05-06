@@ -130,6 +130,9 @@ class DocHitInfoIterator {
       std::unordered_set<uint32_t> quantized_shards_read;
       // The number of raw embedding bytes read.
       int64_t num_embedding_bytes_read = 0;
+      // Indicates how many embeddings in the ANN index were scored. It does
+      // not include centroid embeddings.
+      int32_t num_ann_embeddings_scored = 0;
 
       bool operator==(const EmbeddingStats& other) const {
         return num_unquantized_embeddings_scored ==
@@ -138,7 +141,8 @@ class DocHitInfoIterator {
                    other.num_quantized_embeddings_scored &&
                unquantized_shards_read == other.unquantized_shards_read &&
                quantized_shards_read == other.quantized_shards_read &&
-               num_embedding_bytes_read == other.num_embedding_bytes_read;
+               num_embedding_bytes_read == other.num_embedding_bytes_read &&
+               num_ann_embeddings_scored == other.num_ann_embeddings_scored;
       }
 
       EmbeddingStats operator+(const EmbeddingStats& other) const {
@@ -153,6 +157,7 @@ class DocHitInfoIterator {
         result.quantized_shards_read.insert(other.quantized_shards_read.begin(),
                                             other.quantized_shards_read.end());
         result.num_embedding_bytes_read += other.num_embedding_bytes_read;
+        result.num_ann_embeddings_scored += other.num_ann_embeddings_scored;
         return result;
       }
     };

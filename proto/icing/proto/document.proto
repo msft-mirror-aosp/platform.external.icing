@@ -107,11 +107,24 @@ message PropertyProto {
   message VectorProto {
     // The values of the vector.
     repeated float values = 1 [packed = true];
+
     // The model signature of the vector, which can be any string used to
     // identify the model, so that embedding searches can be restricted only to
     // the vectors with the matching target signature.
     // Eg: "universal-sentence-encoder_v0"
     optional string model_signature = 2;
+
+    // The quantized values of the vector.
+    // This can only be used when quantization_type in the schema is set to
+    // QUANTIZE_8_BIT. When this field is set, the "values" field MUST NOT be
+    // set.
+    //
+    // Format:
+    // The data MUST be binary compatible with Icing's internal storage format:
+    // [Quantizer Header (8 bytes)][Quantized Data (N bytes)]
+    // - Quantizer Header: { float min_value; float scale; }
+    // - Quantized Data: uint8_t values for each dimension.
+    optional bytes quantized_values = 3;
   }
   repeated VectorProto vector_values = 8;
 

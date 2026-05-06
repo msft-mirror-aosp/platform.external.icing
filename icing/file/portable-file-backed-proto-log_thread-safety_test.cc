@@ -62,7 +62,6 @@ TEST_P(PortableFileBackedProtoLogThreadSafetyTest, ConcurrentReadProto) {
               PortableFileBackedProtoLog<
                   DocumentProto>::kDefaultCompressionThresholdBytes,
               /*compression_mem_level_in=*/1,
-              /*enable_smaller_decompression_buffer_size_in=*/true,
               /*enable_new_header_format_in=*/true,
               /*enable_reusable_decompression_buffer_in=*/GetParam())));
   std::unique_ptr<PortableFileBackedProtoLog<DocumentProto>> proto_log =

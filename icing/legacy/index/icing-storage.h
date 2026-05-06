@@ -24,6 +24,7 @@
 #include <string>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
@@ -85,7 +86,7 @@ class IIcingStorage {
 
   // Updates any checksums that this storage maintains.
   // By default, does nothing.
-  virtual Crc32 UpdateCrc() { return Crc32(); }
+  virtual libtextclassifier3::StatusOr<Crc32> UpdateCrc() { return Crc32(); }
 
   virtual void GetDebugInfo(int verbosity, std::string* out) const = 0;
 
