@@ -52,6 +52,7 @@
 #include "icing/store/corpus-id.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
+#include "icing/store/document-group-info.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-log-creator.h"
 #include "icing/store/namespace-id-fingerprint.h"
@@ -90,6 +91,7 @@ using ::testing::IsTrue;
 using ::testing::Ne;
 using ::testing::Not;
 using ::testing::Optional;
+using ::testing::Pair;
 using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::UnorderedElementsAre;
@@ -755,7 +757,10 @@ TEST_P(DocumentStoreTest, ForceDeleteAlreadyDeletedDocumentReturnsNotFound) {
   ASSERT_TRUE(document_store->GetNonDeletedDocumentFilterData(document_id));
 
   // First time is OK
-  ICING_ASSERT_OK(document_store->ForceDelete(document_id));
+  EXPECT_THAT(document_store->ForceDelete(document_id),
+              IsOkAndHolds(EqualsDocumentMetadata(
+                  test_document1_.schema(), test_document1_.namespace_(),
+                  test_document1_.uri(), document_id)));
 
   // Deleting it again should get NOT_FOUND.
   EXPECT_THAT(document_store->ForceDelete(document_id),
@@ -1397,14 +1402,15 @@ TEST_P(DocumentStoreTest, PurgeExpiredDocuments) {
   DocumentId doc_id5 = put_result5.new_document_id;
 
   // Purge expired documents at t = 1200. doc2, doc3, doc5 should be purged.
-  EXPECT_THAT(document_store->PurgeExpiredDocuments(/*current_time_ms=*/1200),
-              IsOkAndHolds(ElementsAre(
-                  EqualsDocumentMetadata(doc2.schema(), doc2.namespace_(),
-                                         doc2.uri(), doc_id2),
-                  EqualsDocumentMetadata(doc3.schema(), doc3.namespace_(),
-                                         doc3.uri(), doc_id3),
-                  EqualsDocumentMetadata(doc5.schema(), doc5.namespace_(),
-                                         doc5.uri(), doc_id5))));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo expired_docs_group_info,
+      document_store->PurgeExpiredDocuments(/*current_time_ms=*/1200));
+  EXPECT_THAT(expired_docs_group_info.Get(),
+              UnorderedElementsAre(
+                  Pair(EqualsDocumentGroupKey("email", "namespace"),
+                       ElementsAre(EqualsDocumentUriId(doc2.uri(), doc_id2),
+                                   EqualsDocumentUriId(doc3.uri(), doc_id3),
+                                   EqualsDocumentUriId(doc5.uri(), doc_id5)))));
   EXPECT_TRUE(document_store->GetNonDeletedDocumentFilterData(doc_id1));
   EXPECT_FALSE(document_store->GetNonDeletedDocumentFilterData(doc_id2));
   EXPECT_FALSE(document_store->GetNonDeletedDocumentFilterData(doc_id3));
@@ -1478,12 +1484,14 @@ TEST_P(DocumentStoreTest, PurgeExpiredDocuments_shouldSkipDeletedDocuments) {
 
   // Purge expired documents at t = 1200. doc2, doc5 should be purged. Since
   // doc3 was already deleted, it should be skipped.
-  EXPECT_THAT(document_store->PurgeExpiredDocuments(/*current_time_ms=*/1200),
-              IsOkAndHolds(ElementsAre(
-                  EqualsDocumentMetadata(doc2.schema(), doc2.namespace_(),
-                                         doc2.uri(), doc_id2),
-                  EqualsDocumentMetadata(doc5.schema(), doc5.namespace_(),
-                                         doc5.uri(), doc_id5))));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo expired_docs_group_info,
+      document_store->PurgeExpiredDocuments(/*current_time_ms=*/1200));
+  EXPECT_THAT(expired_docs_group_info.Get(),
+              UnorderedElementsAre(
+                  Pair(EqualsDocumentGroupKey("email", "namespace"),
+                       ElementsAre(EqualsDocumentUriId(doc2.uri(), doc_id2),
+                                   EqualsDocumentUriId(doc5.uri(), doc_id5)))));
   EXPECT_TRUE(document_store->GetNonDeletedDocumentFilterData(doc_id1));
   EXPECT_FALSE(document_store->GetNonDeletedDocumentFilterData(doc_id2));
   EXPECT_FALSE(document_store->GetNonDeletedDocumentFilterData(doc_id3));
@@ -1497,7 +1505,6 @@ TEST_P(DocumentStoreTest,
       /*enable_circular_schema_definitions=*/true,
       /*enable_repeated_field_joins=*/true,
       /*enable_embedding_backup_generation=*/true,
-      /*enable_passing_filter_to_children=*/true,
       /*enable_proto_log_new_header_format=*/true,
       /*enable_reusable_decompression_buffer=*/true,
       /*enable_schema_type_id_optimization=*/true,
@@ -1505,7 +1512,8 @@ TEST_P(DocumentStoreTest,
       /*expired_document_purge_threshold_ms=*/1000,  // 1 second
       /*enable_non_existent_qualified_id_join=*/true,
       /*enable_skip_set_schema_type_equality_check=*/true,
-      /*enable_schema_definition_deduping=*/true);
+      /*enable_schema_definition_deduping=*/true,
+      /*enable_delete_propagation_from=*/true);
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(
@@ -1566,14 +1574,15 @@ TEST_P(DocumentStoreTest,
 
   // Purge expired documents at t = 2000. doc1, doc2, doc4 should be purged.
   // Doc3 should still be alive.
-  EXPECT_THAT(document_store->PurgeExpiredDocuments(/*current_time_ms=*/2000),
-              IsOkAndHolds(ElementsAre(
-                  EqualsDocumentMetadata(doc1.schema(), doc1.namespace_(),
-                                         doc1.uri(), doc_id1),
-                  EqualsDocumentMetadata(doc2.schema(), doc2.namespace_(),
-                                         doc2.uri(), doc_id2),
-                  EqualsDocumentMetadata(doc4.schema(), doc4.namespace_(),
-                                         doc4.uri(), doc_id4))));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo expired_docs_group_info,
+      document_store->PurgeExpiredDocuments(/*current_time_ms=*/2000));
+  EXPECT_THAT(expired_docs_group_info.Get(),
+              UnorderedElementsAre(
+                  Pair(EqualsDocumentGroupKey("email", "namespace"),
+                       ElementsAre(EqualsDocumentUriId(doc1.uri(), doc_id1),
+                                   EqualsDocumentUriId(doc2.uri(), doc_id2),
+                                   EqualsDocumentUriId(doc4.uri(), doc_id4)))));
   EXPECT_FALSE(document_store->GetNonDeletedDocumentFilterData(doc_id1));
   EXPECT_FALSE(document_store->GetNonDeletedDocumentFilterData(doc_id2));
   EXPECT_TRUE(document_store->GetNonDeletedDocumentFilterData(doc_id3));
@@ -4496,7 +4505,7 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   // - No documents should be deleted since 'dummy' type did not have any
   //   documents.
   // - The derived files should be changed.
-  EXPECT_THAT(update_result.deleted_document_count, Eq(0));
+  EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
   EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
   // Check that the FilterCache holds the new SchemaTypeIds
@@ -4597,6 +4606,18 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
   // - email_without_subject should be deleted since the new required property
   //   is missing.
   // - The derived files should be changed.
+  if (feature_flags_->enable_delete_propagation_from()) {
+    EXPECT_THAT(update_result.deleted_doc_group_info.Get(),
+                UnorderedElementsAre(Pair(
+                    EqualsDocumentGroupKey(email_without_subject.schema(),
+                                           email_without_subject.namespace_()),
+                    ElementsAre(EqualsDocumentUriId(
+                        email_without_subject.uri(),
+                        email_without_subject_document_id)))));
+    EXPECT_THAT(update_result.deleted_doc_group_info.GetTotalNumDocs(), Eq(1));
+  } else {
+    EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
+  }
   EXPECT_THAT(update_result.deleted_document_count, Eq(1));
   EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
@@ -4686,6 +4707,17 @@ TEST_P(DocumentStoreTest,
       document_store->UpdateSchemaStore(schema_store.get()));
   // - email should be deleted.
   // - The derived files should be changed.
+  if (feature_flags_->enable_delete_propagation_from()) {
+    EXPECT_THAT(update_result.deleted_doc_group_info.Get(),
+                UnorderedElementsAre(
+                    Pair(EqualsDocumentGroupKey(email_document.schema(),
+                                                email_document.namespace_()),
+                         ElementsAre(EqualsDocumentUriId(email_document.uri(),
+                                                         email_document_id)))));
+    EXPECT_THAT(update_result.deleted_doc_group_info.GetTotalNumDocs(), Eq(1));
+  } else {
+    EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
+  }
   EXPECT_THAT(update_result.deleted_document_count, Eq(1));
   EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
@@ -4764,7 +4796,7 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreWithFullyCompatibleDocumentStore) {
   // - No document is deleted since there were no documents with "message"
   //   schema type.
   // - The derived files should be UNCHANGED.
-  EXPECT_THAT(update_result.deleted_document_count, Eq(0));
+  EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
   EXPECT_THAT(update_result.derived_files_changed, IsFalse());
 
   // The "email" document should be unaffected
@@ -4871,7 +4903,7 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
   // - No documents should be deleted since 'dummy' type did not have any
   //   documents.
   // - The derived files should be changed.
-  EXPECT_THAT(update_result.deleted_document_count, Eq(0));
+  EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
   EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
   // Check that the FilterCache holds the new SchemaTypeIds
@@ -4975,6 +5007,18 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
   // - email_without_subject should be deleted since the new required property
   //   is missing.
   // - The derived files should be changed.
+  if (feature_flags_->enable_delete_propagation_from()) {
+    EXPECT_THAT(update_result.deleted_doc_group_info.Get(),
+                UnorderedElementsAre(Pair(
+                    EqualsDocumentGroupKey(email_without_subject.schema(),
+                                           email_without_subject.namespace_()),
+                    ElementsAre(EqualsDocumentUriId(
+                        email_without_subject.uri(),
+                        email_without_subject_document_id)))));
+    EXPECT_THAT(update_result.deleted_doc_group_info.GetTotalNumDocs(), Eq(1));
+  } else {
+    EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
+  }
   EXPECT_THAT(update_result.deleted_document_count, Eq(1));
   EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
@@ -5066,6 +5110,17 @@ TEST_P(DocumentStoreTest,
                                                  set_schema_result));
   // - email should be deleted.
   // - The derived files should be changed.
+  if (feature_flags_->enable_delete_propagation_from()) {
+    EXPECT_THAT(update_result.deleted_doc_group_info.Get(),
+                UnorderedElementsAre(
+                    Pair(EqualsDocumentGroupKey(email_document.schema(),
+                                                email_document.namespace_()),
+                         ElementsAre(EqualsDocumentUriId(email_document.uri(),
+                                                         email_document_id)))));
+    EXPECT_THAT(update_result.deleted_doc_group_info.GetTotalNumDocs(), Eq(1));
+  } else {
+    EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
+  }
   EXPECT_THAT(update_result.deleted_document_count, Eq(1));
   EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
@@ -5146,7 +5201,7 @@ TEST_P(DocumentStoreTest,
   // - No document is deleted since there were no documents with "message"
   //   schema type.
   // - The derived files should be UNCHANGED.
-  EXPECT_THAT(update_result.deleted_document_count, Eq(0));
+  EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
   EXPECT_THAT(update_result.derived_files_changed, IsFalse());
 
   // The "email" document should be unaffected

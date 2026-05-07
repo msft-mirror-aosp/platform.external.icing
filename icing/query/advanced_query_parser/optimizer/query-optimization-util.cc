@@ -30,9 +30,7 @@ std::unique_ptr<DocHitInfoIterator> OptimizeAndIteratorsIfPossible(
   std::unique_ptr<DocHitInfoIterator> embed_iterator;
   bool delegate_node_is_right_most = true;
   // Find the first embedding iterator and remove it from the vector.
-  int embed_iterator_index = 0;
-  for (int i = embed_iterator_index; embed_iterator_index < iterators.size();
-        ++embed_iterator_index) {
+  for (int i = 0; i < iterators.size(); ++i) {
     if (iterators.at(i)->CanAdoptDelegate()) {
       embed_iterator = std::move(iterators.at(i));
       if (i == iterators.size() - 1) {

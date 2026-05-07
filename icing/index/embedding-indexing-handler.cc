@@ -23,6 +23,7 @@
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/hit/hit.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/platform.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/util/clock.h"
@@ -84,13 +85,18 @@ libtextclassifier3::Status EmbeddingIndexingHandler::Handle(
       if (!vector.quantized_values().empty() &&
           vector_section.metadata.quantization_type !=
               EmbeddingIndexingConfig::QuantizationType::QUANTIZE_8_BIT) {
-        ICING_LOG(WARNING)
-            << "Property '" << vector_section.metadata.path
-            << "' has 'quantized_values' set but schema quantization_type is "
-               "not QUANTIZE_8_BIT for key: ("
-            << tokenized_document.document_wrapper().document().namespace_()
-            << ", " << tokenized_document.document_wrapper().document().uri()
-            << ").";
+        // The monkey test may intentionally trigger this case, causing
+        // excessive logs. We suppress this warning in test environments to
+        // reduce noise.
+        if (!IsTestEnvironment()) {
+          ICING_LOG(WARNING)
+              << "Property '" << vector_section.metadata.path
+              << "' has 'quantized_values' set but schema quantization_type is "
+                 "not QUANTIZE_8_BIT for key: ("
+              << tokenized_document.document_wrapper().document().namespace_()
+              << ", " << tokenized_document.document_wrapper().document().uri()
+              << ").";
+        }
         continue;
       }
       if (embedding_indexing_type ==

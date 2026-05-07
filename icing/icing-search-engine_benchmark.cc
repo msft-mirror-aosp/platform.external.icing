@@ -333,7 +333,6 @@ void BM_EmbeddingQueryLatency(benchmark::State& state) {
   IcingSearchEngineOptions options;
   options.set_base_dir(test_dir);
   options.set_index_merge_size(kIcingFullIndexSize);
-  options.set_enable_passing_filter_to_children(true);
   std::unique_ptr<IcingSearchEngine> icing =
       std::make_unique<IcingSearchEngine>(options);
 

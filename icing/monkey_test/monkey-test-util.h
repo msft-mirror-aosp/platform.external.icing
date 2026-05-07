@@ -19,13 +19,18 @@
 #include <cstdint>
 #include <functional>
 #include <random>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/embed/embedding-scorer.h"
 #include "icing/index/embed/quantizer.h"
+#include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/util/embedding-util.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -124,23 +129,55 @@ struct IcingMonkeyTestRunnerConfiguration {
 // TODO(b/491571627): Consider moving this helper function to
 // monkey-semantic-query-node after we switch InMemoryIcingSearchEngine to use
 // the new query node
-inline bool DoesVectorsMatch(
+inline libtextclassifier3::StatusOr<bool> DoesVectorsMatch(
     EmbeddingScorer* embedding_scorer, double min_score, double max_score,
     EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
     const PropertyProto::VectorProto& query,
     const PropertyProto::VectorProto& candidate) {
-  if (query.model_signature() != candidate.model_signature() ||
-      query.values_size() != candidate.values_size()) {
+  if (query.model_signature() != candidate.model_signature()) {
     return false;
   }
 
-  const int dimension = query.values_size();
+  ICING_ASSIGN_OR_RETURN(uint32_t query_dim,
+                         embedding_util::GetDimension(query));
+  ICING_ASSIGN_OR_RETURN(uint32_t cand_dim,
+                         embedding_util::GetDimension(candidate));
+  if (query_dim != cand_dim) {
+    return false;
+  }
+  const int dimension = static_cast<int>(query_dim);
   if (dimension == 0) {
     return min_score <= 0 && 0 <= max_score;
   }
+
+  const float* query_values_ptr = nullptr;
+  std::vector<float> query_floats_storage;
+  if (!query.quantized_values().empty()) {
+    query_floats_storage.resize(dimension);
+    embedding_util::Dequantize(query.quantized_values().data(), dimension,
+                               query_floats_storage.data());
+    query_values_ptr = query_floats_storage.data();
+  } else {
+    query_values_ptr = query.values().data();
+  }
+
   float score;
-  if (quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
-    score = embedding_scorer->EigenScore(dimension, query.values().data(),
+  // If the candidate vector provides quantized values directly
+  if (!candidate.quantized_values().empty()) {
+    // For this case, if quantization_type in schema is not specified for
+    // quantization, the candidate embedding will be ignore by the index.
+    if (quantization_type !=
+        EmbeddingIndexingConfig::QuantizationType::QUANTIZE_8_BIT) {
+      return false;
+    }
+    Quantizer quantizer(candidate.quantized_values().data());
+    const uint8_t* quantized_data = reinterpret_cast<const uint8_t*>(
+        candidate.quantized_values().data() + sizeof(Quantizer));
+    score = embedding_scorer->EigenScore(dimension, query_values_ptr,
+                                         quantized_data, quantizer);
+  } else if (quantization_type ==
+             EmbeddingIndexingConfig::QuantizationType::NONE) {
+    score = embedding_scorer->EigenScore(dimension, query_values_ptr,
                                          candidate.values().data());
   } else {
     // Quantize the candidate vector.
@@ -156,10 +193,30 @@ inline bool DoesVectorsMatch(
       quantized_candidate.push_back(quantizer.Quantize(value));
     }
     // Score the quantized candidate against the original query.
-    score = embedding_scorer->EigenScore(dimension, query.values().data(),
+    score = embedding_scorer->EigenScore(dimension, query_values_ptr,
                                          quantized_candidate.data(), quantizer);
   }
   return min_score <= score && score <= max_score;
+}
+
+inline bool DoesSchemaTypeMatch(
+    const MonkeyTokenizedDocument& document,
+    const std::vector<std::string>& schema_type_filters) {
+  if (schema_type_filters.empty()) {
+    return true;
+  }
+  return std::find(schema_type_filters.begin(), schema_type_filters.end(),
+                   document.document.schema()) != schema_type_filters.end();
+}
+
+inline bool DoesNamespaceMatch(
+    const MonkeyTokenizedDocument& document,
+    const std::vector<std::string>& namespace_filters) {
+  if (namespace_filters.empty()) {
+    return true;
+  }
+  return std::find(namespace_filters.begin(), namespace_filters.end(),
+                   document.document.namespace_()) != namespace_filters.end();
 }
 
 }  // namespace lib

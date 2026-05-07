@@ -18,6 +18,7 @@
 #include <array>
 #include <cassert>
 #include <cstdint>
+#include <cstring>
 #include <random>
 #include <string>
 #include <string_view>
@@ -28,6 +29,7 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
 #include "icing/document-builder.h"
+#include "icing/index/embed/quantizer.h"
 #include "icing/join/qualified-id.h"
 #include "icing/monkey_test/monkey-test-util.h"
 #include "icing/monkey_test/monkey-tokenized-document.h"
@@ -599,16 +601,29 @@ int MonkeyDocumentGenerator::GetNumInt64(
   return n * p;
 }
 
-PropertyProto::VectorProto MonkeyDocumentGenerator::GetRandomVector() const {
+PropertyProto::VectorProto MonkeyDocumentGenerator::GetRandomVector(
+    bool allow_quantized_value) const {
   std::uniform_int_distribution<> dimension_dist(
       0, config_->possible_vector_dimensions.size() - 1);
-  std::uniform_real_distribution<float> value_dist(-1.0, 1.0);
 
   PropertyProto::VectorProto vector;
   vector.set_model_signature("model");
   int dimension = config_->possible_vector_dimensions[dimension_dist(*random_)];
-  for (int i = 0; i < dimension; ++i) {
-    vector.add_values(value_dist(*random_));
+
+  if (allow_quantized_value && GetRandomBooleanWithProbability(random_, 0.2)) {
+    Quantizer quantizer = Quantizer::Create(-1.0f, 1.0f).ValueOrDie();
+    std::string buffer(sizeof(Quantizer) + dimension, '\0');
+    memcpy(buffer.data(), &quantizer, sizeof(Quantizer));
+    std::uniform_int_distribution<int> uint8_dist(0, 255);
+    for (int i = 0; i < dimension; ++i) {
+      buffer[sizeof(Quantizer) + i] = static_cast<char>(uint8_dist(*random_));
+    }
+    vector.set_quantized_values(std::move(buffer));
+  } else {
+    std::uniform_real_distribution<float> value_dist(-1.0, 1.0);
+    for (int i = 0; i < dimension; ++i) {
+      vector.add_values(value_dist(*random_));
+    }
   }
   return vector;
 }
@@ -620,7 +635,7 @@ MonkeyDocumentGenerator::GetVectorPropertyContent(
   std::vector<PropertyProto::VectorProto> content;
   content.reserve(num_vectors);
   while (num_vectors) {
-    content.push_back(GetRandomVector());
+    content.push_back(GetRandomVector(/*allow_quantized_value=*/true));
     --num_vectors;
   }
   return content;
