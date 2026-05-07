@@ -18,8 +18,6 @@
 #include <utility>
 #include <vector>
 
-#include "icing/feature-flags.h"
-#include "icing/index/embed/doc-hit-info-iterator-embedding-v2.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 
@@ -28,26 +26,23 @@ namespace lib {
 namespace query_optimization_util {
 
 std::unique_ptr<DocHitInfoIterator> OptimizeAndIteratorsIfPossible(
-    std::vector<std::unique_ptr<DocHitInfoIterator>>&& iterators,
-    const FeatureFlags& feature_flags) {
+    std::vector<std::unique_ptr<DocHitInfoIterator>>&& iterators) {
   std::unique_ptr<DocHitInfoIterator> embed_iterator;
   bool delegate_node_is_right_most = true;
-  if (feature_flags.enable_embed_query_optimization()) {
-    // Find the first embedding iterator and remove it from the vector.
-    int embed_iterator_index = 0;
-    for (int i = embed_iterator_index; embed_iterator_index < iterators.size();
-         ++embed_iterator_index) {
-      if (iterators.at(i)->CanAdoptDelegate()) {
-        embed_iterator = std::move(iterators.at(i));
-        if (i == iterators.size() - 1) {
-          // If this embedding iterator is the last iterator, then the node is
-          // the right most node and the delegate that we're going to create
-          // would not be right most.
-          delegate_node_is_right_most = false;
-        }
-        iterators.erase(iterators.begin() + i);
-        break;
+  // Find the first embedding iterator and remove it from the vector.
+  int embed_iterator_index = 0;
+  for (int i = embed_iterator_index; embed_iterator_index < iterators.size();
+        ++embed_iterator_index) {
+    if (iterators.at(i)->CanAdoptDelegate()) {
+      embed_iterator = std::move(iterators.at(i));
+      if (i == iterators.size() - 1) {
+        // If this embedding iterator is the last iterator, then the node is
+        // the right most node and the delegate that we're going to create
+        // would not be right most.
+        delegate_node_is_right_most = false;
       }
+      iterators.erase(iterators.begin() + i);
+      break;
     }
   }
   // If we found an embedding iterator, then put all other iterators into an

@@ -585,10 +585,8 @@ void AddEnabledFeatures(const IcingSearchEngineOptions& options,
   enabled_features->Add(GetFeatureInfoProto(
       IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION));
   // SchemaDatabase feature
-  if (options.enable_schema_database()) {
-    enabled_features->Add(GetFeatureInfoProto(
-        IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE));
-  }
+  enabled_features->Add(GetFeatureInfoProto(
+      IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE));
   // QualifiedIdJoinIndex V3 feature
   enabled_features->Add(GetFeatureInfoProto(
       IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3));

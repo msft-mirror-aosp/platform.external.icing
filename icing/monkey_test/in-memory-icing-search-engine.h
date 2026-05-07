@@ -80,6 +80,10 @@ class InMemoryIcingSearchEngine {
     return documents_[doc_id];
   }
 
+  const LanguageSegmenter* GetLanguageSegmenter() const {
+    return language_segmenter_.get();
+  }
+
   // Puts the document into the in-memory Icing. If the (namespace, uri) pair
   // already exists, the old document will be overwritten.
   void Put(const MonkeyTokenizedDocument &document);
@@ -110,16 +114,18 @@ class InMemoryIcingSearchEngine {
   libtextclassifier3::StatusOr<uint32_t> DeleteBySchemaType(
       const std::string &schema_type);
 
-  // Deletes all Documents that match the query specified in search_spec.
-  // Check the comments of Search() for the supported query types.
+  // Deletes all Documents that match the query specified in the
+  // MonkeyAbstractQueryNode. Check the comments of Search() for the supported
+  // query types.
   //
   // Returns:
   //   The number of deleted documents on success
   //   INTERNAL_ERROR if there are inconsistencies in the in-memory Icing
   libtextclassifier3::StatusOr<uint32_t> DeleteByQuery(
-      const SearchSpecProto &search_spec);
+      const MonkeyAbstractQueryNode* node);
 
-  // Retrieves documents according to search_spec.
+  // Retrieves documents according to MonkeyAbstractQueryNode, which is a
+  // structured representation of a query.
   // Currently, only the "query", "term_match_type", "embedding_query_vectors",
   // and "embedding_query_metric_type" fields are recognized by the in-memory
   // Icing.
@@ -131,11 +137,6 @@ class InMemoryIcingSearchEngine {
   // `semanticSearch(getEmbeddingParameter(0), low, high)` is supported, where
   // `low` and `high` are floating point numbers that specify the score range.
   // Section restrictions are also recognized.
-  libtextclassifier3::StatusOr<std::vector<DocumentProto>> Search(
-      const SearchSpecProto &search_spec) const;
-
-  // Variation of Search() that takes a MonkeyAbstractQueryNode, which is a
-  // structured representation of a query.
   libtextclassifier3::StatusOr<std::vector<DocumentProto>> Search(
       const MonkeyAbstractQueryNode* node) const;
 
@@ -155,6 +156,10 @@ class InMemoryIcingSearchEngine {
     EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
         EmbeddingIndexingConfig::QuantizationType::NONE;
 
+    // The numeric match type if the property is of type int64.
+    IntegerIndexingConfig::NumericMatchType::Code numeric_match_type =
+        IntegerIndexingConfig::NumericMatchType::UNKNOWN;
+
     // Whether the property is indexable.
     bool indexable = false;
   };
@@ -171,17 +176,8 @@ class InMemoryIcingSearchEngine {
   libtextclassifier3::StatusOr<DocumentId> InternalGet(
       const std::string &name_space, const std::string &uri) const;
 
-  // A helper method for DeleteByQuery and Search to get matched internal doc
-  // ids.
-  libtextclassifier3::StatusOr<std::vector<DocumentId>> InternalSearch(
-      const SearchSpecProto &search_spec) const;
-
   libtextclassifier3::StatusOr<const PropertyConfigProto *> GetPropertyConfig(
       const std::string &schema_type, const std::string &property_name) const;
-
-  libtextclassifier3::StatusOr<bool> DoesDocumentMatchQuery(
-      const MonkeyTokenizedDocument &document,
-      const SearchSpecProto &search_spec) const;
 
   // Does not own.
   MonkeyTestRandomEngine* random_;

@@ -199,7 +199,7 @@ libtextclassifier3::Status Index::TruncateTo(DocumentId document_id) {
   if (main_index_->last_added_document_id() != kInvalidDocumentId &&
       main_index_->last_added_document_id() > document_id) {
     ICING_VLOG(1) << "Clipping to " << document_id
-                  << ". Throwing out lite index which is at "
+                  << ". Throwing out main index which is at "
                   << main_index_->last_added_document_id();
     ICING_RETURN_IF_ERROR(main_index_->Reset());
   }

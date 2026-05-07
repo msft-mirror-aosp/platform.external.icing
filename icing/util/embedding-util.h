@@ -24,10 +24,12 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/index/embed/quantizer.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/util/crc32.h"
 #include "icing/util/encode-util.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -37,6 +39,21 @@ namespace embedding_util {
 // The maximum length returned by encode_util::EncodeIntToCString is 5 for
 // uint32_t.
 inline constexpr uint32_t kEncodedDimensionLength = 5;
+
+inline libtextclassifier3::StatusOr<uint32_t> GetDimension(
+    const PropertyProto::VectorProto& vector) {
+  if (!vector.values().empty()) {
+    return vector.values().size();
+  }
+  if (!vector.quantized_values().empty()) {
+    if (vector.quantized_values().size() <= sizeof(Quantizer)) {
+      return absl_ports::InvalidArgumentError(
+          "Quantized values size must be greater than sizeof(Quantizer).");
+    }
+    return vector.quantized_values().size() - sizeof(Quantizer);
+  }
+  return absl_ports::InvalidArgumentError("Vector dimension is 0");
+}
 
 inline uint32_t GetPostingListKeyHash(std::string_view posting_list_key) {
   return Crc32(posting_list_key).Get();
@@ -63,8 +80,10 @@ inline std::string GetPostingListKey(uint32_t dimension,
   return absl_ports::StrCat(encoded_dimension_str, model_signature);
 }
 
-inline std::string GetPostingListKey(const PropertyProto::VectorProto& vector) {
-  return GetPostingListKey(vector.values().size(), vector.model_signature());
+inline libtextclassifier3::StatusOr<std::string> GetPostingListKey(
+    const PropertyProto::VectorProto& vector) {
+  ICING_ASSIGN_OR_RETURN(uint32_t dimension, GetDimension(vector));
+  return GetPostingListKey(dimension, vector.model_signature());
 }
 
 inline constexpr std::string_view kIvfPostingListKeySeparator = "\xFE\xFF";
@@ -132,6 +151,16 @@ GetEmbeddingQueryMetricTypeFromName(std::string_view metric_name) {
   }
   return absl_ports::InvalidArgumentError(
       absl_ports::StrCat("Unknown metric type: ", metric_name));
+}
+
+inline void Dequantize(const char* quantized_values, int dimension,
+                       float* out) {
+  Quantizer quantizer(quantized_values);
+  const uint8_t* quantized_vector =
+      reinterpret_cast<const uint8_t*>(quantized_values + sizeof(Quantizer));
+  for (int i = 0; i < dimension; ++i) {
+    out[i] = quantizer.Dequantize(quantized_vector[i]);
+  }
 }
 
 }  // namespace embedding_util

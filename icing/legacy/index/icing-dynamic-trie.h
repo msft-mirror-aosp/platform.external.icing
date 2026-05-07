@@ -280,9 +280,9 @@ class IcingDynamicTrie : public IIcingStorage {
   // REQUIRED: For all functions below is_initialized() == true.
 
   // Number of keys in trie.
-  uint32_t size() const;
+  libtextclassifier3::StatusOr<uint32_t> size() const;
 
-  bool empty() const;
+  libtextclassifier3::StatusOr<bool> empty() const;
 
   // Collecting stats.
   void CollectStats(Stats *stats) const;
@@ -340,7 +340,8 @@ class IcingDynamicTrie : public IIcingStorage {
   // Get a value returned by Insert value_index. This points to the
   // value in the trie. The pointer is immutable and always valid
   // while the trie is alive.
-  const void *GetValueAtIndex(uint32_t value_index) const;
+  libtextclassifier3::StatusOr<const void*> GetValueAtIndex(
+      uint32_t value_index) const;
 
   // Set a value returned by Insert value_index. We take a copy of
   // value.
@@ -410,12 +411,12 @@ class IcingDynamicTrie : public IIcingStorage {
   // If in kMapSharedWithCrc mode, update crcs and return the master
   // crc, else return kNoCrc. This crc includes both the trie files
   // and property bitmaps.
-  Crc32 UpdateCrc() override;
+  libtextclassifier3::StatusOr<Crc32> UpdateCrc() override;
 
   // If in kMapSharedWithCrc mode, calculates crcs and return the master
   // crc, else return kNoCrc. This crc includes both the trie files
   // and property bitmaps. Does NOT update any stored crcs.
-  Crc32 GetCrc() const;
+  libtextclassifier3::StatusOr<Crc32> GetCrc() const;
 
   // Store dynamic properties for each value.  When a property is added to
   // a value, the deleted flag is cleared for it (if it was previously set).
@@ -612,7 +613,7 @@ class IcingDynamicTrie : public IIcingStorage {
   friend class IcingDynamicTrieTest_TrieShouldRespectLimits_Test;
   friend class IcingDynamicTrieTest_SyncErrorRecovery_Test;
   friend class IcingDynamicTrieTest_BitmapsClosedWhenInitFails_Test;
-  void GetHeader(IcingDynamicTrieHeader *hdr) const;
+  libtextclassifier3::Status GetHeader(IcingDynamicTrieHeader* hdr) const;
   libtextclassifier3::Status SetHeader(const IcingDynamicTrieHeader& new_hdr);
 
   static const uint32_t kInvalidSuffixIndex;

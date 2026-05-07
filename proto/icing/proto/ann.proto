@@ -16,6 +16,8 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/status.proto";
+
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
@@ -54,4 +56,41 @@ message MiniBatchKMeansOptions {
 
   // Seed for random number generator.
   optional int32 random_seed = 7 [default = 42];
+}
+
+// Next tag: 4
+message MaintainAnnIndexOptions {
+  // The minimum number of embeddings required to build the initial IVF index.
+  // Before reaching this size, embeddings are simply appended to a flat list
+  // (the delta store). Once the number of embeddings reaches this threshold, an
+  // ANN maintenance operation will execute K-Means clustering and distribute
+  // the embeddings into separate clusters.
+  optional int32 min_size_for_ivf = 1 [default = 1000];
+
+  // The threshold for rebuilding the IVF index, expressed as a fraction of the
+  // number of embeddings present during the last IVF build. For example, if
+  // rebuild_threshold is 0.2, and the last build clustered 1000 embeddings, a
+  // new rebuild will be triggered during maintenance when the total number of
+  // embeddings reaches 1200. Rebuilding involves re-running K-Means over all
+  // embeddings and re-assigning them to clusters, which helps maintain search
+  // accuracy and performance as new embeddings are added.
+  optional float rebuild_threshold = 2 [default = 0.5];
+
+  // Options for running the Mini-Batch K-Means clustering algorithm.
+  optional MiniBatchKMeansOptions mini_batch_k_means_options = 3;
+}
+
+// Next tag: 4
+message MaintainAnnIndexResultProto {
+  // Status code can be one of:
+  //   OK
+  //   FAILED_PRECONDITION
+  //   INTERNAL
+  optional StatusProto status = 1;
+
+  // Time used to run maintain ann index.
+  optional int64 latency_ms = 2;
+
+  // The actual number of iterations performed by Mini-Batch K-Means.
+  optional int32 actual_iterations = 3;
 }

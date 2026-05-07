@@ -153,9 +153,9 @@ TEST_F(LiteIndexTest, UpdatedChecksumPassesInit) {
 
   // 2. Updating the checksum should be sufficient to successfully initialize
   // the next time.
-  Crc32 checksum = lite_index->GetChecksum();
-  EXPECT_THAT(lite_index->UpdateChecksum(), Eq(checksum));
-  EXPECT_THAT(lite_index->GetChecksum(), Eq(checksum));
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum, lite_index->GetChecksum());
+  EXPECT_THAT(lite_index->UpdateChecksum(), IsOkAndHolds(Eq(checksum)));
+  EXPECT_THAT(lite_index->GetChecksum(), IsOkAndHolds(Eq(checksum)));
 
   // 3. Create a new LiteIndex. Create should succeed because the checksum has
   // been updated.
