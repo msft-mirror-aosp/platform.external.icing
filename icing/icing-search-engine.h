@@ -603,6 +603,16 @@ class IcingSearchEngine {
   PersistToDiskResultProto PersistToDisk(PersistType::Code persist_type)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Triggers the maintenance process for all IVF based embedding search
+  // indexes.
+  //
+  // Returns:
+  //   OK on success
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
+  //   INTERNAL on I/O error
+  MaintainAnnIndexResultProto MaintainAnnIndex(
+      const MaintainAnnIndexOptions& options) ICING_LOCKS_EXCLUDED(mutex_);
+
   // Allows Icing to run tasks that are too expensive and/or unnecessary to be
   // executed in real-time, but are useful to keep it fast and be
   // resource-efficient. This method purely optimizes the internal files and
@@ -1183,6 +1193,11 @@ class IcingSearchEngine {
   // Helper method to create a lambda function for handling expired documents
   // task. This is used to schedule the task with the task scheduler.
   std::function<void()> CreateHandleExpiredDocumentsTask()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to create a lambda function for MaintainAnnIndex task.
+  // This is used to schedule the task with the task scheduler.
+  std::function<void()> CreateMaintainAnnIndexTask(int retry_count = 0)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 };
 

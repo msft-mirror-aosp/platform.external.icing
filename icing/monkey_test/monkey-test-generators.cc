@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cstdint>
 #include <random>
 #include <string>
 #include <string_view>
@@ -79,7 +80,9 @@ bool IsIndexableProperty(const PropertyConfigProto& property) {
   return property.string_indexing_config().term_match_type() !=
              TermMatchType::UNKNOWN ||
          property.embedding_indexing_config().embedding_indexing_type() !=
-             EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN;
+             EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN ||
+         property.integer_indexing_config().numeric_match_type() !=
+             IntegerIndexingConfig::NumericMatchType::UNKNOWN;
 }
 
 bool IsJoinableProperty(const PropertyConfigProto& property) {
@@ -118,6 +121,14 @@ void SetEmbeddingIndexingConfig(MonkeyTestRandomEngine* random,
   if (GetRandomBoolean(random)) {
     property.mutable_embedding_indexing_config()->set_quantization_type(
         EmbeddingIndexingConfig::QuantizationType::QUANTIZE_8_BIT);
+  }
+}
+
+void SetIntegerIndexingConfig(PropertyConfigProto& property, bool indexable) {
+  property.clear_integer_indexing_config();
+  if (indexable) {
+    property.mutable_integer_indexing_config()->set_numeric_match_type(
+        IntegerIndexingConfig::NumericMatchType::RANGE);
   }
 }
 
@@ -217,12 +228,23 @@ PropertyConfigProto MonkeySchemaGenerator::GenerateProperty(
   // - Currently, we are generating either a string or a vector property.
   // - Currently we only have qualified id joinable properties, so if it is
   //   joinable, then it has to be a string property.
-  if (joinable || GetRandomBoolean(random_)) {
+  if (joinable) {
     prop.set_data_type(PropertyConfigProto::DataType::STRING);
     SetStringIndexingConfig(random_, prop, indexable, joinable);
   } else {
-    prop.set_data_type(PropertyConfigProto::DataType::VECTOR);
-    SetEmbeddingIndexingConfig(random_, prop, indexable);
+    // 0=STRING, 1=VECTOR, 2=INT64
+    std::uniform_int_distribution<> dist(0, 2);
+    int data_type_choice = dist(*random_);
+    if (data_type_choice == 0) {
+      prop.set_data_type(PropertyConfigProto::DataType::STRING);
+      SetStringIndexingConfig(random_, prop, indexable, joinable);
+    } else if (data_type_choice == 1) {
+      prop.set_data_type(PropertyConfigProto::DataType::VECTOR);
+      SetEmbeddingIndexingConfig(random_, prop, indexable);
+    } else {
+      prop.set_data_type(PropertyConfigProto::DataType::INT64);
+      SetIntegerIndexingConfig(prop, indexable);
+    }
   }
   prop.set_cardinality(cardinality);
   return prop;
@@ -292,6 +314,15 @@ void MonkeySchemaGenerator::UpdateProperty(
     EmbeddingIndexingConfig::QuantizationType::Code new_quantization_type =
         property.embedding_indexing_config().quantization_type();
     if (old_quantization_type != new_quantization_type) {
+      index_incompatible = true;
+    }
+  } else if (property.data_type() == PropertyConfigProto::DataType::INT64) {
+    IntegerIndexingConfig::NumericMatchType::Code old_numeric_match_type =
+        property.integer_indexing_config().numeric_match_type();
+    SetIntegerIndexingConfig(property, new_indexable);
+    IntegerIndexingConfig::NumericMatchType::Code new_numeric_match_type =
+        property.integer_indexing_config().numeric_match_type();
+    if (old_numeric_match_type != new_numeric_match_type) {
       index_incompatible = true;
     }
   }
@@ -549,6 +580,25 @@ int MonkeyDocumentGenerator::GetNumVectors(
   return n * p;
 }
 
+int MonkeyDocumentGenerator::GetNumInt64(
+    PropertyConfigProto::Cardinality::Code cardinality) const {
+  if (cardinality == PropertyConfigProto::Cardinality::REQUIRED) {
+    return 1;
+  } else if (cardinality == PropertyConfigProto::Cardinality::OPTIONAL) {
+    std::uniform_int_distribution<> dist(0, 1);
+    return dist(*random_);
+  }
+
+  // For repeated properties:
+  std::uniform_int_distribution<> dist(0,
+                                       config_->possible_num_int64s.size() - 1);
+  int n = config_->possible_num_int64s[dist(*random_)];
+  // Add some noise
+  std::uniform_real_distribution<> real_dist(0.5, 1);
+  float p = real_dist(*random_);
+  return n * p;
+}
+
 PropertyProto::VectorProto MonkeyDocumentGenerator::GetRandomVector() const {
   std::uniform_int_distribution<> dimension_dist(
       0, config_->possible_vector_dimensions.size() - 1);
@@ -572,6 +622,22 @@ MonkeyDocumentGenerator::GetVectorPropertyContent(
   while (num_vectors) {
     content.push_back(GetRandomVector());
     --num_vectors;
+  }
+  return content;
+}
+
+std::vector<int64_t> MonkeyDocumentGenerator::GetInt64PropertyContent(
+    PropertyConfigProto::Cardinality::Code cardinality) const {
+  int num_values = GetNumInt64(cardinality);
+  std::vector<int64_t> content;
+  if (num_values == 0) {
+    return content;
+  }
+  content.reserve(num_values);
+  std::uniform_int_distribution<int64_t> value_dist(
+      config_->int64_value_range.first, config_->int64_value_range.second);
+  for (int i = 0; i < num_values; ++i) {
+    content.push_back(value_dist(*random_));
   }
   return content;
 }
@@ -634,7 +700,7 @@ MonkeyTokenizedDocument MonkeyDocumentGenerator::GenerateDocument() {
       MonkeySection section = {.path = prop.property_name(),
                                .string_values = std::move(prop_content)};
       document.sections.push_back(std::move(section));
-    } else {
+    } else if (prop.data_type() == PropertyConfigProto::DataType::VECTOR) {
       std::vector<PropertyProto::VectorProto> prop_content =
           GetVectorPropertyContent(prop.cardinality());
       doc_builder.AddVectorProperty(prop.property_name(), prop_content);
@@ -643,6 +709,17 @@ MonkeyTokenizedDocument MonkeyDocumentGenerator::GenerateDocument() {
       // indexable currently, we have to create a section for it.
       MonkeySection section = {.path = prop.property_name(),
                                .vector_values = std::move(prop_content)};
+      document.sections.push_back(std::move(section));
+    } else {
+      std::vector<int64_t> prop_content =
+          GetInt64PropertyContent(prop.cardinality());
+      doc_builder.AddInt64Property(prop.property_name(), prop_content.cbegin(),
+                                   prop_content.cend());
+
+      // Similar to the string property, no matter whether the property is
+      // indexable currently, we have to create a section for it.
+      MonkeySection section = {.path = prop.property_name(),
+                               .integer_values = std::move(prop_content)};
       document.sections.push_back(std::move(section));
     }
   }

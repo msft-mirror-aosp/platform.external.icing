@@ -37,6 +37,7 @@ namespace lib {
 namespace {
 
 using ::testing::Eq;
+using ::testing::IsEmpty;
 using ::testing::UnorderedElementsAre;
 
 class MonkeyTermQueryNodeTest : public ::testing::Test {
@@ -61,7 +62,11 @@ class MonkeyTermQueryNodeTest : public ::testing::Test {
                             .SetName("body")
                             .SetDataTypeString(
                                 TermMatchType::PREFIX,
-                                StringIndexingConfig::TokenizerType::PLAIN)))
+                                StringIndexingConfig::TokenizerType::PLAIN))
+                    // Add a property path "timestamp" with INT64 data type.
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName("timestamp")
+                                     .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)))
             .Build();
 
     engine_->SetSchema(schema);
@@ -111,12 +116,37 @@ class MonkeyTermQueryNodeTest : public ::testing::Test {
     doc5_.sections.push_back(
         MonkeySection{.path = "subject", .string_values = {"foobar"}});
     engine_->Put(doc5_);
+
+    // Doc 6: multi-token string.
+    doc6_.document.set_schema("Email");
+    doc6_.document.set_namespace_("namespace");
+    doc6_.document.set_uri("uri6");
+    doc6_.sections.push_back(MonkeySection{
+        .path = "subject", .string_values = {"apple banana orange"}});
+    engine_->Put(doc6_);
+
+    // Doc 7: multi-token string in PREFIX section.
+    doc7_.document.set_schema("Email");
+    doc7_.document.set_namespace_("namespace");
+    doc7_.document.set_uri("uri7");
+    doc7_.sections.push_back(MonkeySection{
+        .path = "body", .string_values = {"apple banana orange"}});
+    engine_->Put(doc7_);
+
+    // Doc 8: has a non-string section.
+    doc8_.document.set_schema("Email");
+    doc8_.document.set_namespace_("namespace");
+    doc8_.document.set_uri("uri8");
+    doc8_.sections.push_back(
+        MonkeySection{.path = "timestamp", .string_values = {"12345"}});
+    engine_->Put(doc8_);
   }
 
   MonkeyTestRandomEngine random_{/*seed=*/0};
   std::unique_ptr<InMemoryIcingSearchEngine> engine_ =
       std::make_unique<InMemoryIcingSearchEngine>(&random_);
-  MonkeyTokenizedDocument doc1_, doc2_, doc3_, doc4_, doc5_;
+  MonkeyTokenizedDocument doc1_, doc2_, doc3_, doc4_, doc5_, doc6_, doc7_,
+      doc8_;
 };
 
 TEST_F(MonkeyTermQueryNodeTest, SearchSpecExactOnly) {
@@ -144,6 +174,50 @@ TEST_F(MonkeyTermQueryNodeTest, SearchSpecPrefix) {
   EXPECT_THAT(result, IsOkAndHolds(UnorderedElementsAre(1, 2, 3)));
 }
 
+TEST_F(MonkeyTermQueryNodeTest, PropertyRestrictSet) {
+  MonkeyTermQueryNode node("foo", /*is_prefix=*/false, /*is_verbatim=*/false,
+                           TermMatchType::EXACT_ONLY,
+                           /*property_restrict=*/{"subject"});
+  EXPECT_THAT(node.EvaluateQuery(engine_.get()),
+              IsOkAndHolds(UnorderedElementsAre(1)));
+}
+
+TEST_F(MonkeyTermQueryNodeTest, TokenMatch) {
+  // "banana" should match doc6_ and doc7_ because it's a token in "apple banana
+  // orange".
+  MonkeyTermQueryNode node("banana", /*is_prefix=*/false, /*is_verbatim=*/false,
+                           TermMatchType::EXACT_ONLY);
+  EXPECT_THAT(node.EvaluateQuery(engine_.get()),
+              IsOkAndHolds(UnorderedElementsAre(5, 6)));
+}
+
+TEST_F(MonkeyTermQueryNodeTest, NoTokenMatch) {
+  // "ban" should NOT match doc6_ or doc7_ with EXACT_ONLY, even if it's a
+  // substring.
+  MonkeyTermQueryNode node("ban", /*is_prefix=*/false, /*is_verbatim=*/false,
+                           TermMatchType::EXACT_ONLY);
+  EXPECT_THAT(node.EvaluateQuery(engine_.get()),
+              IsOkAndHolds(::testing::IsEmpty()));
+}
+
+TEST_F(MonkeyTermQueryNodeTest, TokenPrefixMatch) {
+  // "ban" should match doc7_ with PREFIX match type because "banana" is a token
+  // and "ban" is a prefix of "banana". It should NOT match doc6_ because
+  // doc6_'s section is EXACT_ONLY.
+  MonkeyTermQueryNode node("ban", /*is_prefix=*/false, /*is_verbatim=*/false,
+                           TermMatchType::PREFIX);
+  EXPECT_THAT(node.EvaluateQuery(engine_.get()),
+              IsOkAndHolds(UnorderedElementsAre(6)));
+}
+
+TEST_F(MonkeyTermQueryNodeTest, SkipNonStringSection) {
+  // Searching for a term should not match doc8_ because "timestamp" is a
+  // non-string section and should be skipped.
+  MonkeyTermQueryNode node("12345", /*is_prefix=*/false, /*is_verbatim=*/false,
+                           TermMatchType::EXACT_ONLY);
+  EXPECT_THAT(node.EvaluateQuery(engine_.get()), IsOkAndHolds(IsEmpty()));
+}
+
 TEST_F(MonkeyTermQueryNodeTest, GenerateQueryString) {
   MonkeyTermQueryNode node1("foo", /*is_prefix=*/false, /*is_verbatim=*/false,
                             TermMatchType::EXACT_ONLY);
@@ -160,6 +234,11 @@ TEST_F(MonkeyTermQueryNodeTest, GenerateQueryString) {
   MonkeyTermQueryNode node4("foo", /*is_prefix=*/true, /*is_verbatim=*/true,
                             TermMatchType::EXACT_ONLY);
   EXPECT_THAT(node4.GenerateQueryString(), Eq("\"foo\"*"));
+
+  MonkeyTermQueryNode node5("foo", /*is_prefix=*/true, /*is_verbatim=*/true,
+                            TermMatchType::EXACT_ONLY,
+                            /*property_restricts=*/{"subject"});
+  EXPECT_THAT(node5.GenerateQueryString(), Eq("subject:\"foo\"*"));
 }
 
 }  // namespace

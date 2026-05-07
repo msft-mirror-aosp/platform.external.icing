@@ -1367,10 +1367,6 @@ TEST_F(SchemaStoreTest, SetDatabaseAddedTypesPreserveSchemaTypeIds) {
 }
 
 TEST_F(SchemaStoreTest, SetDatabaseReorderedSchemaPreservesSchemaTypeIds) {
-  if (!feature_flags_->enable_schema_database()) {
-    GTEST_SKIP() << "Test for schema database id assignment.";
-  }
-
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -1486,10 +1482,6 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedSchemaPreservesSchemaTypeIds) {
 
 TEST_F(SchemaStoreTest,
        SetDatabaseReorderedSchemaPreservesSchemaTypeIds_largeSchema) {
-  if (!feature_flags_->enable_schema_database()) {
-    GTEST_SKIP() << "Test for schema database id assignment.";
-  }
-
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -3166,44 +3158,17 @@ TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
           .Build();
 
   // Set the compatible schema and verify with GetSchema
-  if (feature_flags_->enable_schema_database()) {
-    // Setting reordered types is a no-op for the new set schema after schema
-    // database is enabled. So everything should be the same as before.
-    result = SchemaStore::SetSchemaResult();
-    result.success = true;
-    EXPECT_THAT(
-        schema_store->SetSchema(reordered_schema,
-                                /*ignore_errors_and_delete_documents=*/false),
-        IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
-
-    ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
-                               schema_store->GetFileBackedSchemaProto());
-    EXPECT_THAT(*actual_schema,
-                EqualsSchemaProtoIgnorePropertiesDigest(schema));
-    EXPECT_THAT(schema_store->GetFullSchemaProto(),
-                IsOkAndHolds(EqualsProto(schema)));
-  } else {
-    // Since we assign SchemaTypeIds based on order in the SchemaProto, this
-    // will cause SchemaTypeIds to change
-    result = SchemaStore::SetSchemaResult();
-    result.success = true;
-    // Old SchemaTypeId of "email"
-    result.old_schema_type_ids_changed.emplace(0);
-    // Old SchemaTypeId of "message"
-    result.old_schema_type_ids_changed.emplace(1);
-
-    // Set the compatible schema
-    EXPECT_THAT(
-        schema_store->SetSchema(reordered_schema,
-                                /*ignore_errors_and_delete_documents=*/false),
-        IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
-    ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
-                               schema_store->GetFileBackedSchemaProto());
-    EXPECT_THAT(*actual_schema,
-                EqualsSchemaProtoIgnorePropertiesDigest(reordered_schema));
-    EXPECT_THAT(schema_store->GetFullSchemaProto(),
-                IsOkAndHolds(EqualsProto(reordered_schema)));
-  }
+  result = SchemaStore::SetSchemaResult();
+  result.success = true;
+  EXPECT_THAT(
+      schema_store->SetSchema(reordered_schema,
+                              /*ignore_errors_and_delete_documents=*/false),
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                             schema_store->GetFileBackedSchemaProto());
+  EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 }
 
 TEST_F(SchemaStoreTest, IndexedPropertyChangeRequiresReindexingOk) {
@@ -5735,8 +5700,6 @@ TEST_F(
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_schema_database=*/true,
-        /*enable_smaller_decompression_buffer_size=*/true,
         /*enable_passing_filter_to_children=*/true,
         /*enable_proto_log_new_header_format=*/true,
         /*enable_reusable_decompression_buffer=*/true,
@@ -5745,7 +5708,6 @@ TEST_F(
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_embed_query_optimization=*/true,
         /*enable_schema_definition_deduping=*/true);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
@@ -5789,8 +5751,6 @@ TEST_F(
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_schema_database=*/true,
-        /*enable_smaller_decompression_buffer_size=*/true,
         /*enable_passing_filter_to_children=*/true,
         /*enable_proto_log_new_header_format=*/true,
         /*enable_reusable_decompression_buffer=*/true,
@@ -5799,7 +5759,6 @@ TEST_F(
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_embed_query_optimization=*/true,
         /*enable_schema_definition_deduping=*/false);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
@@ -6852,8 +6811,6 @@ TEST_P(SchemaStoreTestWithParam,
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_schema_database=*/true,
-        /*enable_smaller_decompression_buffer_size=*/true,
         /*enable_passing_filter_to_children=*/true,
         /*enable_proto_log_new_header_format=*/true,
         /*enable_reusable_decompression_buffer=*/true,
@@ -6862,7 +6819,6 @@ TEST_P(SchemaStoreTestWithParam,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_embed_query_optimization=*/true,
         /*enable_schema_definition_deduping=*/false);
 
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -6887,8 +6843,6 @@ TEST_P(SchemaStoreTestWithParam,
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_schema_database=*/true,
-        /*enable_smaller_decompression_buffer_size=*/true,
         /*enable_passing_filter_to_children=*/true,
         /*enable_proto_log_new_header_format=*/true,
         /*enable_reusable_decompression_buffer=*/true,
@@ -6897,7 +6851,6 @@ TEST_P(SchemaStoreTestWithParam,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_embed_query_optimization=*/true,
         /*enable_schema_definition_deduping=*/true);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
@@ -7102,8 +7055,6 @@ TEST_P(SchemaStoreTestWithParam,
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_schema_database=*/false,
-        /*enable_smaller_decompression_buffer_size=*/true,
         /*enable_passing_filter_to_children=*/true,
         /*enable_proto_log_new_header_format=*/true,
         /*enable_reusable_decompression_buffer=*/true,
@@ -7112,7 +7063,6 @@ TEST_P(SchemaStoreTestWithParam,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_embed_query_optimization=*/true,
         /*enable_schema_definition_deduping=*/false);
 
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -7137,8 +7087,6 @@ TEST_P(SchemaStoreTestWithParam,
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_schema_database=*/true,
-        /*enable_smaller_decompression_buffer_size=*/true,
         /*enable_passing_filter_to_children=*/true,
         /*enable_proto_log_new_header_format=*/true,
         /*enable_reusable_decompression_buffer=*/true,
@@ -7147,7 +7095,6 @@ TEST_P(SchemaStoreTestWithParam,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_embed_query_optimization=*/true,
         /*enable_schema_definition_deduping=*/true);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,

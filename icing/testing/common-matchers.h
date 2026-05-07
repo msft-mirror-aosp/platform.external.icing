@@ -114,7 +114,9 @@ MATCHER_P6(EqualsDocHitInfoIteratorCallStats, num_leaf_advance_calls_lite_index,
             absl_ports::StrJoin(stats.quantized_shards_read, ",",
                                 absl_ports::NumberFormatter()),
             "], num_embedding_bytes_read=",
-            std::to_string(stats.num_embedding_bytes_read), "}");
+            std::to_string(stats.num_embedding_bytes_read),
+            ", num_ann_embeddings_scored=",
+            std::to_string(stats.num_ann_embeddings_scored), "}");
       };
   *result_listener << IcingStringUtil::StringPrintf(
       "(actual is {num_leaf_advance_calls_lite_index=%d, "

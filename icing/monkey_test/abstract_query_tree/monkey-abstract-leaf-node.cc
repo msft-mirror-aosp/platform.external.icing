@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/monkey_test/abstract_query_tree/monkey-abstract-query-node.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-abstract-leaf-node.h"
 
 #include <algorithm>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -50,12 +49,6 @@ bool DoesNamespaceMatch(const MonkeyTokenizedDocument& document,
 }
 
 }  // namespace
-
-MonkeyAbstractLeafQueryNode::MonkeyAbstractLeafQueryNode(
-    std::vector<std::string> document_namespaces,
-    std::vector<std::string> document_schema_types)
-    : document_namespaces_(std::move(document_namespaces)),
-      document_schema_types_(std::move(document_schema_types)) {}
 
 libtextclassifier3::StatusOr<std::vector<DocumentId>>
 MonkeyAbstractLeafQueryNode::EvaluateQuery(

@@ -65,6 +65,9 @@ constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
 constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
     EMBEDDING_INDEXING_LINEAR_SEARCH =
         EmbeddingIndexingConfig::EmbeddingIndexingType::LINEAR_SEARCH;
+constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+    EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR = EmbeddingIndexingConfig::
+        EmbeddingIndexingType::APPROXIMATE_NEAREST_NEIGHBOR;
 constexpr EmbeddingIndexingConfig::QuantizationType::Code
     QUANTIZATION_TYPE_NONE = EmbeddingIndexingConfig::QuantizationType::NONE;
 constexpr EmbeddingIndexingConfig::QuantizationType::Code

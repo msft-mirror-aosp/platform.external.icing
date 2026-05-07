@@ -37,7 +37,7 @@ class MiniBatchKMeans {
     std::vector<int> partition_assignments;
 
     // The actual number of iterations performed.
-    uint32_t actual_iterations;
+    int actual_iterations;
   };
 
   // Computes the K-Means clustering for the given embeddings.

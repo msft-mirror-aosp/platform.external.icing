@@ -25,8 +25,6 @@ class FeatureFlags {
   explicit FeatureFlags(bool allow_circular_schema_definitions,
                         bool enable_repeated_field_joins,
                         bool enable_embedding_backup_generation,
-                        bool enable_schema_database,
-                        bool enable_smaller_decompression_buffer_size,
                         bool enable_passing_filter_to_children,
                         bool enable_proto_log_new_header_format,
                         bool enable_reusable_decompression_buffer,
@@ -35,14 +33,10 @@ class FeatureFlags {
                         int64_t expired_document_purge_threshold_ms,
                         bool enable_non_existent_qualified_id_join,
                         bool enable_skip_set_schema_type_equality_check,
-                        bool enable_embed_query_optimization,
                         bool enable_schema_definition_deduping)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_repeated_field_joins_(enable_repeated_field_joins),
         enable_embedding_backup_generation_(enable_embedding_backup_generation),
-        enable_schema_database_(enable_schema_database),
-        enable_smaller_decompression_buffer_size_(
-            enable_smaller_decompression_buffer_size),
         enable_passing_filter_to_children_(enable_passing_filter_to_children),
         enable_proto_log_new_header_format_(enable_proto_log_new_header_format),
         enable_reusable_decompression_buffer_(
@@ -55,7 +49,6 @@ class FeatureFlags {
             enable_non_existent_qualified_id_join),
         enable_skip_set_schema_type_equality_check_(
             enable_skip_set_schema_type_equality_check),
-        enable_embed_query_optimization_(enable_embed_query_optimization),
         enable_schema_definition_deduping_(enable_schema_definition_deduping) {}
 
   bool allow_circular_schema_definitions() const {
@@ -70,11 +63,6 @@ class FeatureFlags {
     return enable_embedding_backup_generation_;
   }
 
-  bool enable_schema_database() const { return enable_schema_database_; }
-
-  bool enable_smaller_decompression_buffer_size() const {
-    return enable_smaller_decompression_buffer_size_;
-  }
 
   bool enable_passing_filter_to_children() const {
     return enable_passing_filter_to_children_;
@@ -108,9 +96,6 @@ class FeatureFlags {
     return enable_skip_set_schema_type_equality_check_;
   }
 
-  bool enable_embed_query_optimization() const {
-    return enable_embed_query_optimization_;
-  }
 
   bool enable_schema_definition_deduping() const {
     return enable_schema_definition_deduping_;
@@ -128,12 +113,6 @@ class FeatureFlags {
   // properties.
   bool enable_embedding_backup_generation_;
 
-  bool enable_schema_database_;
-
-  // Whether to enable strict page byte size limit enforcement in
-  // ResultRetrieverV2.
-
-  bool enable_smaller_decompression_buffer_size_;
 
   bool enable_passing_filter_to_children_;
 
@@ -185,12 +164,6 @@ class FeatureFlags {
   //   can be skipped if caller is AppSearch.
   bool enable_skip_set_schema_type_equality_check_;
 
-  // Whether to enable a query optimization that will rewrite embedding query
-  // iterators that are being AND'ed with other iterators such that those other
-  // iterators can be pushed down into the embedding iterator as a delegate.
-  // This allows us to avoid reading and scoring embeddings for documents that
-  // don't match the other requirements of the query.
-  bool enable_embed_query_optimization_;
 
   // Whether to enable deduping for the schema's type definitions.
   bool enable_schema_definition_deduping_;

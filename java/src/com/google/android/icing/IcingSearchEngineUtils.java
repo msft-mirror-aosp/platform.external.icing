@@ -32,6 +32,7 @@ import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
 import com.google.android.icing.proto.HandleExpiredDocumentsResultProto;
 import com.google.android.icing.proto.InitializeResultProto;
+import com.google.android.icing.proto.MaintainAnnIndexResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PutResultProto;
@@ -304,6 +305,33 @@ public final class IcingSearchEngineUtils {
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing HandleExpiredDocumentsResultProto.", e);
       return HandleExpiredDocumentsResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  /**
+   * Converts a byte array to a {@link MaintainAnnIndexResultProto}.
+   *
+   * @param maintainAnnIndexResultBytes the byte array to convert
+   * @return the {@link MaintainAnnIndexResultProto}
+   */
+  @NonNull
+  public static MaintainAnnIndexResultProto byteArrayToMaintainAnnIndexResultProto(
+      @Nullable byte[] maintainAnnIndexResultBytes) {
+    if (maintainAnnIndexResultBytes == null) {
+      Log.e(TAG, "Received null MaintainAnnIndexResultProto from native.");
+      return MaintainAnnIndexResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return MaintainAnnIndexResultProto.parseFrom(
+          maintainAnnIndexResultBytes, EXTENSION_REGISTRY_LITE);
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing MaintainAnnIndexResultProto.", e);
+      return MaintainAnnIndexResultProto.newBuilder()
           .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
           .build();
     }

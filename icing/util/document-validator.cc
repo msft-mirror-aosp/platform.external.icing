@@ -25,6 +25,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/index/embed/quantizer.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -145,7 +146,35 @@ libtextclassifier3::Status DocumentValidator::Validate(
       value_size = property.vector_values_size();
       for (const PropertyProto::VectorProto& vector_value :
            property.vector_values()) {
-        if (vector_value.values_size() == 0) {
+        if (vector_value.quantized_values().size() <= sizeof(Quantizer) &&
+            !vector_value.quantized_values().empty()) {
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Property '", property.name(),
+              "' has 'quantized_values' of invalid length for key: (",
+              document.namespace_(), ", ", document.uri(), ")."));
+        }
+        bool has_values = vector_value.values_size() > 0;
+        bool has_quantized_values = !vector_value.quantized_values().empty();
+        // Clients can change quantization_type in their schema, meaning that
+        // previously valid documents could become invalid if we make it an
+        // error.We log a warning instead of an error here to avoid breaking
+        // existing documents, and let it pass validation.
+        if (has_quantized_values &&
+            property_config.embedding_indexing_config().quantization_type() !=
+                EmbeddingIndexingConfig::QuantizationType::QUANTIZE_8_BIT) {
+          ICING_LOG(WARNING)
+              << "Property '" << property.name()
+              << "' has 'quantized_values' set but schema quantization_type is "
+                 "not QUANTIZE_8_BIT for key: ("
+              << document.namespace_() << ", " << document.uri() << ").";
+        }
+        if (has_values && has_quantized_values) {
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Property '", property.name(),
+              "' has both 'values' and 'quantized_values' set for key: (",
+              document.namespace_(), ", ", document.uri(), ")."));
+        }
+        if (!has_values && !has_quantized_values) {
           return absl_ports::InvalidArgumentError(absl_ports::StrCat(
               "Property '", property.name(),
               "' contains empty vectors for key: (", document.namespace_(),

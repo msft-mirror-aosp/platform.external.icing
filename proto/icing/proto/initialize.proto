@@ -290,7 +290,8 @@ message IcingSearchEngineOptions {
   //
   // TODO - b/337913932: Remove this flag once the schema database is fully
   // rolled out.
-  optional bool enable_schema_database = 18;
+  // DEPRECATED: The flag is always treated as true.
+  optional bool enable_schema_database = 18 [deprecated = true, default = true];
 
   // Whether to enable embedding index.
   // If set to false, the EmbeddingIndex will only be created with a header, and
@@ -411,9 +412,9 @@ message IcingSearchEngineOptions {
   // compression_level. 0 means always compress.
   optional uint32 compression_threshold_bytes = 36;
 
-  // Whether to enable using smaller input buffer size for decompression
-  // If set to false, the default buffer size of 64kb will be used.
-  optional bool enable_smaller_decompression_buffer_size = 39;
+  // DEPRECATED: The flag is always treated as true.
+  optional bool enable_smaller_decompression_buffer_size = 39
+      [deprecated = true, default = true];
 
   // Whether to enable the Eigen library for embedding scoring.
   // If set to true **and** Eigen is compiled in (when ICING_DISABLE_EIGEN is
@@ -504,7 +505,8 @@ message IcingSearchEngineOptions {
   // iterators can be pushed down into the embedding iterator as a delegate.
   // This allows us to avoid reading and scoring embeddings for documents that
   // don't match the other requirements of the query.
-  optional bool enable_embed_query_optimization = 52;
+  optional bool enable_embed_query_optimization = 52
+      [deprecated = true, default = true];
 
   // Whether to enable deduping schema types's property definitions when
   // storing SchemaTypeConfigs in the schema store.
