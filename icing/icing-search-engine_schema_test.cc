@@ -415,6 +415,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaCompatibleVersionUpdateSucceeds) {
     SetSchemaResultProto expected_set_schema_result;
     expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
     expected_set_schema_result.mutable_new_schema_types()->Add("Email");
+    expected_set_schema_result.set_deleted_document_count(0);
     expected_set_schema_result.set_needs_persist_type(
         PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
     EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -449,6 +450,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaCompatibleVersionUpdateSucceeds) {
     expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
     expected_set_schema_result.mutable_fully_compatible_changed_schema_types()
         ->Add("Email");
+    expected_set_schema_result.set_deleted_document_count(0);
     expected_set_schema_result.set_needs_persist_type(
         PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
     EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -932,6 +934,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaMultipleDatabases) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -998,6 +1001,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaMultipleDatabases) {
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   // SetSchema db operation will preserve the existing schema type ids as much
   // as possible. In this case, since "db1/type"'s id is unchanged, the document
   // store and index are not updated. Therefore, no need to flush.
@@ -1093,6 +1097,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -1178,6 +1183,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type_2");
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   // SetSchema db operation will preserve the existing schema type ids as much
   // as possible. In this case, since "db1/type"'s id is unchanged, the document
   // store and index are not updated. Therefore, no need to flush.
@@ -1273,6 +1279,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -1302,6 +1309,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   // SetSchema db operation will preserve the existing schema type ids as much
   // as possible. In this case, since "db1/type"'s id is unchanged, the document
   // store and index are not updated. Therefore, no need to flush.
@@ -1384,6 +1392,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_has_term_index_restored(true);
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_embedding_index_restored(true);
@@ -1503,6 +1512,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -1532,6 +1542,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   // SetSchema db operation will preserve the existing schema type ids as much
   // as possible. In this case, since "db1/type"'s id is unchanged, the document
   // store and index are not updated. Therefore, no need to flush.
@@ -1706,6 +1717,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Schema");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -1773,6 +1785,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Schema");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_has_term_index_restored(true);
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
@@ -1827,6 +1840,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Schema");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -1890,6 +1904,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Schema");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_has_term_index_restored(true);
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
@@ -2130,6 +2145,7 @@ TEST_F(
       ->Add("Person");
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
       ->Add("Person");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_has_term_index_restored(true);
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
@@ -2223,6 +2239,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -2328,6 +2345,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Email");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_has_term_index_restored(true);
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
@@ -2455,6 +2473,7 @@ TEST_F(
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -2630,6 +2649,7 @@ TEST_F(
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Email");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_has_term_index_restored(true);
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
@@ -2702,6 +2722,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Message");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -2821,6 +2842,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
       ->Add("Message");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_has_term_index_restored(false);
   expected_set_schema_result.set_has_integer_index_restored(false);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
@@ -2991,6 +3013,7 @@ TEST_F(
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -3146,6 +3169,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -3308,6 +3332,7 @@ TEST_F(
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -3470,6 +3495,7 @@ TEST_F(
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -3641,6 +3667,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -3773,6 +3800,7 @@ TEST_F(
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -3838,6 +3866,7 @@ TEST_F(
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
       ->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(1);
   expected_set_schema_result.set_has_term_index_restored(false);
   expected_set_schema_result.set_has_integer_index_restored(false);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
@@ -3857,6 +3886,372 @@ TEST_F(
   EXPECT_THAT(
       icing.Get("namespace", "email", GetResultSpecProto::default_instance()),
       EqualsProto(expected_get_result_proto));
+}
+
+TEST_F(
+    IcingSearchEngineSchemaTest,
+    ForceSetSchema_DeleteIncompatibleDocumentsShouldTriggerDeletePropagation) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_qualified_id_join_index_v3(true);
+  options.set_enable_soft_index_restoration(true);
+  options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(0);
+
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaProto schema1 =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("TestType1")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType2")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("target")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType3")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("label")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema1);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
+  std::sort(set_schema_result.mutable_new_schema_types()->begin(),
+            set_schema_result.mutable_new_schema_types()->end());
+
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_new_schema_types()->Add("TestType1");
+  expected_set_schema_result.mutable_new_schema_types()->Add("TestType2");
+  expected_set_schema_result.mutable_new_schema_types()->Add("TestType3");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Create 3 documents. Doc2 holds a reference to doc1, and doc3 holds a
+  // reference to doc2.
+  //
+  // doc1(TestType1) -> doc2(TestType2) -> doc3(TestType3)
+  DocumentProto doc1 = DocumentBuilder()
+                           .SetKey("namespace", "doc1")
+                           .SetSchema("TestType1")
+                           .SetCreationTimestampMs(1000)
+                           .AddStringProperty("prop1", "foo")
+                           .Build();
+  DocumentProto doc2 = DocumentBuilder()
+                           .SetKey("namespace", "doc2")
+                           .SetSchema("TestType2")
+                           .SetCreationTimestampMs(1000)
+                           .AddStringProperty("target", "namespace#doc1")
+                           .Build();
+  DocumentProto doc3 = DocumentBuilder()
+                           .SetKey("namespace", "doc3")
+                           .SetSchema("TestType3")
+                           .SetCreationTimestampMs(1000)
+                           .AddStringProperty("label", "namespace#doc2")
+                           .Build();
+
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(doc2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(doc3).status(), ProtoIsOk());
+
+  // Now update the schema:
+  // - Add 1 required property to TestType1.
+  //
+  // Doc1 will be deleted due to missing the new required property, and doc2 and
+  // doc3 will be deleted due to the delete propagation.
+  SchemaProto schema2 =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("TestType1")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("RequiredProp")
+                                        .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                           TOKENIZER_NONE)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType2")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("target")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType3")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("label")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  set_schema_result =
+      icing.SetSchema(schema2, /*ignore_errors_and_delete_documents=*/true);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_incompatible_schema_types()->Add(
+      "TestType1");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  // All 3 documents should be deleted.
+  expected_set_schema_result.set_deleted_document_count(3);
+  // Since a document was deleted, we need to do a recovery proof flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Attempt to get doc1, doc2, and doc3. They should all be deleted.
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto1.mutable_status()->set_message(
+      "Document (namespace, doc1) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "doc1", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto1));
+
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_google::protobuf.mutable_status()->set_message(
+      "Document (namespace, doc2) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "doc2", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_google::protobuf));
+
+  GetResultProto expected_get_result_proto3;
+  expected_get_result_proto3.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto3.mutable_status()->set_message(
+      "Document (namespace, doc3) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "doc3", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto3));
+}
+
+TEST_F(
+    IcingSearchEngineSchemaTest,
+    ForceSetSchema_DeleteIncompatibleDocumentsShouldTriggerDeletePropagationAfterJoinIndexRebuild) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_qualified_id_join_index_v3(true);
+  options.set_enable_soft_index_restoration(true);
+  options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(0);
+
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaProto schema1 =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("TestType1")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType2")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("targetA")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("targetB")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_NONE,
+                                       DELETE_PROPAGATION_TYPE_NONE)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType3")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("label")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema1);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
+  std::sort(set_schema_result.mutable_new_schema_types()->begin(),
+            set_schema_result.mutable_new_schema_types()->end());
+
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_new_schema_types()->Add("TestType1");
+  expected_set_schema_result.mutable_new_schema_types()->Add("TestType2");
+  expected_set_schema_result.mutable_new_schema_types()->Add("TestType3");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Create 3 documents. Doc2 holds a reference to doc1 (in "targetA"), and doc3
+  // holds a reference to doc2.
+  //
+  // doc1(TestType1) -> doc2(TestType2) -> doc3(TestType3)
+  DocumentProto doc1 = DocumentBuilder()
+                           .SetKey("namespace", "doc1")
+                           .SetSchema("TestType1")
+                           .SetCreationTimestampMs(1000)
+                           .AddStringProperty("prop1", "foo")
+                           .Build();
+  DocumentProto doc2 = DocumentBuilder()
+                           .SetKey("namespace", "doc2")
+                           .SetSchema("TestType2")
+                           .SetCreationTimestampMs(1000)
+                           .AddStringProperty("targetA", "namespace#doc1")
+                           .Build();
+  DocumentProto doc3 = DocumentBuilder()
+                           .SetKey("namespace", "doc3")
+                           .SetSchema("TestType3")
+                           .SetCreationTimestampMs(1000)
+                           .AddStringProperty("label", "namespace#doc2")
+                           .Build();
+
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(doc2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(doc3).status(), ProtoIsOk());
+
+  // Now update the schema to:
+  // - Add 1 required property to TestType1.
+  // - Enable join and delete propagation for "targetB" in TestType2.
+  // - Disable join and delete propagation for "targetA" in TestType2.
+  //
+  // In this case, doc1 will be deleted due to the required property. Doc2 will
+  // not be deleted because targetA does not have delete propagation enabled
+  // in the new schema and targetB does not contain any dependency. Doc3 will
+  // not be deleted either.
+  //
+  // Note:
+  // - Old: "targetA" is joinable property id 0. doc2 has 1 join data (in
+  //   "targetA"), referencing doc1.
+  // - New: "targetB" is joinable property id 0. doc2 contains no join data.
+  //
+  // If the delete propagation of doc1 was evaluated BEFORE join index rebuild,
+  // then it would've read the stale join data and propagate deletion to doc2
+  // and doc3 incorrectly.
+  SchemaProto schema2 =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("TestType1")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("RequiredProp")
+                                        .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                           TOKENIZER_NONE)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType2")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("targetA")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_NONE,
+                                       DELETE_PROPAGATION_TYPE_NONE)
+                                   .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("targetB")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType3")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("label")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  set_schema_result =
+      icing.SetSchema(schema2, /*ignore_errors_and_delete_documents=*/true);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_incompatible_schema_types()->Add(
+      "TestType1");
+  expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
+      ->Add("TestType2");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_has_term_index_restored(false);
+  expected_set_schema_result.set_has_integer_index_restored(false);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
+  expected_set_schema_result.set_has_embedding_index_restored(false);
+  // Only doc1 should be deleted.
+  expected_set_schema_result.set_deleted_document_count(1);
+  // Since it is a join incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Attempt to get doc1, doc2 and doc3.
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto1.mutable_status()->set_message(
+      "Document (namespace, doc1) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "doc1", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto1));
+
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_google::protobuf.mutable_document() = doc2;
+  EXPECT_THAT(
+      icing.Get("namespace", "doc2", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_google::protobuf));
+
+  GetResultProto expected_get_result_proto3;
+  expected_get_result_proto3.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto3.mutable_document() = doc3;
+  EXPECT_THAT(
+      icing.Get("namespace", "doc3", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto3));
 }
 
 TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
@@ -4080,6 +4475,7 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseOk) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -4108,6 +4504,7 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseOk) {
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   // No need to flush since:
   // - Schema type id is not changed.
   // - No document is deleted.
@@ -4175,6 +4572,7 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseNotFound) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));

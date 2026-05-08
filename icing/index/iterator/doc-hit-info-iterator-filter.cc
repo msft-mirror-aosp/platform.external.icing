@@ -65,10 +65,8 @@ bool PassFilterPredicateToChildrenAndHandle(
 /* static */ std::unique_ptr<DocHitInfoIterator>
 DocHitInfoIteratorFilter::ApplyFilter(
     std::unique_ptr<DocHitInfoIterator> iterator,
-    const DocumentFilterPredicate* predicate,
-    bool enable_passing_filter_to_children) {
-  if (enable_passing_filter_to_children &&
-      PassFilterPredicateToChildrenAndHandle(iterator.get(), predicate)) {
+    const DocumentFilterPredicate* predicate) {
+  if (PassFilterPredicateToChildrenAndHandle(iterator.get(), predicate)) {
     return iterator;
   }
   return std::unique_ptr<DocHitInfoIteratorFilter>(

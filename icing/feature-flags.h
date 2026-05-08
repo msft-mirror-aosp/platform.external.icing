@@ -25,7 +25,6 @@ class FeatureFlags {
   explicit FeatureFlags(bool allow_circular_schema_definitions,
                         bool enable_repeated_field_joins,
                         bool enable_embedding_backup_generation,
-                        bool enable_passing_filter_to_children,
                         bool enable_proto_log_new_header_format,
                         bool enable_reusable_decompression_buffer,
                         bool enable_schema_type_id_optimization,
@@ -33,11 +32,11 @@ class FeatureFlags {
                         int64_t expired_document_purge_threshold_ms,
                         bool enable_non_existent_qualified_id_join,
                         bool enable_skip_set_schema_type_equality_check,
-                        bool enable_schema_definition_deduping)
+                        bool enable_schema_definition_deduping,
+                        bool enable_delete_propagation_from)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_repeated_field_joins_(enable_repeated_field_joins),
         enable_embedding_backup_generation_(enable_embedding_backup_generation),
-        enable_passing_filter_to_children_(enable_passing_filter_to_children),
         enable_proto_log_new_header_format_(enable_proto_log_new_header_format),
         enable_reusable_decompression_buffer_(
             enable_reusable_decompression_buffer),
@@ -49,7 +48,8 @@ class FeatureFlags {
             enable_non_existent_qualified_id_join),
         enable_skip_set_schema_type_equality_check_(
             enable_skip_set_schema_type_equality_check),
-        enable_schema_definition_deduping_(enable_schema_definition_deduping) {}
+        enable_schema_definition_deduping_(enable_schema_definition_deduping),
+        enable_delete_propagation_from_(enable_delete_propagation_from) {}
 
   bool allow_circular_schema_definitions() const {
     return allow_circular_schema_definitions_;
@@ -61,11 +61,6 @@ class FeatureFlags {
 
   bool enable_embedding_backup_generation() const {
     return enable_embedding_backup_generation_;
-  }
-
-
-  bool enable_passing_filter_to_children() const {
-    return enable_passing_filter_to_children_;
   }
 
   bool enable_proto_log_new_header_format() const {
@@ -101,6 +96,10 @@ class FeatureFlags {
     return enable_schema_definition_deduping_;
   }
 
+  bool enable_delete_propagation_from() const {
+    return enable_delete_propagation_from_;
+  }
+
  private:
   // Whether to allow circular references in the schema definition. This was
   // added in the Android U timeline and is not a trunk-stable flag.
@@ -114,7 +113,7 @@ class FeatureFlags {
   bool enable_embedding_backup_generation_;
 
 
-  bool enable_passing_filter_to_children_;
+
 
   // Whether to enable the new header format (refactor legacy format and
   // introduce unsynced tail checksum) related changes in
@@ -167,6 +166,9 @@ class FeatureFlags {
 
   // Whether to enable deduping for the schema's type definitions.
   bool enable_schema_definition_deduping_;
+
+  // Whether to enable delete propagation PROPAGATE_FROM.
+  bool enable_delete_propagation_from_;
 };
 
 }  // namespace lib

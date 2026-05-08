@@ -47,8 +47,8 @@
 namespace icing {
 namespace lib {
 
+using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::DoubleNear;
-using ::testing::EqualsProto;
 using ::testing::Matches;
 
 constexpr float kEps = 1e-6;
@@ -161,6 +161,15 @@ MATCHER_P5(EqualsDocumentAssociatedScoreData, corpus_id, document_score,
          arg.length_in_tokens() == length_in_tokens &&
          expected_has_valid_scorable_property_cache_index ==
              has_valid_scorable_property_cache_index;
+}
+
+MATCHER_P2(EqualsDocumentGroupKey, schema_type_name, name_space, "") {
+  return arg.schema_type_name == schema_type_name &&
+         arg.name_space == name_space;
+}
+
+MATCHER_P2(EqualsDocumentUriId, uri, document_id, "") {
+  return arg.uri == uri && arg.document_id == document_id;
 }
 
 MATCHER_P4(EqualsDocumentMetadata, schema_type_name, name_space, uri,

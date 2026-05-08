@@ -5700,7 +5700,6 @@ TEST_F(
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_passing_filter_to_children=*/true,
         /*enable_proto_log_new_header_format=*/true,
         /*enable_reusable_decompression_buffer=*/true,
         /*enable_schema_type_id_optimization=*/true,
@@ -5708,7 +5707,8 @@ TEST_F(
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/true);
+        /*enable_schema_definition_deduping=*/true,
+        /*enable_delete_propagation_from=*/true);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -5751,7 +5751,6 @@ TEST_F(
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_passing_filter_to_children=*/true,
         /*enable_proto_log_new_header_format=*/true,
         /*enable_reusable_decompression_buffer=*/true,
         /*enable_schema_type_id_optimization=*/true,
@@ -5759,7 +5758,8 @@ TEST_F(
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/false);
+        /*enable_schema_definition_deduping=*/false,
+        /*enable_delete_propagation_from=*/true);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -6811,7 +6811,6 @@ TEST_P(SchemaStoreTestWithParam,
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_passing_filter_to_children=*/true,
         /*enable_proto_log_new_header_format=*/true,
         /*enable_reusable_decompression_buffer=*/true,
         /*enable_schema_type_id_optimization=*/true,
@@ -6819,7 +6818,8 @@ TEST_P(SchemaStoreTestWithParam,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/false);
+        /*enable_schema_definition_deduping=*/false,
+        /*enable_delete_propagation_from=*/true);
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
@@ -6843,7 +6843,6 @@ TEST_P(SchemaStoreTestWithParam,
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_passing_filter_to_children=*/true,
         /*enable_proto_log_new_header_format=*/true,
         /*enable_reusable_decompression_buffer=*/true,
         /*enable_schema_type_id_optimization=*/true,
@@ -6851,7 +6850,8 @@ TEST_P(SchemaStoreTestWithParam,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/true);
+        /*enable_schema_definition_deduping=*/true,
+        /*enable_delete_propagation_from=*/true);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -7055,7 +7055,6 @@ TEST_P(SchemaStoreTestWithParam,
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_passing_filter_to_children=*/true,
         /*enable_proto_log_new_header_format=*/true,
         /*enable_reusable_decompression_buffer=*/true,
         /*enable_schema_type_id_optimization=*/true,
@@ -7063,7 +7062,8 @@ TEST_P(SchemaStoreTestWithParam,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/false);
+        /*enable_schema_definition_deduping=*/false,
+        /*enable_delete_propagation_from=*/true);
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
@@ -7087,7 +7087,6 @@ TEST_P(SchemaStoreTestWithParam,
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_passing_filter_to_children=*/true,
         /*enable_proto_log_new_header_format=*/true,
         /*enable_reusable_decompression_buffer=*/true,
         /*enable_schema_type_id_optimization=*/true,
@@ -7095,7 +7094,8 @@ TEST_P(SchemaStoreTestWithParam,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/true);
+        /*enable_schema_definition_deduping=*/true,
+        /*enable_delete_propagation_from=*/true);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,

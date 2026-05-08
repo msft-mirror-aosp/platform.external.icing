@@ -14,11 +14,10 @@
 
 #include "icing/monkey_test/abstract_query_tree/monkey-abstract-leaf-node.h"
 
-#include <algorithm>
-#include <string>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/monkey_test/monkey-test-util.h"
 #include "icing/monkey_test/in-memory-icing-search-engine.h"
 #include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/proto/schema.pb.h"
@@ -27,28 +26,6 @@
 
 namespace icing {
 namespace lib {
-
-namespace {
-
-bool DoesSchemaTypeMatch(const MonkeyTokenizedDocument& document,
-                         const std::vector<std::string>& schema_type_filters) {
-  if (schema_type_filters.empty()) {
-    return true;
-  }
-  return std::find(schema_type_filters.begin(), schema_type_filters.end(),
-                   document.document.schema()) != schema_type_filters.end();
-}
-
-bool DoesNamespaceMatch(const MonkeyTokenizedDocument& document,
-                        const std::vector<std::string>& namespace_filters) {
-  if (namespace_filters.empty()) {
-    return true;
-  }
-  return std::find(namespace_filters.begin(), namespace_filters.end(),
-                   document.document.namespace_()) != namespace_filters.end();
-}
-
-}  // namespace
 
 libtextclassifier3::StatusOr<std::vector<DocumentId>>
 MonkeyAbstractLeafQueryNode::EvaluateQuery(

@@ -39,10 +39,13 @@
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
+#include "icing/index/embed/doc-hit-info-iterator-embedding-v2.h"
 #include "icing/index/embed/embedding-hit.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/embed/embedding-reference.h"
 #include "icing/index/embed/quantizer.h"
 #include "icing/index/hit/hit.h"
+#include "icing/index/iterator/doc-hit-info-iterator-test-util.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/portable/gzip_stream.h"
 #include "icing/proto/document.pb.h"
@@ -2927,6 +2930,30 @@ TEST_F(EmbeddingIndexTest, OptimizeWithMetadataToEmptyIndex) {
   // index being completely empty.
   ICING_EXPECT_OK(embedding_index_->Optimize(
       document_store_.get(), schema_store_.get(), document_id_old_to_new, 0));
+}
+
+TEST_F(EmbeddingIndexTest, CanAdoptDelegateReturnsFalseWhenHasDelegate) {
+  PropertyProto::VectorProto query_vector = test_vector1_;
+
+  EmbeddingQueryResults::EmbeddingQueryMatchInfoMap info_map;
+  std::vector<double> global_scores;
+  std::vector<uint32_t> cluster_ids = {embedding_util::kLinearSearchClusterId};
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIteratorEmbeddingV2> iterator,
+      DocHitInfoIteratorEmbeddingV2::Create(
+          &query_vector, SearchSpecProto::EmbeddingQueryMetricType::COSINE,
+          /*score_low=*/0.0, /*score_high=*/1.0, &info_map, &global_scores,
+          /*global_section_infos=*/nullptr, cluster_ids, embedding_index_.get(),
+          document_store_.get(), schema_store_.get(), /*current_time_ms=*/0));
+
+  EXPECT_TRUE(iterator->CanAdoptDelegate());
+
+  auto dummy_delegate = std::make_unique<DocHitInfoIteratorDummy>();
+  iterator->AdoptDelegate(std::move(dummy_delegate),
+                          /*delegate_node_is_right_most=*/true);
+
+  EXPECT_FALSE(iterator->CanAdoptDelegate());
 }
 
 }  // namespace lib
