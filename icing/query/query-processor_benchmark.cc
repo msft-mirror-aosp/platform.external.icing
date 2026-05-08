@@ -99,11 +99,12 @@ void AddTokenToIndex(Index* index, DocumentId document_id, SectionId section_id,
 
 std::unique_ptr<Index> CreateIndex(const IcingFilesystem& icing_filesystem,
                                    const Filesystem& filesystem,
-                                   const std::string& index_dir) {
+                                   const std::string& index_dir,
+                                   const FeatureFlags& feature_flags) {
   Index::Options options(index_dir, /*index_merge_size=*/1024 * 1024 * 10,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
-  return Index::Create(options, &filesystem, &icing_filesystem).ValueOrDie();
+  return Index::Create(options, &filesystem, &icing_filesystem, &feature_flags)
+      .ValueOrDie();
 }
 
 std::unique_ptr<Normalizer> CreateNormalizer() {
@@ -152,7 +153,7 @@ void BM_QueryOneTerm(benchmark::State& state) {
   }
 
   std::unique_ptr<Index> index =
-      CreateIndex(icing_filesystem, filesystem, index_dir);
+      CreateIndex(icing_filesystem, filesystem, index_dir, feature_flags);
   // TODO(b/249829533): switch to use persistent numeric index.
   ICING_ASSERT_OK_AND_ASSIGN(
       auto numeric_index,
@@ -183,7 +184,8 @@ void BM_QueryOneTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             &feature_flags));
+                             &feature_flags,
+                             /*num_shards=*/32));
 
   DocumentId document_id = document_store
                                ->Put(document_util::CreateDocumentWrapper(
@@ -292,7 +294,7 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   }
 
   std::unique_ptr<Index> index =
-      CreateIndex(icing_filesystem, filesystem, index_dir);
+      CreateIndex(icing_filesystem, filesystem, index_dir, feature_flags);
   // TODO(b/249829533): switch to use persistent numeric index.
   ICING_ASSERT_OK_AND_ASSIGN(
       auto numeric_index,
@@ -323,7 +325,8 @@ void BM_QueryFiveTerms(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             &feature_flags));
+                             &feature_flags,
+                             /*num_shards=*/32));
 
   DocumentId document_id = document_store
                                ->Put(document_util::CreateDocumentWrapper(
@@ -450,7 +453,7 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   }
 
   std::unique_ptr<Index> index =
-      CreateIndex(icing_filesystem, filesystem, index_dir);
+      CreateIndex(icing_filesystem, filesystem, index_dir, feature_flags);
   // TODO(b/249829533): switch to use persistent numeric index.
   ICING_ASSERT_OK_AND_ASSIGN(
       auto numeric_index,
@@ -481,7 +484,8 @@ void BM_QueryDiacriticTerm(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             &feature_flags));
+                             &feature_flags,
+                             /*num_shards=*/32));
 
   DocumentId document_id = document_store
                                ->Put(document_util::CreateDocumentWrapper(
@@ -593,7 +597,7 @@ void BM_QueryHiragana(benchmark::State& state) {
   }
 
   std::unique_ptr<Index> index =
-      CreateIndex(icing_filesystem, filesystem, index_dir);
+      CreateIndex(icing_filesystem, filesystem, index_dir, feature_flags);
   // TODO(b/249829533): switch to use persistent numeric index.
   ICING_ASSERT_OK_AND_ASSIGN(
       auto numeric_index,
@@ -624,7 +628,8 @@ void BM_QueryHiragana(benchmark::State& state) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto embedding_index,
       EmbeddingIndex::Create(&filesystem, embedding_index_dir, &clock,
-                             &feature_flags));
+                             &feature_flags,
+                             /*num_shards=*/32));
 
   DocumentId document_id = document_store
                                ->Put(document_util::CreateDocumentWrapper(

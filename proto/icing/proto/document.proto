@@ -107,11 +107,24 @@ message PropertyProto {
   message VectorProto {
     // The values of the vector.
     repeated float values = 1 [packed = true];
+
     // The model signature of the vector, which can be any string used to
     // identify the model, so that embedding searches can be restricted only to
     // the vectors with the matching target signature.
     // Eg: "universal-sentence-encoder_v0"
     optional string model_signature = 2;
+
+    // The quantized values of the vector.
+    // This can only be used when quantization_type in the schema is set to
+    // QUANTIZE_8_BIT. When this field is set, the "values" field MUST NOT be
+    // set.
+    //
+    // Format:
+    // The data MUST be binary compatible with Icing's internal storage format:
+    // [Quantizer Header (8 bytes)][Quantized Data (N bytes)]
+    // - Quantizer Header: { float min_value; float scale; }
+    // - Quantized Data: uint8_t values for each dimension.
+    optional bytes quantized_values = 3;
   }
   repeated VectorProto vector_values = 8;
 
@@ -130,7 +143,7 @@ message PropertyProto {
 }
 
 // Holds a list of PutResultProto.
-// Next tag: 5
+// Next tag: 6
 message BatchPutResultProto {
   // The overall status of doing the batch put. It is independent of the status
   // of the individual PutResultProtos. E.g. we may still return OK here even if
@@ -146,10 +159,14 @@ message BatchPutResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 4;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 5;
 }
 
 // Result of a call to IcingSearchEngine.Put
-// Next tag: 6
+// Next tag: 8
 message PutResultProto {
   // Status code can be one of:
   //   OK
@@ -178,10 +195,23 @@ message PutResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 5;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 6;
+
+  // The expiration timestamp (in milliseconds) of the newly added document.
+  // This field can be used by the caller (mostly AppSearch) for expired
+  // document and expiration propagation handling.
+  // - INT64_MAX means the new document never expires.
+  // - This field is set only when the document is added successfully (i.e.
+  //   status is OK). The caller should ignore this field if the value is 0,
+  //   since it is impossible to have a document expires at t = 0.
+  optional int64 document_expiration_timestamp_ms = 7;
 }
 
 // Result of a call to IcingSearchEngine.Get
-// Next tag: 5
+// Next tag: 6
 message GetResultProto {
   // Status code can be one of:
   //   OK
@@ -208,20 +238,28 @@ message GetResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 4;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 5;
 }
 
 // Result of a call to IcingSearchEngine.BatchGet
-// Next tag: 4
+// Next tag: 5
 message BatchGetResultProto {
   optional StatusProto status = 1;
   repeated GetResultProto get_result_protos = 2;
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }
 
 // Result of a call to IcingSearchEngine.GetAllNamespaces
-// Next tag: 4
+// Next tag: 5
 message GetAllNamespacesResultProto {
   // Status code can be one of:
   //   OK
@@ -235,10 +273,14 @@ message GetAllNamespacesResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }
 
 // Result of a call to IcingSearchEngine.Delete
-// Next tag: 4
+// Next tag: 5
 message DeleteResultProto {
   // Status code can be one of:
   //   OK
@@ -257,10 +299,14 @@ message DeleteResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }
 
 // Result of a call to IcingSearchEngine.DeleteByNamespace
-// Next tag: 4
+// Next tag: 5
 message DeleteByNamespaceResultProto {
   // Status code can be one of:
   //   OK
@@ -279,10 +325,14 @@ message DeleteByNamespaceResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }
 
 // Result of a call to IcingSearchEngine.DeleteBySchemaType
-// Next tag: 4
+// Next tag: 5
 message DeleteBySchemaTypeResultProto {
   // Status code can be one of:
   //   OK
@@ -301,10 +351,14 @@ message DeleteBySchemaTypeResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }
 
 // Result of a call to IcingSearchEngine.DeleteByQuery
-// Next tag: 6
+// Next tag: 7
 message DeleteByQueryResultProto {
   // Status code can be one of:
   //   OK
@@ -338,4 +392,46 @@ message DeleteByQueryResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 5;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 6;
+}
+
+// Next tag: 6
+message HandleExpiredDocumentsResultProto {
+  // Status code can be one of:
+  //   OK
+  //   FAILED_PRECONDITION
+  //   NOT_FOUND
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  //
+  // TODO(b/147699081): Fix error codes: +ABORTED.
+  // go/icing-library-apis.
+  optional StatusProto status = 1;
+
+  // Metadata for the deleted documents, grouped by namespace and schema.
+  message DocumentGroupInfo {
+    optional string name_space = 1;
+    optional string schema = 2;
+    repeated string uris = 3;
+  }
+  // A list of groups of deleted documents. A document was deleted because:
+  // - It was expired.
+  // - OR it was a child document of an expired document with delete propagation
+  //   enabled.
+  repeated DocumentGroupInfo deleted_documents = 2;
+
+  // The number of expired documents that were deleted. This DOES NOT include
+  // the propagated child documents.
+  optional int32 num_expired_documents = 3;
+
+  // The number of deleted documents that were propagated from the expired
+  // documents.
+  optional int32 num_propagated_deleted_documents = 4;
+
+  // The expiration timestamp (in milliseconds) of the next expired document.
+  optional int64 next_expiration_timestamp_ms = 5;
 }

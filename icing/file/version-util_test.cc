@@ -1076,6 +1076,117 @@ INSTANTIATE_TEST_SUITE_P(
                 /*needs_term_index_rebuild_in=*/false,
                 /*needs_integer_index_rebuild_in=*/false,
                 /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 8, max_version 8
+        // - Existing enabled features = {}
+        // - Current version = 8
+        // - Current enabled features = {FEATURE_DELETE_PROPAGATION_FROM}
+        //
+        // - Result: rebuild qualified id join index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/8, /*max_version_in=*/8,
+            /*existing_enabled_features_in=*/{},
+            /*curr_version_in=*/8, /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_DELETE_PROPAGATION_FROM},
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 8, max_version 8
+        // - Existing enabled features =
+        //   {FEATURE_DELETE_PROPAGATION_FROM}
+        // - Current version = 8
+        // - Current enabled features = {}
+        //
+        // - Result: rebuild qualified id join index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/8, /*max_version_in=*/8,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_DELETE_PROPAGATION_FROM},
+            /*curr_version_in=*/8, /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features = {}
+        // - Current version = 5
+        // - Current enabled features = {FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN}
+        //
+        // - Result: rebuild qualified id join index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/{},
+            /*curr_version_in=*/5, /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN},
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version 5, max_version 5
+        // - Existing enabled features =
+        //   {FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN}
+        // - Current version = 5
+        // - Current enabled features = {}
+        //
+        // - Result: rebuild qualified id join index
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/5, /*max_version_in=*/5,
+            /*existing_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN},
+            /*curr_version_in=*/5, /*curr_enabled_features_in=*/{},
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/true,
+                /*needs_embedding_index_rebuild_in=*/false)),
+
+        // - Existing version = kSchemaDefinitionDedupingVersion, max_version
+        // kSchemaDefinitionDedupingVersion
+        // - Existing enabled features = {}
+        // - Current version = kSchemaDefinitionDedupingVersion
+        // - Current enabled features =
+        // {FEATURE_SCHEMA_DEFINITION_DEDUPLICATION}
+        //
+        // - Result: no rebuild
+        VersionUtilDerivedFilesRebuildTestParam(
+            /*existing_version_in=*/kSchemaDefinitionDedupingVersion,
+            /*max_version_in=*/kSchemaDefinitionDedupingVersion,
+            /*existing_enabled_features_in=*/{},
+            /*curr_version_in=*/kSchemaDefinitionDedupingVersion,
+            /*curr_enabled_features_in=*/
+            {IcingSearchEngineFeatureInfoProto::
+                 FEATURE_SCHEMA_DEFINITION_DEDUPLICATION},
+            /*expected_derived_files_rebuild_info_in=*/
+            DerivedFilesRebuildInfo(
+                /*needs_document_store_derived_files_rebuild_in=*/false,
+                /*needs_schema_store_derived_files_rebuild_in=*/false,
+                /*needs_term_index_rebuild_in=*/false,
+                /*needs_integer_index_rebuild_in=*/false,
+                /*needs_qualified_id_join_index_rebuild_in=*/false,
                 /*needs_embedding_index_rebuild_in=*/false))));
 
 TEST(VersionUtilTest, ShouldRebuildDerivedFilesUndeterminedVersion) {
@@ -1213,6 +1324,11 @@ TEST(VersionUtilTest, Upgrade) {
   EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(kVersionOne, kVersionOne),
                                         /*curr_version=*/kVersionFive),
               IsFalse());
+
+  // kVersionNine -> kVersionTen.
+  EXPECT_THAT(ShouldRebuildDerivedFiles(VersionInfo(9, 9),
+                                        /*curr_version=*/kVersionTen),
+              IsFalse());
 }
 
 TEST(VersionUtilTest, GetFeatureDerivedFilesRebuildInfo_unknown) {
@@ -1279,6 +1395,19 @@ TEST(VersionUtilTest, GetFeatureDerivedFilesRebuildInfo_featureSchemaDatabase) {
                   /*needs_embedding_index_rebuild_in=*/false)));
 }
 
+TEST(VersionUtilTest, GetFeatureDerivedFilesRebuildInfo_featureSchemaDeduping) {
+  EXPECT_THAT(GetFeatureDerivedFilesRebuildInfo(
+                  IcingSearchEngineFeatureInfoProto::
+                      FEATURE_SCHEMA_DEFINITION_DEDUPLICATION),
+              Eq(DerivedFilesRebuildInfo(
+                  /*needs_document_store_derived_files_rebuild_in=*/false,
+                  /*needs_schema_store_derived_files_rebuild_in=*/false,
+                  /*needs_term_index_rebuild_in=*/false,
+                  /*needs_integer_index_rebuild_in=*/false,
+                  /*needs_qualified_id_join_index_rebuild_in=*/false,
+                  /*needs_embedding_index_rebuild_in=*/false)));
+}
+
 TEST(VersionUtilTest,
      GetFeatureDerivedFilesRebuildInfo_featureQualifiedIdJoinIndexV3) {
   EXPECT_THAT(
@@ -1291,6 +1420,34 @@ TEST(VersionUtilTest,
           /*needs_integer_index_rebuild_in=*/false,
           /*needs_qualified_id_join_index_rebuild_in=*/true,
           /*needs_embedding_index_rebuild_in=*/false)));
+}
+
+TEST(VersionUtilTest,
+     GetFeatureDerivedFilesRebuildInfo_featureDeletePropagationFrom) {
+  EXPECT_THAT(
+      GetFeatureDerivedFilesRebuildInfo(
+          IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM),
+      Eq(DerivedFilesRebuildInfo(
+          /*needs_document_store_derived_files_rebuild_in=*/false,
+          /*needs_schema_store_derived_files_rebuild_in=*/false,
+          /*needs_term_index_rebuild_in=*/false,
+          /*needs_integer_index_rebuild_in=*/false,
+          /*needs_qualified_id_join_index_rebuild_in=*/true,
+          /*needs_embedding_index_rebuild_in=*/false)));
+}
+
+TEST(VersionUtilTest,
+     GetFeatureDerivedFilesRebuildInfo_featureNonExistentQualifiedIdJoin) {
+  EXPECT_THAT(GetFeatureDerivedFilesRebuildInfo(
+                  IcingSearchEngineFeatureInfoProto::
+                      FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN),
+              Eq(DerivedFilesRebuildInfo(
+                  /*needs_document_store_derived_files_rebuild_in=*/false,
+                  /*needs_schema_store_derived_files_rebuild_in=*/false,
+                  /*needs_term_index_rebuild_in=*/false,
+                  /*needs_integer_index_rebuild_in=*/false,
+                  /*needs_qualified_id_join_index_rebuild_in=*/true,
+                  /*needs_embedding_index_rebuild_in=*/false)));
 }
 
 TEST(VersionUtilTest, SchemaDatabaseMigrationRequired) {
@@ -1337,11 +1494,62 @@ TEST(VersionUtilTest, SchemaDatabaseMigrationNotRequired) {
   EXPECT_FALSE(SchemaDatabaseMigrationRequired(previous_version_proto));
 }
 
-TEST(VersionUtilTest,
-     IcingSearchEngineOptionsToVersionProto_qualifiedIdJoinIndexV3_enabled) {
-  IcingSearchEngineOptions options;
-  options.set_enable_qualified_id_join_index_v3(true);
+TEST(VersionUtilTest, ShouldRecalculatePropertiesDigestsForDeduping_required) {
+  // Migration is required if the previous version is less than the version at
+  // which the schema definition deduping is introduced.
+  IcingSearchEngineVersionProto previous_version_proto;
+  previous_version_proto.set_version(kSchemaDefinitionDedupingVersion - 1);
+  previous_version_proto.set_max_version(kSchemaDefinitionDedupingVersion - 1);
+  previous_version_proto.add_enabled_features()->set_feature_type(
+      IcingSearchEngineFeatureInfoProto::
+          FEATURE_SCHEMA_DEFINITION_DEDUPLICATION);
+  EXPECT_TRUE(
+      ShouldRecalculatePropertiesDigestsForDeduping(previous_version_proto));
 
+  // Migration is required if the schema duplication feature was not enabled in
+  // the previous version.
+  previous_version_proto.set_version(kSchemaDatabaseVersion);
+  previous_version_proto.set_max_version(kSchemaDatabaseVersion);
+  previous_version_proto.mutable_enabled_features()->Clear();
+  // Add a feature that is not the schema database feature.
+  previous_version_proto.add_enabled_features()->set_feature_type(
+      IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR);
+  EXPECT_TRUE(
+      ShouldRecalculatePropertiesDigestsForDeduping(previous_version_proto));
+
+  previous_version_proto.set_version(kSchemaDatabaseVersion + 1);
+  previous_version_proto.set_max_version(kSchemaDatabaseVersion + 1);
+  previous_version_proto.mutable_enabled_features()->Clear();
+  EXPECT_TRUE(
+      ShouldRecalculatePropertiesDigestsForDeduping(previous_version_proto));
+}
+
+TEST(VersionUtilTest,
+     ShouldRecalculatePropertiesDigestsForDeduping_notRequired) {
+  // Migration is not required if previous version is >= the version at which
+  // the schema deduplication is introduced and the feature was enabled in the
+  // previous version.
+  IcingSearchEngineVersionProto previous_version_proto;
+  previous_version_proto.set_version(kSchemaDefinitionDedupingVersion);
+  previous_version_proto.set_max_version(kSchemaDefinitionDedupingVersion);
+  previous_version_proto.add_enabled_features()->set_feature_type(
+      IcingSearchEngineFeatureInfoProto::
+          FEATURE_SCHEMA_DEFINITION_DEDUPLICATION);
+  EXPECT_FALSE(
+      ShouldRecalculatePropertiesDigestsForDeduping(previous_version_proto));
+
+  previous_version_proto.set_version(kSchemaDefinitionDedupingVersion + 1);
+  previous_version_proto.set_max_version(kSchemaDefinitionDedupingVersion + 1);
+  previous_version_proto.add_enabled_features()->set_feature_type(
+      IcingSearchEngineFeatureInfoProto::
+          FEATURE_SCHEMA_DEFINITION_DEDUPLICATION);
+  EXPECT_FALSE(
+      ShouldRecalculatePropertiesDigestsForDeduping(previous_version_proto));
+}
+
+TEST(VersionUtilTest,
+     IcingSearchEngineOptionsToVersionProto_qualifiedIdJoinIndexV3_alwaysEnabled) {
+  IcingSearchEngineOptions options;
   IcingSearchEngineVersionProto version_proto;
   AddEnabledFeatures(options, &version_proto);
   EXPECT_THAT(
@@ -1352,9 +1560,23 @@ TEST(VersionUtilTest,
 }
 
 TEST(VersionUtilTest,
-     IcingSearchEngineOptionsToVersionProto_qualifiedIdJoinIndexV3_disabled) {
+     IcingSearchEngineOptionsToVersionProto_deletePropagationFrom_enabled) {
   IcingSearchEngineOptions options;
-  options.set_enable_qualified_id_join_index_v3(false);
+  options.set_enable_delete_propagation_from(true);
+
+  IcingSearchEngineVersionProto version_proto;
+  AddEnabledFeatures(options, &version_proto);
+  EXPECT_THAT(
+      version_proto.enabled_features(),
+      Contains(Property(
+          &IcingSearchEngineFeatureInfoProto::feature_type,
+          IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM)));
+}
+
+TEST(VersionUtilTest,
+     IcingSearchEngineOptionsToVersionProto_deletePropagationFrom_disabled) {
+  IcingSearchEngineOptions options;
+  options.set_enable_delete_propagation_from(false);
 
   IcingSearchEngineVersionProto version_proto;
   AddEnabledFeatures(options, &version_proto);
@@ -1362,7 +1584,35 @@ TEST(VersionUtilTest,
       version_proto.enabled_features(),
       Not(Contains(Property(&IcingSearchEngineFeatureInfoProto::feature_type,
                             IcingSearchEngineFeatureInfoProto::
-                                FEATURE_QUALIFIED_ID_JOIN_INDEX_V3))));
+                                FEATURE_DELETE_PROPAGATION_FROM))));
+}
+
+TEST(VersionUtilTest,
+     IcingSearchEngineOptionsToVersionProto_schemaDefinitionDeduping_enabled) {
+  IcingSearchEngineOptions options;
+  options.set_enable_schema_definition_deduping(true);
+
+  IcingSearchEngineVersionProto version_proto;
+  AddEnabledFeatures(options, &version_proto);
+  EXPECT_THAT(
+      version_proto.enabled_features(),
+      Contains(Property(&IcingSearchEngineFeatureInfoProto::feature_type,
+                        IcingSearchEngineFeatureInfoProto::
+                            FEATURE_SCHEMA_DEFINITION_DEDUPLICATION)));
+}
+
+TEST(VersionUtilTest,
+     IcingSearchEngineOptionsToVersionProto_schemaDefinitionDeduping_disabled) {
+  IcingSearchEngineOptions options;
+  options.set_enable_schema_definition_deduping(false);
+
+  IcingSearchEngineVersionProto version_proto;
+  AddEnabledFeatures(options, &version_proto);
+  EXPECT_THAT(
+      version_proto.enabled_features(),
+      Not(Contains(Property(&IcingSearchEngineFeatureInfoProto::feature_type,
+                            IcingSearchEngineFeatureInfoProto::
+                                FEATURE_SCHEMA_DEFINITION_DEDUPLICATION))));
 }
 
 class VersionUtilFeatureProtoTest
@@ -1402,7 +1652,12 @@ INSTANTIATE_TEST_SUITE_P(
         IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_INDEX,
         IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION,
         IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE,
-        IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3));
+        IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3,
+        IcingSearchEngineFeatureInfoProto::FEATURE_DELETE_PROPAGATION_FROM,
+        IcingSearchEngineFeatureInfoProto::
+            FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN,
+        IcingSearchEngineFeatureInfoProto::
+            FEATURE_SCHEMA_DEFINITION_DEDUPLICATION));
 
 }  // namespace
 
