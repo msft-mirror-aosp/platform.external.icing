@@ -61,8 +61,8 @@ namespace lib {
 
 namespace {
 
+using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::Eq;
-using ::testing::EqualsProto;
 using ::testing::Ge;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;

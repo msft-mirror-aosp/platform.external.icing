@@ -199,12 +199,10 @@ QueryVisitor::CreateTermIterator(const QueryTerm& query_term) {
           std::unique_ptr<DocHitInfoIterator> term_iterator,
           index_.GetIterator(query_term.term, unnormalized_term_start,
                              query_term.raw_term.length(), kSectionIdMaskAll,
-                             search_spec_.term_match_type(),
-                             needs_term_frequency_info_));
+                             match_type, needs_term_frequency_info_));
       query_term_iterators_[query_term.term] =
           DocHitInfoIteratorFilter::ApplyFilter(
-              std::move(term_iterator), filter_predicate_,
-              feature_flags_.enable_passing_filter_to_children());
+              std::move(term_iterator), filter_predicate_);
     }
   }
 

@@ -4518,7 +4518,6 @@ TEST_P(SchemaUtilTest,
       GetParam().allow_circular_schema_definitions(),
       /*enable_repeated_field_joins=*/false,
       /*enable_embedding_backup_generation=*/true,
-      /*enable_passing_filter_to_children=*/true,
       /*enable_proto_log_new_header_format=*/true,
       /*enable_reusable_decompression_buffer=*/true,
       /*enable_schema_type_id_optimization=*/true,
@@ -4526,7 +4525,8 @@ TEST_P(SchemaUtilTest,
       /*expired_document_purge_threshold_ms=*/0,
       /*enable_non_existent_qualified_id_join=*/true,
       /*enable_skip_set_schema_type_equality_check=*/true,
-      /*enable_schema_definition_deduping=*/true);
+      /*enable_schema_definition_deduping=*/true,
+      /*enable_delete_propagation_from=*/true);
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -4585,7 +4585,6 @@ TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
       GetParam().allow_circular_schema_definitions(),
       /*enable_repeated_field_joins=*/true,
       /*enable_embedding_backup_generation=*/true,
-      /*enable_passing_filter_to_children=*/true,
       /*enable_proto_log_new_header_format=*/true,
       /*enable_reusable_decompression_buffer=*/true,
       /*enable_schema_type_id_optimization=*/true,
@@ -4593,7 +4592,8 @@ TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
       /*expired_document_purge_threshold_ms=*/0,
       /*enable_non_existent_qualified_id_join=*/true,
       /*enable_skip_set_schema_type_equality_check=*/true,
-      /*enable_schema_definition_deduping=*/true);
+      /*enable_schema_definition_deduping=*/true,
+      /*enable_delete_propagation_from=*/true);
 
   SchemaProto schema =
       SchemaBuilder()
@@ -5914,10 +5914,9 @@ TEST_P(SchemaUtilTest, ValidateScorableType_DisabledForUnsupportedDataTypes) {
 INSTANTIATE_TEST_SUITE_P(
     SchemaUtilTest, SchemaUtilTest,
     testing::Values(FeatureFlags(
-                        /*enable_circular_schema_definitions=*/false,
+                        /*allow_circular_schema_definitions=*/false,
                         /*enable_repeated_field_joins=*/true,
                         /*enable_embedding_backup_generation=*/true,
-                        /*enable_passing_filter_to_children=*/true,
                         /*enable_proto_log_new_header_format=*/true,
                         /*enable_reusable_decompression_buffer=*/true,
                         /*enable_schema_type_id_optimization=*/true,
@@ -5925,12 +5924,12 @@ INSTANTIATE_TEST_SUITE_P(
                         /*expired_document_purge_threshold_ms=*/0,
                         /*enable_non_existent_qualified_id_join=*/true,
                         /*enable_skip_set_schema_type_equality_check=*/true,
-                        /*enable_schema_definition_deduping=*/false),
+                        /*enable_schema_definition_deduping=*/false,
+                        /*enable_delete_propagation_from=*/true),
                     FeatureFlags(
-                        /*enable_circular_schema_definitions=*/true,
+                        /*allow_circular_schema_definitions=*/true,
                         /*enable_repeated_field_joins=*/true,
                         /*enable_embedding_backup_generation=*/true,
-                        /*enable_passing_filter_to_children=*/true,
                         /*enable_proto_log_new_header_format=*/true,
                         /*enable_reusable_decompression_buffer=*/true,
                         /*enable_schema_type_id_optimization=*/true,
@@ -5938,7 +5937,8 @@ INSTANTIATE_TEST_SUITE_P(
                         /*expired_document_purge_threshold_ms=*/0,
                         /*enable_non_existent_qualified_id_join=*/true,
                         /*enable_skip_set_schema_type_equality_check=*/true,
-                        /*enable_schema_definition_deduping=*/true)));
+                        /*enable_schema_definition_deduping=*/true,
+                        /*enable_delete_propagation_from=*/true)));
 
 struct IsIndexedPropertyTestParam {
   PropertyConfigProto property_config;

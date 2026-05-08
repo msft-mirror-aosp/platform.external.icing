@@ -4966,7 +4966,7 @@ TEST_F(
                         GetResultSpecProto::default_instance()),
               EqualsProto(expected_get_result_google::protobuf));
 
-  // Adjust the clock to 21010 ms and sleep for 1010 ms. The purging expiration
+  // Adjust the clock to 21010 ms and sleep for 1050 ms. The purging expiration
   // task should execute and purge person2 and message2.
   // - At t = 21010 ms, person2 is expired, but DocumentFilterData has already
   //   filtered it out, so we're unsure whether it is purged or not.
@@ -4976,7 +4976,7 @@ TEST_F(
   //   expiration propagation would have not been triggered and message2
   //   would've been alive. Therefore, we can verify it by checking message2
   fake_clock_ptr->SetSystemTimeMilliseconds(21010);
-  std::this_thread::sleep_for(std::chrono::milliseconds(1010));
+  std::this_thread::sleep_for(std::chrono::milliseconds(1050));
 
   GetResultProto expected_get_result_proto3;
   expected_get_result_proto3.mutable_status()->set_code(StatusProto::NOT_FOUND);
@@ -5104,10 +5104,10 @@ TEST_F(
                         GetResultSpecProto::default_instance()),
               EqualsProto(expected_get_result_google::protobuf));
 
-  // Adjust the clock to 21010 ms and sleep for 1010 ms. message2 should still
+  // Adjust the clock to 21010 ms and sleep for 1050 ms. message2 should still
   // be present.
   fake_clock_ptr->SetSystemTimeMilliseconds(21010);
-  std::this_thread::sleep_for(std::chrono::milliseconds(1010));
+  std::this_thread::sleep_for(std::chrono::milliseconds(1050));
   EXPECT_THAT(icing.Get("namespace", "message/2",
                         GetResultSpecProto::default_instance()),
               EqualsProto(expected_get_result_google::protobuf));

@@ -140,15 +140,16 @@ std::unique_ptr<MonkeySemanticQueryNode> GenerateRandomSemanticNode(
   // decimal places, we'll compute the bounds as integers and then divide by 100
   // so that we can get values with 2 decimal places.
   std::uniform_int_distribution<int> range_dist(-100, 100);
-  float low = range_dist(*random) / 100.0;
-  float high = range_dist(*random) / 100.0;
+  double low = range_dist(*random) / 100.0;
+  double high = range_dist(*random) / 100.0;
   if (low > high) {
     std::swap(low, high);
   }
 
   SearchSpecProto::EmbeddingQueryMetricType::Code metric_type =
       SearchSpecProto::EmbeddingQueryMetricType::COSINE;
-  PropertyProto::VectorProto vector = document_generator->GetRandomVector();
+  PropertyProto::VectorProto vector =
+      document_generator->GetRandomVector(/*allow_quantized_value=*/true);
 
   search_spec.set_embedding_query_metric_type(metric_type);
 
@@ -690,8 +691,7 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
       GetRandomBoolean(&random_));
   icing_options.set_compression_threshold_bytes(
       GetRandomInt(&random_, /*min=*/0, /*max=*/10000));
-  icing_options.set_enable_passing_filter_to_children(
-      GetRandomBoolean(&random_));
+
   // Randomly choose the number of shards from 1, 2, 4, 8, 16, 32.
   uint32_t num_shards = 1 << GetRandomInt(&random_, /*min=*/0, /*max=*/5);
   icing_options.set_embedding_index_num_shards(num_shards);
