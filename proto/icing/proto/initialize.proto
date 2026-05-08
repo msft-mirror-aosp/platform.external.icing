@@ -424,10 +424,9 @@ message IcingSearchEngineOptions {
   optional bool enable_eigen_embedding_scoring = 40
       [deprecated = true, default = true];
 
-  // Whether to enable passing down filter predicates to child iterators during
-  // DocHitInfo retrieval. If set to true, filter predicates may be passed to
-  // children for optimized retrieval.
-  optional bool enable_passing_filter_to_children = 41;
+  // DEPRECATED: The flag is always treated as true.
+  optional bool enable_passing_filter_to_children = 41
+      [deprecated = true, default = true];
 
   // Whether to enable the new header format (refactor legacy format and
   // introduce unsynced tail checksum) related changes in

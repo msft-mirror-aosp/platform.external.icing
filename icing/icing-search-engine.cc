@@ -101,6 +101,7 @@
 #include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/scoring/scoring-processor.h"
 #include "icing/store/blob-store.h"
+#include "icing/store/document-group-info.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter-factory.h"
@@ -159,23 +160,6 @@ constexpr std::string_view kDatabaseStablenessLogFilename =
 // state that we will tolerate before deleting all data and starting from a
 // fresh state.
 constexpr int kMaxUnsuccessfulInitAttempts = 5;
-
-// A pair that holds namespace and type.
-struct NamespaceTypePair {
-  std::string namespace_;
-  std::string type;
-
-  bool operator==(const NamespaceTypePair& other) const {
-    return namespace_ == other.namespace_ && type == other.type;
-  }
-};
-
-struct NamespaceTypePairHasher {
-  std::size_t operator()(const NamespaceTypePair& pair) const {
-    return std::hash<std::string>()(pair.namespace_) ^
-           std::hash<std::string>()(pair.type);
-  }
-};
 
 libtextclassifier3::Status ValidateResultSpec(
     const DocumentStore* document_store, const ResultSpecProto& result_spec) {
@@ -402,22 +386,24 @@ InitializeStatsProto::RecoveryCause TranslateMarkerProtoToRecoveryCause(
 
 libtextclassifier3::Status RetrieveAndAddDocumentInfo(
     const DocumentStore* document_store, DeleteByQueryResultProto& result_proto,
-    std::unordered_map<NamespaceTypePair,
+    std::unordered_map<DocumentGroupKey,
                        DeleteByQueryResultProto::DocumentGroupInfo*,
-                       NamespaceTypePairHasher>& info_map,
+                       DocumentGroupKey::Hasher>& info_map,
     DocumentId document_id) {
   ICING_ASSIGN_OR_RETURN(DocumentProto document,
                          document_store->Get(document_id));
-  NamespaceTypePair key = {document.namespace_(), document.schema()};
+  DocumentGroupKey key = {
+      .schema_type_name = std::move(*document.mutable_schema()),
+      .name_space = std::move(*document.mutable_namespace_())};
   auto iter = info_map.find(key);
   if (iter == info_map.end()) {
     auto entry = result_proto.add_deleted_documents();
-    entry->set_namespace_(std::move(document.namespace_()));
-    entry->set_schema(std::move(document.schema()));
-    entry->add_uris(std::move(document.uri()));
+    entry->set_namespace_(key.name_space);
+    entry->set_schema(key.schema_type_name);
+    entry->add_uris(std::move(*document.mutable_uri()));
     info_map[key] = entry;
   } else {
-    iter->second->add_uris(std::move(document.uri()));
+    iter->second->add_uris(std::move(*document.mutable_uri()));
   }
   return libtextclassifier3::Status::OK;
 }
@@ -595,7 +581,6 @@ IcingSearchEngine::IcingSearchEngine(
       feature_flags_(options_.allow_circular_schema_definitions(),
                      options_.enable_repeated_field_joins(),
                      options_.enable_embedding_backup_generation(),
-                     options_.enable_passing_filter_to_children(),
                      options_.enable_proto_log_new_header_format(),
                      options_.enable_reusable_decompression_buffer(),
                      options_.enable_schema_type_id_optimization(),
@@ -603,7 +588,8 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.expired_document_purge_threshold_ms(),
                      options_.enable_non_existent_qualified_id_join(),
                      options_.enable_skip_set_schema_type_equality_check(),
-                     options_.enable_schema_definition_deduping()),
+                     options_.enable_schema_definition_deduping(),
+                     options_.enable_delete_propagation_from()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -1512,6 +1498,8 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
     return result_proto;
   }
 
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+
   auto lost_previous_schema_or = LostPreviousSchema();
   if (!lost_previous_schema_or.ok()) {
     TransformStatus(lost_previous_schema_or.status(), result_status);
@@ -1639,13 +1627,8 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
       update_result =
           std::make_optional(std::move(update_result_or).ValueOrDie());
     }
-    if (update_result.has_value()) {
-      result_proto.set_deleted_document_count(
-          update_result->deleted_document_count);
-      needs_flush_ground_truth |= (update_result->deleted_document_count > 0);
-      needs_flush_derived_files |= update_result->derived_files_changed;
-    }
 
+    int total_deleted_docs = 0;
     {
       // Restore indices if needed.
       ScopedTimer index_restoration_timer(
@@ -1691,8 +1674,45 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
           TransformStatus(status, result_status);
           return result_proto;
         }
+
+        total_deleted_docs += restore_result.num_deleted_documents;
       }
     }
+
+    // Update schema store may trigger document revalidation and deletion for
+    // incompatible documents. Propagate deletion if necessary, AFTER rebuilding
+    // the join index.
+    if (update_result.has_value()) {
+      if (options_.enable_delete_propagation_from()) {
+        std::unordered_set<DocumentId> deleted_doc_ids =
+            update_result->deleted_doc_group_info.GetAllDocumentIds();
+
+        // Evaluate delete propagation.
+        auto child_deleted_group_info_or = PropagateDelete(
+            /*deleted_document_ids=*/deleted_doc_ids, current_time_ms);
+        if (!child_deleted_group_info_or.ok()) {
+          TransformStatus(child_deleted_group_info_or.status(), result_status);
+          return result_proto;
+        }
+        DocumentGroupInfo child_deleted_group_info =
+            std::move(child_deleted_group_info_or).ValueOrDie();
+
+        total_deleted_docs += static_cast<int>(
+            update_result->deleted_doc_group_info.GetTotalNumDocs() +
+            child_deleted_group_info.GetTotalNumDocs());
+      } else {
+        // If the flag is off, then update_result->deleted_doc_group_info is
+        // unset, so fall back to use deleted_document_count.
+        total_deleted_docs += update_result->deleted_document_count;
+      }
+
+      needs_flush_derived_files |= update_result->derived_files_changed;
+    }
+
+    // TODO(b/384947619): report all metadata of deleted documents to
+    //   SetSchemaResultProto for observer.
+    result_proto.set_deleted_document_count(total_deleted_docs);
+    needs_flush_ground_truth |= (total_deleted_docs > 0);
 
     if (!set_schema_result.schema_types_scorable_property_inconsistent_by_id
              .empty()) {
@@ -2322,15 +2342,16 @@ DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
     // delete operation, regardless of the outcome of the delete operation.
     // TODO(b/384947619): add metadata of propagated documents to
     //   DeleteResultProto for observer.
-    libtextclassifier3::StatusOr<std::vector<DocumentStore::DocumentMetadata>>
-        propagated_child_docs_deleted_or = PropagateDelete(
+    libtextclassifier3::StatusOr<DocumentGroupInfo>
+        propagated_child_docs_deleted_group_info_or = PropagateDelete(
             /*deleted_document_ids=*/{document_id}, current_time_ms);
-    if (propagated_child_docs_deleted_or.ok()) {
+    if (propagated_child_docs_deleted_group_info_or.ok()) {
       num_documents_deleted += static_cast<int>(
-          propagated_child_docs_deleted_or.ValueOrDie().size());
+          propagated_child_docs_deleted_group_info_or.ValueOrDie()
+              .GetTotalNumDocs());
     } else {
       propagate_delete_status =
-          std::move(propagated_child_docs_deleted_or).status();
+          std::move(propagated_child_docs_deleted_group_info_or).status();
     }
   }
   delete_stats->set_num_documents_deleted(num_documents_deleted);
@@ -2503,9 +2524,9 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   int num_deleted = 0;
   // A map used to group deleted documents.
   // From the (namespace, type) pair to a list of uris.
-  std::unordered_map<NamespaceTypePair,
+  std::unordered_map<DocumentGroupKey,
                      DeleteByQueryResultProto::DocumentGroupInfo*,
-                     NamespaceTypePairHasher>
+                     DocumentGroupKey::Hasher>
       deleted_info_map;
 
   component_timer = clock_->GetNewTimer();
@@ -2554,18 +2575,20 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   // Propagate deletion.
   // TODO(b/384947619): add metadata of propagated documents to
   //   DeleteResultProto for observer.
-  libtextclassifier3::StatusOr<std::vector<DocumentStore::DocumentMetadata>>
-      propagated_child_docs_deleted_or =
+  libtextclassifier3::StatusOr<DocumentGroupInfo>
+      propagated_child_docs_deleted_group_info_or =
           PropagateDelete(deleted_document_ids, current_time_ms);
-  if (!propagated_child_docs_deleted_or.ok()) {
-    TransformStatus(propagated_child_docs_deleted_or.status(), result_status);
+  if (!propagated_child_docs_deleted_group_info_or.ok()) {
+    TransformStatus(propagated_child_docs_deleted_group_info_or.status(),
+                    result_status);
     delete_stats->set_document_removal_latency_ms(
         component_timer->GetElapsedMilliseconds());
     // TODO(b/439850795): handle WriteDatabaseStablenessLog for early return.
     return result_proto;
   }
   num_deleted +=
-      static_cast<int>(propagated_child_docs_deleted_or.ValueOrDie().size());
+      static_cast<int>(propagated_child_docs_deleted_group_info_or.ValueOrDie()
+                           .GetTotalNumDocs());
 
   if (num_deleted > 0) {
     WriteDatabaseStablenessLog(IcingApiCallType::DELETE_BY_QUERY);
@@ -2592,15 +2615,15 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
 
 // TODO(b/384947619): remove this function once we fully ramp
 // enable_delete_propagation_from.
-libtextclassifier3::StatusOr<std::vector<DocumentStore::DocumentMetadata>>
+libtextclassifier3::StatusOr<DocumentGroupInfo>
 IcingSearchEngine::PropagateDelete(
     const std::unordered_set<DocumentId>& deleted_document_ids,
     int64_t current_time_ms) {
   if (!options_.enable_delete_propagation_from() ||
       deleted_document_ids.empty()) {
     // No-op if delete propagation is disabled or no deleted document ids, so
-    // return an empty vector.
-    return std::vector<DocumentStore::DocumentMetadata>();
+    // return an empty map.
+    return DocumentGroupInfo();
   }
 
   ICING_ASSIGN_OR_RETURN(
@@ -3867,29 +3890,28 @@ IcingSearchEngine::HandleExpiredDocumentsLocked() {
 
   int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
   // Step 1: purge expired documents.
-  auto expired_docs_or =
+  auto expired_docs_group_info_or =
       document_store_->PurgeExpiredDocuments(current_time_ms);
-  if (!expired_docs_or.ok()) {
-    TransformStatus(expired_docs_or.status(), result_status);
+  if (!expired_docs_group_info_or.ok()) {
+    TransformStatus(expired_docs_group_info_or.status(), result_status);
     return result_proto;
   }
-  std::vector<DocumentStore::DocumentMetadata> expired_docs =
-      std::move(expired_docs_or).ValueOrDie();
+  DocumentGroupInfo expired_docs_group_info =
+      std::move(expired_docs_group_info_or).ValueOrDie();
 
   // Step 2: propagate deletion to their children.
-  std::unordered_set<DocumentId> expired_doc_ids;
-  expired_doc_ids.reserve(expired_docs.size());
-  for (const DocumentStore::DocumentMetadata& metadata : expired_docs) {
-    expired_doc_ids.insert(metadata.document_id);
-  }
-  auto propagated_deleted_docs_or =
+  std::unordered_set<DocumentId> expired_doc_ids =
+      expired_docs_group_info.GetAllDocumentIds();
+
+  auto propagated_deleted_docs_group_info_or =
       PropagateDelete(expired_doc_ids, current_time_ms);
-  if (!propagated_deleted_docs_or.ok()) {
-    TransformStatus(propagated_deleted_docs_or.status(), result_status);
+  if (!propagated_deleted_docs_group_info_or.ok()) {
+    TransformStatus(propagated_deleted_docs_group_info_or.status(),
+                    result_status);
     return result_proto;
   }
-  std::vector<DocumentStore::DocumentMetadata> propagated_deleted_docs =
-      std::move(propagated_deleted_docs_or).ValueOrDie();
+  DocumentGroupInfo propagated_deleted_docs_group_info =
+      std::move(propagated_deleted_docs_group_info_or).ValueOrDie();
 
   // Get the next expiration timestamp.
   int64_t next_expired_doc_ts_ms =
@@ -3909,38 +3931,23 @@ IcingSearchEngine::HandleExpiredDocumentsLocked() {
   }
 
   result_proto.set_num_expired_documents(
-      static_cast<int32_t>(expired_docs.size()));
-  result_proto.set_num_propagated_deleted_documents(
-      static_cast<int32_t>(propagated_deleted_docs.size()));
+      static_cast<int32_t>(expired_docs_group_info.GetTotalNumDocs()));
+  result_proto.set_num_propagated_deleted_documents(static_cast<int32_t>(
+      propagated_deleted_docs_group_info.GetTotalNumDocs()));
 
-  // Add all deleted documents to the result proto, grouped by NamespaceTypePair
-  // (namespace, schema).
-  std::unordered_map<NamespaceTypePair,
-                     HandleExpiredDocumentsResultProto::DocumentGroupInfo*,
-                     NamespaceTypePairHasher>
-      group_map;
-  const auto add_fn =
-      [&result_proto,
-       &group_map](std::vector<DocumentStore::DocumentMetadata>&& metadata_list)
-      -> void {
-    for (DocumentStore::DocumentMetadata& metadata : metadata_list) {
-      NamespaceTypePair group_key = {std::move(metadata.name_space),
-                                     std::move(metadata.schema_type_name)};
-      auto itr = group_map.find(group_key);
-      if (itr == group_map.end()) {
-        HandleExpiredDocumentsResultProto::DocumentGroupInfo* entry =
-            result_proto.add_deleted_documents();
-        entry->set_name_space(group_key.namespace_);
-        entry->set_schema(group_key.type);
-        entry->add_uris(std::move(metadata.uri));
-        group_map.insert({std::move(group_key), entry});
-      } else {
-        itr->second->add_uris(std::move(metadata.uri));
-      }
+  // Add all deleted documents to the result proto, grouped by DocumentGroupKey
+  // (schema, namespace).
+  expired_docs_group_info.Merge(std::move(propagated_deleted_docs_group_info));
+  for (const auto& [group_key, document_uri_id_pair_list] :
+       expired_docs_group_info.Get()) {
+    HandleExpiredDocumentsResultProto::DocumentGroupInfo* entry =
+        result_proto.add_deleted_documents();
+    entry->set_schema(group_key.schema_type_name);
+    entry->set_name_space(group_key.name_space);
+    for (const auto& document_uri_id_pair : document_uri_id_pair_list) {
+      entry->add_uris(document_uri_id_pair.uri);
     }
-  };
-  add_fn(std::move(expired_docs));
-  add_fn(std::move(propagated_deleted_docs));
+  }
 
   result_status->set_code(StatusProto::OK);
   return result_proto;
@@ -4283,6 +4290,7 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
   if (!data_indexing_handlers_or.ok()) {
     return IndexRestorationResult(std::move(data_indexing_handlers_or).status(),
                                   /*num_failed_reindexed_documents_in=*/0,
+                                  /*num_deleted_documents_in=*/0,
                                   truncate_result);
   }
   // By using recovery_mode for IndexProcessor, we're able to replay documents
@@ -4312,7 +4320,8 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
         return IndexRestorationResult(
             std::move(document_or).status(),
             /*num_failed_reindexed_documents_in=*/
-            static_cast<int>(failed_document_ids.size()), truncate_result);
+            static_cast<int>(failed_document_ids.size()),
+            /*num_deleted_documents_in=*/0, truncate_result);
       }
     }
     DocumentProto document(std::move(document_or).ValueOrDie());
@@ -4348,9 +4357,10 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
   // documents. If there is any error, log it without failing index restoration.
   // TODO(b/384947619): add metadata of deleted documents into
   //   InitializeResultProto.
+  int num_propagated_deleted_docs = 0;
   for (DocumentId document_id : failed_document_ids) {
-    libtextclassifier3::StatusOr<DocumentStore::DocumentMetadata>
-        deleted_metadata_or = document_store_->ForceDelete(document_id);
+    libtextclassifier3::StatusOr<DocumentMetadata> deleted_metadata_or =
+        document_store_->ForceDelete(document_id);
     if (!deleted_metadata_or.ok()) {
       // This is pretty dire (and, hopefully, unlikely). Log the error and
       // skip it.
@@ -4362,18 +4372,22 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
 
   // Propagate deletion to child documents. Call PropagateDelete directly here
   // since the delete propagation flag will be checked there.
-  auto propagated_deleted_child_docs_or =
+  auto propagated_deleted_child_docs_group_info_map_or =
       PropagateDelete(failed_document_ids, current_time_ms);
-  if (!propagated_deleted_child_docs_or.ok()) {
+  if (!propagated_deleted_child_docs_group_info_map_or.ok()) {
     ICING_LOG(WARNING)
         << "Cannot propagate deletion for child documents of failed "
-            "documents during index restoration: "
-        << propagated_deleted_child_docs_or.status().error_message();
+           "documents during index restoration: "
+        << propagated_deleted_child_docs_group_info_map_or.status()
+               .error_message();
   } else {
+    num_propagated_deleted_docs =
+        propagated_deleted_child_docs_group_info_map_or.ValueOrDie()
+            .GetTotalNumDocs();
     ICING_LOG(INFO)
         << "Successfully deleted " << failed_document_ids.size()
         << " documents that failed to index, and propagated deletion to "
-        << propagated_deleted_child_docs_or.ValueOrDie().size()
+        << num_propagated_deleted_docs
         << " child documents during index restoration.";
   }
 
@@ -4388,6 +4402,9 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
   return IndexRestorationResult(std::move(overall_status),
                                 /*num_failed_reindexed_documents_in=*/
                                 static_cast<int>(failed_document_ids.size()),
+                                /*num_deleted_documents_in=*/
+                                static_cast<int>(failed_document_ids.size()) +
+                                    num_propagated_deleted_docs,
                                 truncate_result);
 }
 

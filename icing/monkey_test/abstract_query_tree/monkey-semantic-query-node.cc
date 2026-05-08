@@ -92,9 +92,12 @@ MonkeySemanticQueryNode::DoesDocumentMatchQuery(
 
     for (const PropertyProto::VectorProto& section_vector :
          section.vector_values) {
-      if (DoesVectorsMatch(embedding_scorer.get(), min_score_, max_score_,
+      ICING_ASSIGN_OR_RETURN(
+          bool match,
+          DoesVectorsMatch(embedding_scorer.get(), min_score_, max_score_,
                            property_index_info.quantization_type,
-                           embedding_query_vector_, section_vector)) {
+                           embedding_query_vector_, section_vector));
+      if (match) {
         return true;
       }
     }

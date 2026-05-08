@@ -55,6 +55,7 @@
 #include "icing/store/corpus-id.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
+#include "icing/store/document-group-info.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-log-creator.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
@@ -1532,9 +1533,9 @@ DocumentStore::ResetAllAliveExpirationTimestampsToRaw(int64_t current_time_ms) {
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<std::vector<DocumentStore::DocumentMetadata>>
+libtextclassifier3::StatusOr<DocumentGroupInfo>
 DocumentStore::PurgeExpiredDocuments(int64_t current_time_ms) {
-  std::vector<DocumentMetadata> deleted_doc_metadata_list;
+  DocumentGroupInfo deleted_doc_group_info;
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
        ++document_id) {
     std::optional<DocumentFilterData> filter_data =
@@ -1557,11 +1558,11 @@ DocumentStore::PurgeExpiredDocuments(int64_t current_time_ms) {
         // Real error. Return it.
         return std::move(deleted_doc_metadata_or).status();
       }
-      deleted_doc_metadata_list.push_back(
+      deleted_doc_group_info.AddDocument(
           std::move(deleted_doc_metadata_or).ValueOrDie());
     }
   }
-  return deleted_doc_metadata_list;
+  return deleted_doc_group_info;
 }
 
 int64_t DocumentStore::GetNextExpiredDocumentTimestampMs(
@@ -1663,8 +1664,8 @@ libtextclassifier3::Status DocumentStore::Delete(DocumentId document_id,
   return ClearDerivedData(document_id);
 }
 
-libtextclassifier3::StatusOr<DocumentStore::DocumentMetadata>
-DocumentStore::ForceDelete(DocumentId document_id) {
+libtextclassifier3::StatusOr<DocumentMetadata> DocumentStore::ForceDelete(
+    DocumentId document_id) {
   if (document_id < 0 || document_id >= document_id_mapper_->num_elements()) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "Document id '%d' is invalid to force delete.", document_id));
@@ -2206,6 +2207,14 @@ DocumentStore::UpdateSchemaStore(const SchemaStore* schema_store) {
         return delete_status;
       }
 
+      if (feature_flags_.enable_delete_propagation_from()) {
+        // Populate deleted_doc_group_info only if the flag is enabled.
+        update_result.deleted_doc_group_info.AddDocument(
+            DocumentMetadata{.schema_type_name = document.schema(),
+                             .name_space = document.namespace_(),
+                             .uri = document.uri(),
+                             .document_id = document_id});
+      }
       ++update_result.deleted_document_count;
       update_result.derived_files_changed = true;
     }
@@ -2280,14 +2289,33 @@ DocumentStore::OptimizedUpdateSchemaStore(
     }
 
     if (delete_document) {
-      // Document is no longer valid with the new SchemaStore. Mark as deleted
-      auto delete_status = Delete(document_id, current_time_ms);
-      if (delete_status.ok()) {
-        ++update_result.deleted_document_count;
-        update_result.derived_files_changed = true;
-      } else if (!absl_ports::IsNotFound(delete_status)) {
-        // Real error, pass up
-        return delete_status;
+      if (feature_flags_.enable_delete_propagation_from()) {
+        // Document is no longer valid with the new SchemaStore. Mark as
+        // deleted. Call ForceDelete to get the deleted document metadata.
+        //
+        // Note: since at this moment the document is guaranteed to be alive,
+        //   ForceDelete essentially behaves the same as Delete, except it reads
+        //   out the document proto first to get the metadata.
+        auto delete_doc_metadata = ForceDelete(document_id);
+        if (delete_doc_metadata.ok()) {
+          update_result.deleted_doc_group_info.AddDocument(
+              std::move(delete_doc_metadata).ValueOrDie());
+          ++update_result.deleted_document_count;
+          update_result.derived_files_changed = true;
+        } else if (!absl_ports::IsNotFound(delete_doc_metadata.status())) {
+          // Real error, pass up
+          return std::move(delete_doc_metadata).status();
+        }
+      } else {
+        // Document is no longer valid with the new SchemaStore. Mark as deleted
+        auto delete_status = Delete(document_id, current_time_ms);
+        if (delete_status.ok()) {
+          ++update_result.deleted_document_count;
+          update_result.derived_files_changed = true;
+        } else if (!absl_ports::IsNotFound(delete_status)) {
+          // Real error, pass up
+          return delete_status;
+        }
       }
     }
   }

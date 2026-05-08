@@ -140,7 +140,6 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_document_store_namespace_id_fingerprint(true);
   icing_options.set_enable_repeated_field_joins(true);
   icing_options.set_enable_delete_propagation_from(true);
-  icing_options.set_enable_passing_filter_to_children(true);
   icing_options.set_enable_non_existent_qualified_id_join(true);
   return icing_options;
 }
@@ -2126,6 +2125,85 @@ TEST_F(IcingSearchEngineSearchTest, Bm25fRelevanceScoringOneNamespaceAdvanced) {
                           "namespace1/uri4",    // 'food' 2 times
                           "namespace1/uri2",    // 'food' 1 time
                           "namespace1/uri6"));  // 'food' 1 time
+}
+
+TEST_F(IcingSearchEngineSearchTest, Bm25fRelevanceScoringWildcardOverride) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  EXPECT_THAT(icing.Initialize().status(), ProtoIsOk());
+  EXPECT_THAT(icing.SetSchema(CreateEmailSchema()).status(), ProtoIsOk());
+
+  // Create and index a document with "camera".
+  DocumentProto document =
+      CreateEmailDocument("namespace1", "namespace1/uri0", /*score=*/10,
+                          "camera settings", "Camera settings and resolution");
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_advanced_scoring_expression("this.relevanceScore()");
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+
+  constexpr double eps = 0.01;
+
+  // Case 1: EXACT_ONLY + Wildcard '*'
+  {
+    SearchSpecProto search_spec;
+    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+    search_spec.set_query("camer*");
+    search_spec.add_enabled_features(
+        std::string(kListFilterQueryLanguageFeature));
+
+    SearchResultProto search_result = icing.Search(
+        search_spec, scoring_spec, ResultSpecProto::default_instance());
+
+    EXPECT_THAT(search_result.status(), ProtoIsOk());
+    ASSERT_THAT(search_result.results(), SizeIs(1));
+    EXPECT_THAT(search_result.results(0).score(), DoubleNear(0.31, eps));
+  }
+
+  // Case 2: EXACT_ONLY + No Wildcard (exact match)
+  {
+    SearchSpecProto search_spec;
+    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+    search_spec.set_query("camera");
+
+    SearchResultProto search_result = icing.Search(
+        search_spec, scoring_spec, ResultSpecProto::default_instance());
+
+    EXPECT_THAT(search_result.status(), ProtoIsOk());
+    ASSERT_THAT(search_result.results(), SizeIs(1));
+    EXPECT_THAT(search_result.results(0).score(), DoubleNear(0.31, eps));
+  }
+
+  // Case 3: PREFIX + Wildcard '*'
+  {
+    SearchSpecProto search_spec;
+    search_spec.set_term_match_type(TermMatchType::PREFIX);
+    search_spec.set_query("camer*");
+    search_spec.add_enabled_features(
+        std::string(kListFilterQueryLanguageFeature));
+
+    SearchResultProto search_result = icing.Search(
+        search_spec, scoring_spec, ResultSpecProto::default_instance());
+
+    EXPECT_THAT(search_result.status(), ProtoIsOk());
+    ASSERT_THAT(search_result.results(), SizeIs(1));
+    EXPECT_THAT(search_result.results(0).score(), DoubleNear(0.31, eps));
+  }
+
+  // Case 4: PREFIX + No Wildcard
+  {
+    SearchSpecProto search_spec;
+    search_spec.set_term_match_type(TermMatchType::PREFIX);
+    search_spec.set_query("camer");
+
+    SearchResultProto search_result = icing.Search(
+        search_spec, scoring_spec, ResultSpecProto::default_instance());
+
+    EXPECT_THAT(search_result.status(), ProtoIsOk());
+    ASSERT_THAT(search_result.results(), SizeIs(1));
+    EXPECT_THAT(search_result.results(0).score(), DoubleNear(0.31, eps));
+  }
 }
 
 TEST_F(IcingSearchEngineSearchTest,
@@ -10593,7 +10671,7 @@ TEST_F(IcingSearchEngineSearchTest,
 }
 
 TEST_F(IcingSearchEngineSearchTest,
-       SearchWithRankingByScorableProperty_CircularDependency_MissingNestedProperty) {
+    SearchWithRankingByScorableProperty_CircularDependency_MissingNestedProperty) {
   SchemaProto schema_proto =
       SchemaBuilder()
           .AddType(
@@ -10606,10 +10684,10 @@ TEST_F(IcingSearchEngineSearchTest,
                           .SetScorableType(SCORABLE_TYPE_ENABLED)
                           .SetCardinality(CARDINALITY_OPTIONAL))
                   .AddProperty(PropertyConfigBuilder()
-                                   .SetName("nextB")
+                          .SetName("nextB")
                                    .SetDataTypeDocument("TypeB",
                                       std::vector<std::string>() = {"p1"})
-                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+                          .SetCardinality(CARDINALITY_OPTIONAL)))
           .AddType(
               SchemaTypeConfigBuilder()
                   .SetType("TypeB")
@@ -10620,15 +10698,15 @@ TEST_F(IcingSearchEngineSearchTest,
                           .SetScorableType(SCORABLE_TYPE_ENABLED)
                           .SetCardinality(CARDINALITY_OPTIONAL))
                   .AddProperty(PropertyConfigBuilder()
-                                   .SetName("a1")
-                                   .SetDataTypeDocument(
+                          .SetName("a1")
+                          .SetDataTypeDocument(
                                        "TypeA", std::vector<std::string>() = {"p1", "nextB.p1"})
-                                   .SetCardinality(CARDINALITY_OPTIONAL))
+                          .SetCardinality(CARDINALITY_OPTIONAL))
                   .AddProperty(PropertyConfigBuilder()
-                                   .SetName("a2")
-                                   .SetDataTypeDocument(
+                          .SetName("a2")
+                          .SetDataTypeDocument(
                                        "TypeA", std::vector<std::string>() = {"p1", "nextB.p1"})
-                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+                          .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
@@ -10662,16 +10740,16 @@ TEST_F(IcingSearchEngineSearchTest,
           .SetSchema("TypeB")
           .AddDoubleProperty("p1", 10.0)
           .AddDocumentProperty("a1", DocumentBuilder()
-                                         .SetKey("namespace", "a1_1")
-                                         .SetSchema("TypeA")
-                                         .AddDoubleProperty("p1", 5.0)
+                        .SetKey("namespace", "a1_1")
+                        .SetSchema("TypeA")
+                        .AddDoubleProperty("p1", 5.0)
                                          .AddDocumentProperty(
                                             "nextB", DocumentBuilder()
-                                                .SetKey("namespace", "b1")
-                                                .SetSchema("TypeB")
-                                                .AddDoubleProperty("p1", 1.0)
-                                                .Build())
-                                         .Build())
+                                                 .SetKey("namespace", "b1")
+                                                 .SetSchema("TypeB")
+                                                 .AddDoubleProperty("p1", 1.0)
+                                                 .Build())
+                        .Build())
           .Build();
 
   EXPECT_THAT(icing.Put(b1).status(), ProtoIsOk());
@@ -11195,6 +11273,7 @@ TEST_F(IcingSearchEngineSearchTest,
   expected_set_schema_result
       .mutable_scorable_property_incompatible_changed_schema_types()
       ->Add("Person");
+  expected_set_schema_result.set_deleted_document_count(0);
   // Since it is a scorable property incompatible change, we need to do a
   // recovery proof flush.
   expected_set_schema_result.set_needs_persist_type(
@@ -11283,6 +11362,7 @@ TEST_F(IcingSearchEngineSearchTest,
   expected_set_schema_result
       .mutable_scorable_property_incompatible_changed_schema_types()
       ->Add("Person");
+  expected_set_schema_result.set_deleted_document_count(0);
   // Since it is a scorable property incompatible change, we need to do a
   // recovery proof flush.
   expected_set_schema_result.set_needs_persist_type(
@@ -11388,6 +11468,7 @@ TEST_F(IcingSearchEngineSearchTest,
   expected_set_schema_result
       .mutable_scorable_property_incompatible_changed_schema_types()
       ->Add("Person");
+  expected_set_schema_result.set_deleted_document_count(0);
   // Since it is a scorable property incompatible change, we need to do a
   // recovery proof flush.
   expected_set_schema_result.set_needs_persist_type(
@@ -11638,6 +11719,7 @@ TEST_F(IcingSearchEngineSearchTest,
   expected_set_schema_result
       .mutable_scorable_property_incompatible_changed_schema_types()
       ->Add("Person");
+  expected_set_schema_result.set_deleted_document_count(0);
   // Since it is a scorable property incompatible change, we need to do a
   // recovery proof flush.
   expected_set_schema_result.set_needs_persist_type(

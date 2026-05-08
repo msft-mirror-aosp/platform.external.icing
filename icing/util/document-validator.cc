@@ -27,6 +27,7 @@
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/embed/quantizer.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema/schema-store.h"
@@ -159,9 +160,14 @@ libtextclassifier3::Status DocumentValidator::Validate(
         // previously valid documents could become invalid if we make it an
         // error.We log a warning instead of an error here to avoid breaking
         // existing documents, and let it pass validation.
+        //
+        // The monkey test may intentionally trigger this case, causing
+        // excessive logs. We suppress this warning in test environments to
+        // reduce noise.
         if (has_quantized_values &&
             property_config.embedding_indexing_config().quantization_type() !=
-                EmbeddingIndexingConfig::QuantizationType::QUANTIZE_8_BIT) {
+                EmbeddingIndexingConfig::QuantizationType::QUANTIZE_8_BIT &&
+            !IsTestEnvironment()) {
           ICING_LOG(WARNING)
               << "Property '" << property.name()
               << "' has 'quantized_values' set but schema quantization_type is "

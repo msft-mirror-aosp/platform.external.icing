@@ -114,7 +114,7 @@ class MonkeyDocumentGenerator {
     return kCommonWords[dist(*random_)];
   }
 
-  PropertyProto::VectorProto GetRandomVector() const;
+  PropertyProto::VectorProto GetRandomVector(bool allow_quantized_value) const;
 
   std::string GetNamespace() const;
   std::string GetNamespaceWithRange(int l, int r) const;
