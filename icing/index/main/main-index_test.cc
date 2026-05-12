@@ -795,6 +795,56 @@ TEST_F(MainIndexTest, OneHitInTheFirstPageForTwoPagesMainIndex) {
   }
 }
 
+TEST_F(MainIndexTest, Reset) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t tvi,
+      lite_index_->InsertTerm("foo", TermMatchType::EXACT_ONLY, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(tvi, TviType::LITE));
+  SectionId section_id = 0;
+  // Add 32 docs (id 0 to 31).
+  int num_docs = 32;
+  for (DocumentId document_id = 0; document_id < num_docs; ++document_id) {
+    Hit doc_hit(section_id, document_id, Hit::kDefaultTermFrequency,
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
+    ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit));
+  }
+  lite_index_->set_last_added_document_id(num_docs - 1);
+
+  std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<MainIndex> main_index,
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
+
+  ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
+  ASSERT_THAT(main_index->last_added_document_id(), Eq(num_docs - 1));
+
+  // Reset the main index. Last added document id should be reset to
+  // kInvalidDocumentId, and all hits should be deleted.
+  ICING_ASSERT_OK(main_index->Reset());
+  EXPECT_THAT(main_index->last_added_document_id(), Eq(kInvalidDocumentId));
+  std::vector<DocHitInfo> hits_after_reset =
+      GetExactHits(main_index.get(), /*term_start_index=*/0,
+                   /*unnormalized_term_length=*/0, "foo");
+  EXPECT_THAT(hits_after_reset, IsEmpty());
+
+  // Add back hits to the main index. This makes sure every member is still
+  // valid after Reset().
+  ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
+  EXPECT_THAT(main_index->last_added_document_id(), Eq(num_docs - 1));
+  std::vector<DocHitInfo> hits =
+      GetExactHits(main_index.get(), /*term_start_index=*/0,
+                   /*unnormalized_term_length=*/0, "foo");
+  ASSERT_THAT(hits, SizeIs(num_docs));
+  for (DocumentId document_id = num_docs - 1; document_id >= 0; --document_id) {
+    ASSERT_THAT(
+        hits[num_docs - 1 - document_id],
+        EqualsDocHitInfo(document_id, std::vector<SectionId>{section_id}));
+  }
+}
+
 }  // namespace
 
 }  // namespace lib

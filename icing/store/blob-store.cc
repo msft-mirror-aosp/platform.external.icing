@@ -177,7 +177,6 @@ libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
           PortableFileBackedProtoLog<BlobInfoProto>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize, compression_level,
               /*compression_threshold_bytes=*/0, compression_mem_level,
-              /*enable_smaller_decompression_buffer_size_in=*/false,
               /*enable_proto_log_new_header_format_in=*/
               true, feature_flags->enable_reusable_decompression_buffer())));
   // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
@@ -557,7 +556,6 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
               /*compress_in=*/true, constants::kMaxProtoSize,
               compression_level_, /*compression_threshold_bytes=*/0,
               compression_mem_level_,
-              /*enable_smaller_decompression_buffer_size_in=*/false,
               /*enable_proto_log_new_header_format=*/true,
               feature_flags->enable_reusable_decompression_buffer())));
   // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
@@ -626,7 +624,6 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
               /*compress_in=*/true, constants::kMaxProtoSize,
               compression_level_, /*compression_threshold_bytes=*/0,
               compression_mem_level_,
-              /*enable_smaller_decompression_buffer_size_in=*/false,
               /*enable_proto_log_new_header_format=*/true,
               feature_flags->enable_reusable_decompression_buffer())));
   // TODO(b/435513415): pass feature flags object down to BlobStore and use it.

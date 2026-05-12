@@ -465,6 +465,7 @@ derived_file_util::DerivedFilesRebuildInfo GetFeatureDerivedFilesRebuildInfo(
           /*needs_embedding_index_rebuild=*/false);
     }
     case IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3:
+      [[fallthrough]];
     case IcingSearchEngineFeatureInfoProto::
         FEATURE_NON_EXISTENT_QUALIFIED_ID_JOIN: {
       return derived_file_util::DerivedFilesRebuildInfo(
@@ -584,15 +585,11 @@ void AddEnabledFeatures(const IcingSearchEngineOptions& options,
   enabled_features->Add(GetFeatureInfoProto(
       IcingSearchEngineFeatureInfoProto::FEATURE_EMBEDDING_QUANTIZATION));
   // SchemaDatabase feature
-  if (options.enable_schema_database()) {
-    enabled_features->Add(GetFeatureInfoProto(
-        IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE));
-  }
+  enabled_features->Add(GetFeatureInfoProto(
+      IcingSearchEngineFeatureInfoProto::FEATURE_SCHEMA_DATABASE));
   // QualifiedIdJoinIndex V3 feature
-  if (options.enable_qualified_id_join_index_v3()) {
-    enabled_features->Add(GetFeatureInfoProto(
-        IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3));
-  }
+  enabled_features->Add(GetFeatureInfoProto(
+      IcingSearchEngineFeatureInfoProto::FEATURE_QUALIFIED_ID_JOIN_INDEX_V3));
   // DeletePropagation PROPAGATE_FROM feature
   if (options.enable_delete_propagation_from()) {
     enabled_features->Add(GetFeatureInfoProto(

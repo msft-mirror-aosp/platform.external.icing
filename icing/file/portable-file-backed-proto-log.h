@@ -121,10 +121,6 @@ class PortableFileBackedProtoLog {
     // BEST_COMPRESSION and SPEED = 9
     const int32_t compression_mem_level;
 
-    // Whether to use a smaller decompression buffer size. If false, the
-    // decompression buffer size will be the default size of 64MiB.
-    const bool enable_smaller_decompression_buffer_size;
-
     // Whether to enable the new header format and unsynced tail checksum
     // related changes.
     const bool enable_new_header_format;
@@ -139,7 +135,6 @@ class PortableFileBackedProtoLog {
                      const int32_t compression_level_in,
                      const uint32_t compression_threshold_bytes_in,
                      const int32_t compression_mem_level_in,
-                     const bool enable_smaller_decompression_buffer_size_in,
                      const bool enable_new_header_format_in,
                      const bool enable_reusable_decompression_buffer_in)
         : compress(compress_in),
@@ -147,8 +142,6 @@ class PortableFileBackedProtoLog {
           compression_level(compression_level_in),
           compression_threshold_bytes(compression_threshold_bytes_in),
           compression_mem_level(compression_mem_level_in),
-          enable_smaller_decompression_buffer_size(
-              enable_smaller_decompression_buffer_size_in),
           enable_new_header_format(enable_new_header_format_in),
           enable_reusable_decompression_buffer(
               enable_reusable_decompression_buffer_in) {}
@@ -672,7 +665,6 @@ class PortableFileBackedProtoLog {
       std::unique_ptr<Header> header, int64_t file_size,
       int32_t compression_level, uint32_t compression_threshold_bytes,
       int32_t compression_mem_level,
-      bool enable_smaller_decompression_buffer_size,
       bool enable_new_header_format, bool enable_reusable_decompression_buffer);
 
   // Initializes a new proto log.
@@ -785,7 +777,6 @@ class PortableFileBackedProtoLog {
   const int32_t compression_level_;
   const uint32_t compression_threshold_bytes_;
   const int32_t compression_mem_level_;
-  const bool enable_smaller_decompression_buffer_size_;
   const bool enable_new_header_format_;
   const bool enable_reusable_decompression_buffer_;
 
@@ -800,7 +791,6 @@ PortableFileBackedProtoLog<ProtoT>::PortableFileBackedProtoLog(
     std::unique_ptr<Header> header, int64_t file_size,
     int32_t compression_level, uint32_t compression_threshold_bytes,
     int32_t compression_mem_level,
-    bool enable_smaller_decompression_buffer_size,
     bool enable_new_header_format, bool enable_reusable_decompression_buffer)
     : filesystem_(filesystem),
       file_path_(file_path),
@@ -809,8 +799,6 @@ PortableFileBackedProtoLog<ProtoT>::PortableFileBackedProtoLog(
       compression_level_(compression_level),
       compression_threshold_bytes_(compression_threshold_bytes),
       compression_mem_level_(compression_mem_level),
-      enable_smaller_decompression_buffer_size_(
-          enable_smaller_decompression_buffer_size),
       enable_new_header_format_(enable_new_header_format),
       enable_reusable_decompression_buffer_(
           enable_reusable_decompression_buffer),
@@ -930,7 +918,6 @@ PortableFileBackedProtoLog<ProtoT>::InitializeNewFile(
               /*file_size=*/kHeaderReservedBytes, options.compression_level,
               options.compression_threshold_bytes,
               options.compression_mem_level,
-              options.enable_smaller_decompression_buffer_size,
               options.enable_new_header_format,
               options.enable_reusable_decompression_buffer)),
       /*data_loss=*/DataLoss::NONE, /*recalculated_checksum=*/false};
@@ -1139,7 +1126,6 @@ PortableFileBackedProtoLog<ProtoT>::InitializeExistingFile(
               filesystem, file_path, std::move(header), file_size,
               options.compression_level, options.compression_threshold_bytes,
               options.compression_mem_level,
-              options.enable_smaller_decompression_buffer_size,
               options.enable_new_header_format,
               options.enable_reusable_decompression_buffer)),
       data_loss, recalculated_checksum};
@@ -1360,7 +1346,7 @@ PortableFileBackedProtoLog<ProtoT>::ReadProto(int64_t file_offset) const {
   ProtoT proto;
   if (header_->GetCompressFlag()) {
     size_t buffer_size = protobuf_ports::kDefaultBufferSize;
-    if (enable_smaller_decompression_buffer_size_ && stored_size >= 0) {
+    if (stored_size >= 0) {
       buffer_size = std::min(buffer_size, kProtoCompressionRatio *
                                               static_cast<size_t>(stored_size));
     }

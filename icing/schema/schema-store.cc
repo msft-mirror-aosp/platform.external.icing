@@ -665,6 +665,8 @@ libtextclassifier3::Status SchemaStore::InitializeInternal(
   if (initialize_stats != nullptr) {
     initialize_stats->set_num_schema_types(
         static_cast<int32_t>(type_config_info_cache_.type_config_map().size()));
+    initialize_stats->set_schema_proto_byte_size(
+        GetStoredSchemaProtoByteSize());
   }
   has_schema_successfully_set_ = true;
   ResetSchemaFileIfNeeded();
@@ -886,6 +888,15 @@ SchemaStore::GetFileBackedSchemaProto() const {
   return schema_file_.Read();
 }
 
+int64_t SchemaStore::GetStoredSchemaProtoByteSize() const {
+  libtextclassifier3::StatusOr<const SchemaProto*> schema_proto =
+      GetFileBackedSchemaProto();
+  if (!schema_proto.ok()) {
+    return 0;
+  }
+  return static_cast<int64_t>(schema_proto.ValueOrDie()->ByteSizeLong());
+}
+
 libtextclassifier3::StatusOr<SchemaProto> SchemaStore::GetFullSchemaProto()
     const {
   if (!has_schema_successfully_set_) {
@@ -976,11 +987,9 @@ SchemaStore::SetSchema(SetSchemaRequestProto&& set_schema_request) {
   // TODO: (b/337913932) - There are 2 code paths for setSchema calls, which
   // requires duplicate testing to ensure both code paths work as expected. Find
   // a way to parametrize tests to avoid needing 2 sets of tests.
-  if (feature_flags_->enable_schema_database() &&
-      !set_schema_request.database().empty()) {
-    // Step 1: (Only required if schema database is enabled)
-    // Do some preliminary checks on the new schema before formal validation and
-    // delta computation. This checks that:
+  if (!set_schema_request.database().empty()) {
+    // Step 1: Do some preliminary checks on the new schema before formal
+    // validation and delta computation. This checks that:
     // - The database field in the new schema's types match the provided
     //   database.
     // - The new schema's type names are not already in use from other
@@ -1012,7 +1021,7 @@ SchemaStore::SetSchema(SetSchemaRequestProto&& set_schema_request) {
         set_schema_request.database(), ignore_errors_and_delete_documents);
   }
 
-  // Get the full schema if schema database is disabled.
+  // No database specified -- get the full schema.
   libtextclassifier3::StatusOr<SchemaProto> schema_proto = GetFullSchemaProto();
   if (absl_ports::IsNotFound(schema_proto.status())) {
     // Case 1: No preexisting schema
@@ -1062,6 +1071,8 @@ SchemaStore::SetInitialSchemaForDatabase(SchemaProto new_schema,
         full_new_schema,
         GetFullSchemaProtoWithUpdatedDb(std::move(new_schema), database));
   }
+  result.schema_proto_byte_size =
+      static_cast<int64_t>(full_new_schema.ByteSizeLong());
   ICING_RETURN_IF_ERROR(ApplySchemaChange(std::move(full_new_schema)));
   has_schema_successfully_set_ = true;
   ResetSchemaFileIfNeeded();
@@ -1078,31 +1089,23 @@ SchemaStore::SetSchemaWithDatabaseOverride(
   result.success = true;
 
   if (!feature_flags_->enable_skip_set_schema_type_equality_check()) {
-    if (feature_flags_->enable_schema_database()) {
-      // Sanity check to make sure that we're comparing schemas from the same
-      // database.
-      // The new code path ensures that old_schema contains types from exactly
-      // one database since it's obtained using GetSchema(database), which is
-      // guaranteed to only return types from the single provided database.
-      libtextclassifier3::Status validate_old_schema_database =
-          ValidateSchemaDatabase(old_schema, database);
-      if (!validate_old_schema_database.ok()) {
-        return absl_ports::InvalidArgumentError(
-            "Schema database mismatch between new and old schemas. This should "
-            "never happen");
-      }
+    // Sanity check to make sure that we're comparing schemas from the same
+    // database.
+    // The new code path ensures that old_schema contains types from exactly
+    // one database since it's obtained using GetSchema(database), which is
+    // guaranteed to only return types from the single provided database.
+    libtextclassifier3::Status validate_old_schema_database =
+        ValidateSchemaDatabase(old_schema, database);
+    if (!validate_old_schema_database.ok()) {
+      return absl_ports::InvalidArgumentError(
+          "Schema database mismatch between new and old schemas. This should "
+          "never happen");
+    }
 
-      // Check if the schema types are the same between the new and old schema,
-      // ignoring order.
-      if (AreSchemaTypesEqual(new_schema, old_schema)) {
-        return result;
-      }
-    } else {
-      // Old equality check that is sensitive to type definition order.
-      if (new_schema.SerializeAsString() == old_schema.SerializeAsString()) {
-        // Same schema as before. No need to update anything
-        return result;
-      }
+    // Check if the schema types are the same between the new and old schema,
+    // ignoring order.
+    if (AreSchemaTypesEqual(new_schema, old_schema)) {
+      return result;
     }
   }
 
@@ -1186,6 +1189,8 @@ SchemaStore::SetSchemaWithDatabaseOverride(
   // Step 3: Apply the schema change if success. This updates persisted files
   // and derived data structures.
   if (result.success) {
+    result.schema_proto_byte_size =
+        static_cast<int64_t>(full_new_schema.ByteSizeLong());
     ICING_RETURN_IF_ERROR(ApplySchemaChange(std::move(full_new_schema)));
     has_schema_successfully_set_ = true;
     ResetSchemaFileIfNeeded();
@@ -1579,8 +1584,7 @@ SchemaStore::ConstructBlobPropertyMap() const {
 
 libtextclassifier3::Status SchemaStore::ValidateSchemaDatabase(
     const SchemaProto& new_schema, const std::string& database) const {
-  if (!feature_flags_->enable_schema_database() || new_schema.types().empty() ||
-      database.empty()) {
+  if (new_schema.types().empty() || database.empty()) {
     return libtextclassifier3::Status::OK;
   }
 
@@ -1773,10 +1777,9 @@ libtextclassifier3::StatusOr<SchemaProto>
 SchemaStore::GetFullSchemaProtoWithUpdatedDb(
     SchemaProto input_database_schema,
     const std::string& database_to_update) const {
-  if (!feature_flags_->enable_schema_database() || database_to_update.empty()) {
-    // The schema database is not enabled, or we're updating using the empty
-    // schema database. This means that the input schema is already the full
-    // schema, so we don't need to do any merges.
+  if (database_to_update.empty()) {
+    // We're updating using the empty schema database. This means that the input
+    // schema is already the full schema, so we don't need to do any merges.
     return input_database_schema;
   }
 

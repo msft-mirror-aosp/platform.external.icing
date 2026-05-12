@@ -1257,11 +1257,6 @@ INSTANTIATE_TEST_SUITE_P(
                         /*allow_circular_schema_definitions=*/true,
                         /*enable_repeated_field_joins=*/true,
                         /*enable_embedding_backup_generation=*/false,
-                        /*enable_schema_database=*/true,
-                        /*release_backup_schema_file_if_overlay_present=*/true,
-                        /*enable_strict_page_byte_size=*/true,
-                        /*enable_smaller_decompression_buffer_size=*/true,
-                        /*enable_passing_filter_to_children=*/true,
                         /*enable_proto_log_new_header_format=*/true,
                         /*enable_reusable_decompression_buffer=*/true,
                         /*enable_schema_type_id_optimization=*/true,
@@ -1269,17 +1264,12 @@ INSTANTIATE_TEST_SUITE_P(
                         /*expired_document_purge_threshold_ms=*/0,
                         /*enable_non_existent_qualified_id_join=*/true,
                         /*enable_skip_set_schema_type_equality_check=*/true,
-                        /*enable_embed_query_optimization=*/true,
-                        /*enable_schema_definition_deduping=*/true),
+                        /*enable_schema_definition_deduping=*/true,
+                        /*enable_delete_propagation_from=*/true),
                     FeatureFlags(
                         /*allow_circular_schema_definitions=*/true,
                         /*enable_repeated_field_joins=*/true,
                         /*enable_embedding_backup_generation=*/true,
-                        /*enable_schema_database=*/true,
-                        /*release_backup_schema_file_if_overlay_present=*/true,
-                        /*enable_strict_page_byte_size=*/true,
-                        /*enable_smaller_decompression_buffer_size=*/true,
-                        /*enable_passing_filter_to_children=*/true,
                         /*enable_proto_log_new_header_format=*/true,
                         /*enable_reusable_decompression_buffer=*/true,
                         /*enable_schema_type_id_optimization=*/true,
@@ -1287,8 +1277,8 @@ INSTANTIATE_TEST_SUITE_P(
                         /*expired_document_purge_threshold_ms=*/0,
                         /*enable_non_existent_qualified_id_join=*/true,
                         /*enable_skip_set_schema_type_equality_check=*/true,
-                        /*enable_embed_query_optimization=*/true,
-                        /*enable_schema_definition_deduping=*/true)));
+                        /*enable_schema_definition_deduping=*/true,
+                        /*enable_delete_propagation_from=*/true)));
 
 }  // namespace
 

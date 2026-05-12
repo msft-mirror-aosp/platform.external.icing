@@ -1671,16 +1671,16 @@ TEST_F(IndexTest, UpdateChecksum) {
   ASSERT_THAT(edit.BufferTerm("foo", TermMatchType::PREFIX), IsOk());
   ASSERT_THAT(edit.BufferTerm("bar", TermMatchType::PREFIX), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
-  Crc32 lite_only_crc = index_->GetChecksum();
-  EXPECT_THAT(index_->UpdateChecksum(), Eq(lite_only_crc));
-  EXPECT_THAT(index_->GetChecksum(), Eq(lite_only_crc));
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 lite_only_crc, index_->GetChecksum());
+  EXPECT_THAT(index_->UpdateChecksum(), IsOkAndHolds(Eq(lite_only_crc)));
+  EXPECT_THAT(index_->GetChecksum(), IsOkAndHolds(Eq(lite_only_crc)));
 
   // Merge content into the main index.
   ASSERT_THAT(index_->Merge(), IsOk());
-  Crc32 main_only_crc = index_->GetChecksum();
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 main_only_crc, index_->GetChecksum());
   EXPECT_THAT(main_only_crc, Not(Eq(lite_only_crc)));
-  EXPECT_THAT(index_->UpdateChecksum(), Eq(main_only_crc));
-  EXPECT_THAT(index_->GetChecksum(), Eq(main_only_crc));
+  EXPECT_THAT(index_->UpdateChecksum(), IsOkAndHolds(Eq(main_only_crc)));
+  EXPECT_THAT(index_->GetChecksum(), IsOkAndHolds(Eq(main_only_crc)));
 
   // Add some more content to the lite index
   edit = index_->Edit(kDocumentId1, kSectionId2,
@@ -1688,11 +1688,11 @@ TEST_F(IndexTest, UpdateChecksum) {
   ASSERT_THAT(edit.BufferTerm("baz", TermMatchType::PREFIX), IsOk());
   ASSERT_THAT(edit.BufferTerm("bat", TermMatchType::PREFIX), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
-  Crc32 both_crc = index_->GetChecksum();
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 both_crc, index_->GetChecksum());
   EXPECT_THAT(both_crc, Not(Eq(lite_only_crc)));
   EXPECT_THAT(both_crc, Not(Eq(main_only_crc)));
-  EXPECT_THAT(index_->UpdateChecksum(), Eq(both_crc));
-  EXPECT_THAT(index_->GetChecksum(), Eq(both_crc));
+  EXPECT_THAT(index_->UpdateChecksum(), IsOkAndHolds(Eq(both_crc)));
+  EXPECT_THAT(index_->GetChecksum(), IsOkAndHolds(Eq(both_crc)));
 }
 
 TEST_F(IndexTest, IndexPersistence) {
@@ -2796,11 +2796,6 @@ class IndexUpdateChecksumEnsuresDataConsistencyTest
         /*enable_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_schema_database=*/true,
-        /*release_backup_schema_file_if_overlay_present=*/true,
-        /*enable_strict_page_byte_size_limit=*/true,
-        /*enable_smaller_decompression_buffer_size=*/true,
-        /*enable_passing_filter_to_children=*/true,
         /*enable_proto_log_new_header_format=*/true,
         /*enable_reusable_decompression_buffer=*/true,
         /*enable_schema_type_id_optimization=*/true,
@@ -2808,8 +2803,8 @@ class IndexUpdateChecksumEnsuresDataConsistencyTest
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_embed_query_optimization=*/true,
-        /*enable_schema_definition_deduping=*/true);
+        /*enable_schema_definition_deduping=*/true,
+        /*enable_delete_propagation_from=*/true);
 
     index_dir_ = GetTestTempDir() + "/index_test/";
     Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
@@ -2841,7 +2836,7 @@ TEST_P(IndexUpdateChecksumEnsuresDataConsistencyTest,
 
   // 4. UpdateChecksum, which is what we do for PersistType::RECOVERY_PROOF of
   // PersistToDisk.
-  index_->UpdateChecksum();
+  ICING_EXPECT_OK(index_->UpdateChecksum());
 
   // 5. Destroy and reinitialize the index.
   index_.reset();

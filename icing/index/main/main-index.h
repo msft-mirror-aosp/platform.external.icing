@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -26,6 +27,7 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/posting_list/flash-index-storage.h"
@@ -44,6 +46,7 @@
 #include "icing/store/document-id.h"
 #include "icing/store/suggestion-result-checker.h"
 #include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -188,10 +191,14 @@ class MainIndex {
   }
 
   // Updates and returns the checksums of the components in the MainIndex.
-  Crc32 UpdateChecksum() { return main_lexicon_->UpdateCrc(); }
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum() {
+    return main_lexicon_->UpdateCrc();
+  }
 
   // Calculates and returns the checksums of the components in the MainIndex.
-  Crc32 GetChecksum() const { return main_lexicon_->GetCrc(); }
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const {
+    return main_lexicon_->GetCrc();
+  }
 
   DocumentId last_added_document_id() const {
     return flash_index_storage_->get_last_indexed_docid();

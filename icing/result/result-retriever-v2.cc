@@ -190,8 +190,7 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
       //
       // (Use subtraction to avoid integer overflow).
       size_t result_bytes = result.result_proto->ByteSizeLong();
-      if (feature_flags_.enable_strict_page_byte_size_limit() &&
-          !results.empty() &&
+      if (!results.empty() &&
           result_bytes >= result_state.num_total_bytes_per_page_threshold() -
                               num_total_bytes) {
         // Exceeds the byte size threshold, so skip the current document. Also
