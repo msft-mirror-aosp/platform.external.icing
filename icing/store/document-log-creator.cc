@@ -105,7 +105,6 @@ DocumentLogCreator::Create(const Filesystem* filesystem,
           PortableFileBackedProtoLog<DocumentWrapper>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize, compression_level,
               compression_threshold_bytes, compression_mem_level,
-              feature_flags->enable_smaller_decompression_buffer_size(),
               feature_flags->enable_proto_log_new_header_format(),
               feature_flags->enable_reusable_decompression_buffer())));
 
@@ -144,7 +143,6 @@ libtextclassifier3::Status DocumentLogCreator::MigrateFromV0ToV1(
               /*compress_in=*/true,
               /*max_proto_size_in=*/constants::kMaxProtoSize, compression_level,
               compression_threshold_bytes, compression_mem_level,
-              feature_flags->enable_smaller_decompression_buffer_size(),
               feature_flags->enable_proto_log_new_header_format(),
               feature_flags->enable_reusable_decompression_buffer()));
   if (!v1_create_result_or.ok()) {

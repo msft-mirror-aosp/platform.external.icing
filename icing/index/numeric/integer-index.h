@@ -20,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -242,7 +243,7 @@ class IntegerIndex : public NumericIndex<int64_t> {
   //   - INTERNAL_ERROR if unable to successfully persist updated properties
   //     list in wildcard_property_storage_.
   libtextclassifier3::Status AddPropertyToWildcardStorage(
-      const std::string& property_path);
+      const std::string& new_property_path);
 
   // Transfers integer index data from the current integer index to
   // new_integer_index.
@@ -345,6 +346,10 @@ class IntegerIndex : public NumericIndex<int64_t> {
 
   // The index storage that is used once we have already created
   // kMaxPropertyStorages in property_to_storage_map.
+  //
+  // Note: this instance can be nullptr if we have not yet reached
+  //   kMaxPropertyStorages. In this case, wildcard_properties_set_ MUST be
+  //   empty.
   std::unique_ptr<icing::lib::IntegerIndexStorage> wildcard_index_storage_;
 
   int32_t num_data_threshold_for_bucket_split_;

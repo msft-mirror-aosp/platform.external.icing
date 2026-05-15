@@ -19,12 +19,14 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-abstract-query-node.h"
 #include "icing/monkey_test/monkey-test-util.h"
 #include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/proto/document.pb.h"
@@ -32,6 +34,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/store/document-id.h"
+#include "icing/tokenization/language-segmenter.h"
 
 namespace icing {
 namespace lib {
@@ -46,7 +49,7 @@ class InMemoryIcingSearchEngine {
     std::optional<DocumentProto> document;
   };
 
-  InMemoryIcingSearchEngine(MonkeyTestRandomEngine *random) : random_(random) {}
+  InMemoryIcingSearchEngine(MonkeyTestRandomEngine* random);
 
   uint32_t GetNumAliveDocuments() const { return existing_doc_ids_.size(); }
 
@@ -68,6 +71,18 @@ class InMemoryIcingSearchEngine {
   // Returns an instance of PickDocumentResult.
   PickDocumentResult RandomPickDocument(float p_alive, float p_all,
                                         float p_other) const;
+
+  const std::vector<DocumentId>& GetExistingDocumentIds() const {
+    return existing_doc_ids_;
+  }
+
+  const MonkeyTokenizedDocument& GetDocumentById(DocumentId doc_id) const {
+    return documents_[doc_id];
+  }
+
+  const LanguageSegmenter* GetLanguageSegmenter() const {
+    return language_segmenter_.get();
+  }
 
   // Puts the document into the in-memory Icing. If the (namespace, uri) pair
   // already exists, the old document will be overwritten.
@@ -99,16 +114,18 @@ class InMemoryIcingSearchEngine {
   libtextclassifier3::StatusOr<uint32_t> DeleteBySchemaType(
       const std::string &schema_type);
 
-  // Deletes all Documents that match the query specified in search_spec.
-  // Check the comments of Search() for the supported query types.
+  // Deletes all Documents that match the query specified in the
+  // MonkeyAbstractQueryNode. Check the comments of Search() for the supported
+  // query types.
   //
   // Returns:
   //   The number of deleted documents on success
   //   INTERNAL_ERROR if there are inconsistencies in the in-memory Icing
   libtextclassifier3::StatusOr<uint32_t> DeleteByQuery(
-      const SearchSpecProto &search_spec);
+      const MonkeyAbstractQueryNode* node);
 
-  // Retrieves documents according to search_spec.
+  // Retrieves documents according to MonkeyAbstractQueryNode, which is a
+  // structured representation of a query.
   // Currently, only the "query", "term_match_type", "embedding_query_vectors",
   // and "embedding_query_metric_type" fields are recognized by the in-memory
   // Icing.
@@ -121,26 +138,35 @@ class InMemoryIcingSearchEngine {
   // `low` and `high` are floating point numbers that specify the score range.
   // Section restrictions are also recognized.
   libtextclassifier3::StatusOr<std::vector<DocumentProto>> Search(
-      const SearchSpecProto &search_spec) const;
+      const MonkeyAbstractQueryNode* node) const;
+
+  struct PropertyIndexInfo {
+    // Data type of the property.
+    PropertyConfigProto::DataType::Code data_type =
+        PropertyConfigProto::DataType::UNKNOWN;
+
+    // The term match type if the property is of type string.
+    TermMatchType::Code term_match_type = TermMatchType::UNKNOWN;
+
+    // The tokenizer type if the property is of type string.
+    StringIndexingConfig::TokenizerType::Code tokenizer_type =
+        StringIndexingConfig::TokenizerType::NONE;
+
+    // The quantization type if the property is of type vector.
+    EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
+        EmbeddingIndexingConfig::QuantizationType::NONE;
+
+    // The numeric match type if the property is of type int64.
+    IntegerIndexingConfig::NumericMatchType::Code numeric_match_type =
+        IntegerIndexingConfig::NumericMatchType::UNKNOWN;
+
+    // Whether the property is indexable.
+    bool indexable = false;
+  };
+  libtextclassifier3::StatusOr<PropertyIndexInfo> GetPropertyIndexInfo(
+      const std::string& schema_type, std::string_view property_path) const;
 
  private:
-  // Does not own.
-  MonkeyTestRandomEngine *random_;
-
-  std::vector<MonkeyTokenizedDocument> documents_;
-  std::vector<DocumentId> existing_doc_ids_;
-  // A map from namespaces to uris and then from uris to internal document ids,
-  // which is used for fast lookups.
-  std::unordered_map<std::string, std::unordered_map<std::string, DocumentId>>
-      namespace_uri_docid_map;
-
-  std::unique_ptr<SchemaProto> schema_;
-  // A map that maps from (schema_type, property_name) to the corresponding
-  // PropertyConfigProto.
-  std::unordered_map<
-      std::string, std::unordered_map<std::string, const PropertyConfigProto &>>
-      property_config_map_;
-
   // Finds and returns the internal document id for the document identified by
   // the given key (namespace, uri)
   //
@@ -150,31 +176,29 @@ class InMemoryIcingSearchEngine {
   libtextclassifier3::StatusOr<DocumentId> InternalGet(
       const std::string &name_space, const std::string &uri) const;
 
-  // A helper method for DeleteByQuery and Search to get matched internal doc
-  // ids.
-  libtextclassifier3::StatusOr<std::vector<DocumentId>> InternalSearch(
-      const SearchSpecProto &search_spec) const;
-
   libtextclassifier3::StatusOr<const PropertyConfigProto *> GetPropertyConfig(
       const std::string &schema_type, const std::string &property_name) const;
 
-  struct PropertyIndexInfo {
-    // Whether the property is indexable.
-    bool indexable;
-    // The term match type if the property is of type string.
-    TermMatchType::Code term_match_type =
-        TermMatchType::Code::TermMatchType_Code_UNKNOWN;
-    // The quantization type if the property is of type vector.
-    EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
-        EmbeddingIndexingConfig::QuantizationType::NONE;
-  };
-  libtextclassifier3::StatusOr<PropertyIndexInfo> GetPropertyIndexInfo(
-      const std::string &schema_type,
-      const MonkeyTokenizedSection &section) const;
+  // Does not own.
+  MonkeyTestRandomEngine* random_;
 
-  libtextclassifier3::StatusOr<bool> DoesDocumentMatchQuery(
-      const MonkeyTokenizedDocument &document,
-      const SearchSpecProto &search_spec) const;
+  // Language segmenter for tokenization.
+  std::unique_ptr<LanguageSegmenter> language_segmenter_;
+
+  std::vector<MonkeyTokenizedDocument> documents_;
+  std::vector<DocumentId> existing_doc_ids_;
+
+  // A map from namespaces to uris and then from uris to internal document ids,
+  // which is used for fast lookups.
+  std::unordered_map<std::string, std::unordered_map<std::string, DocumentId>>
+      namespace_uri_docid_map_;
+
+  std::unique_ptr<SchemaProto> schema_;
+  // A map that maps from (schema_type, property_name) to the corresponding
+  // PropertyConfigProto.
+  std::unordered_map<
+      std::string, std::unordered_map<std::string, const PropertyConfigProto&>>
+      property_config_map_;
 };
 
 }  // namespace lib

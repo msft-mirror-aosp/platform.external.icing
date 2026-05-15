@@ -18,20 +18,22 @@
 #include <array>
 #include <cstdint>
 #include <functional>
-#include <iomanip>
-#include <ios>
 #include <limits>
 #include <memory>
 #include <random>
-#include <sstream>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
-#include "icing/absl_ports/str_cat.h"
+#include "icing/absl_ports/canonical_errors.h"
 #include "icing/icing-search-engine.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-abstract-query-node.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-semantic-query-node.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-term-query-node.h"
 #include "icing/monkey_test/in-memory-icing-search-engine.h"
 #include "icing/monkey_test/monkey-test-generators.h"
 #include "icing/monkey_test/monkey-test-util.h"
@@ -49,6 +51,7 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/logging.h"
+#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -72,68 +75,150 @@ int GetRandomInt(MonkeyTestRandomEngine* random, int min, int max) {
   return dist(*random);
 }
 
-SearchSpecProto GenerateRandomSearchSpecProto(
-    MonkeyTestRandomEngine* random,
-    MonkeyDocumentGenerator* document_generator) {
+void GetRandomPropertyRestricts(
+    MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
+    std::unordered_set<std::string>& property_restricts) {
+  const SchemaTypeConfigProto& type_config = document_generator->GetType();
+  if (type_config.properties_size() > 0) {
+    std::uniform_int_distribution<> prop_dist(
+        0, type_config.properties_size() - 1);
+    property_restricts.insert(
+        type_config.properties(prop_dist(*random)).property_name());
+  }
+}
+
+// A pair of SearchSpecProto and MonkeyAbstractQueryNode that should be
+// equivalent.
+struct MonkeyQueryPair {
   SearchSpecProto search_spec;
-  std::string query;
+  std::unique_ptr<MonkeyAbstractQueryNode> query_node;
+};
 
-  // 50% chance of doing a term query, and 50% chance of doing an embedding
-  // query.
+std::unique_ptr<MonkeyTermQueryNode> GenerateRandomTermNode(
+    MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
+    SearchSpecProto& search_spec) {
+  // 50% chance of getting a property restrict.
+  std::unordered_set<std::string> property_restricts;
   if (GetRandomBoolean(random)) {
-    // Get a random token from the language set as a single term query.
-    query = document_generator->GetToken();
-    TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+    GetRandomPropertyRestricts(random, document_generator, property_restricts);
+  }
+
+  // Get a random token from the language set as a single term query.
+  std::string term = std::string(document_generator->GetToken());
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+  if (GetRandomBoolean(random)) {
+    term_match_type = TermMatchType::PREFIX;
+    // Randomly drop a suffix of query to test prefix query.
+    std::uniform_int_distribution<> size_dist(1, term.size());
+    term.resize(size_dist(*random));
+  }
+  // TODO(b/491571627) - Decide on how to support queries with different match
+  // types.
+  search_spec.set_term_match_type(term_match_type);
+
+  auto query_node = std::make_unique<MonkeyTermQueryNode>(
+      term, /*is_prefix=*/false, /*is_verbatim=*/false, term_match_type,
+      /*document_namespaces=*/std::vector<std::string>(),
+      /*document_schema_types=*/
+      std::vector<std::string>(search_spec.schema_type_filters().begin(),
+                               search_spec.schema_type_filters().end()),
+      /*property_restricts=*/
+      std::move(property_restricts));
+  return query_node;
+}
+
+std::unique_ptr<MonkeySemanticQueryNode> GenerateRandomSemanticNode(
+    MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
+    SearchSpecProto& search_spec) {
+  // 50% chance of getting a property restrict.
+  std::unordered_set<std::string> property_restricts;
+  if (GetRandomBoolean(random)) {
+    GetRandomPropertyRestricts(random, document_generator, property_restricts);
+  }
+
+  // Since our string representation of the query has a fixed precision of 2
+  // decimal places, we'll compute the bounds as integers and then divide by 100
+  // so that we can get values with 2 decimal places.
+  std::uniform_int_distribution<int> range_dist(-100, 100);
+  double low = range_dist(*random) / 100.0;
+  double high = range_dist(*random) / 100.0;
+  if (low > high) {
+    std::swap(low, high);
+  }
+
+  SearchSpecProto::EmbeddingQueryMetricType::Code metric_type =
+      SearchSpecProto::EmbeddingQueryMetricType::COSINE;
+  PropertyProto::VectorProto vector =
+      document_generator->GetRandomVector(/*allow_quantized_value=*/true);
+
+  search_spec.set_embedding_query_metric_type(metric_type);
+
+  *search_spec.add_embedding_query_vectors() = vector;
+
+  // TODO(b/491571627) - Add support for multiple embedding query vectors.
+  auto query_node = std::make_unique<MonkeySemanticQueryNode>(
+      /*vector_index=*/0, low, high, metric_type, std::move(vector),
+      /*property_restricts=*/std::move(property_restricts),
+      /*document_namespaces=*/std::vector<std::string>(),
+      /*document_schema_types=*/
+      std::vector<std::string>(search_spec.schema_type_filters().begin(),
+                               search_spec.schema_type_filters().end()));
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+  return query_node;
+}
+
+// Generates a random query tree with the given depth.
+// As a part of generating the query tree, the some fields in the
+// SearchSpecProto will also be written and read to (depending on the type of
+// query generated).
+libtextclassifier3::StatusOr<std::unique_ptr<MonkeyAbstractQueryNode>>
+GenerateRandomQueryTree(MonkeyTestRandomEngine* random,
+                        MonkeyDocumentGenerator* document_generator,
+                        SearchSpecProto& search_spec, int depth) {
+  if (depth <= 0) {
+    return absl_ports::InvalidArgumentError("Depth must be positive.");
+  }
+  // Generate a random leaf node.
+  if (depth == 1) {
     if (GetRandomBoolean(random)) {
-      term_match_type = TermMatchType::PREFIX;
-      // Randomly drop a suffix of query to test prefix query.
-      std::uniform_int_distribution<> size_dist(1, query.size());
-      query.resize(size_dist(*random));
+      return GenerateRandomTermNode(random, document_generator, search_spec);
+    } else {
+      return GenerateRandomSemanticNode(random, document_generator,
+                                        search_spec);
     }
-    search_spec.set_term_match_type(term_match_type);
   } else {
-    std::uniform_real_distribution<float> range_dist(-1.0, 1.0);
-    float low = range_dist(*random);
-    float high = range_dist(*random);
-    if (low > high) {
-      std::swap(low, high);
-    }
-
-    std::ostringstream stream;
-    stream << std::fixed << std::setprecision(2)
-           << "semanticSearch(getEmbeddingParameter(0), " << low << ", " << high
-           << ")";
-    query = stream.str();
-    search_spec.set_embedding_query_metric_type(
-        SearchSpecProto::EmbeddingQueryMetricType::COSINE);
-    search_spec.add_enabled_features(
-        std::string(kListFilterQueryLanguageFeature));
-    *search_spec.add_embedding_query_vectors() =
-        document_generator->GetRandomVector();
+    // TODO(b/491571627): Handle cases where depth > 1 i.e. we have nodes with
+    // children.
+    return absl_ports::UnimplementedError(
+        "Depth > 1 not implemented yet.");  // Not implemented yet.
   }
+}
 
-  // 50% chance of getting a section restriction.
-  if (GetRandomBoolean(random)) {
-    const SchemaTypeConfigProto& type_config = document_generator->GetType();
-    if (type_config.properties_size() > 0) {
-      std::uniform_int_distribution<> prop_dist(
-          0, type_config.properties_size() - 1);
-      query = absl_ports::StrCat(
-          type_config.properties(prop_dist(*random)).property_name(), ":",
-          query);
-    }
-  }
+libtextclassifier3::StatusOr<MonkeyQueryPair> GenerateRandomMonkeyQueryPair(
+    MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
+    int depth = 1) {
+  SearchSpecProto search_spec;
+
   // %50 chance of getting one type filter
   // %25 chance of getting two type filters
   // %25 chance of getting no type filters
+  std::vector<std::string> type_filters;
   for (int i = 0; i < 2; ++i) {
     if (GetRandomBoolean(random)) {
-      search_spec.add_schema_type_filters(
-          document_generator->GetType().schema_type());
+      type_filters.push_back(document_generator->GetType().schema_type());
     }
   }
-  search_spec.set_query(query);
-  return search_spec;
+  search_spec.mutable_schema_type_filters()->Add(type_filters.begin(),
+                                                 type_filters.end());
+
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<MonkeyAbstractQueryNode> query_node,
+      GenerateRandomQueryTree(random, document_generator, search_spec, depth));
+
+  search_spec.set_query(query_node->GenerateQueryString());
+  return MonkeyQueryPair{.search_spec = std::move(search_spec),
+                         .query_node = std::move(query_node)};
 }
 
 ScoringSpecProto GenerateRandomScoringSpec(MonkeyTestRandomEngine* random) {
@@ -439,12 +524,15 @@ void IcingMonkeyTestRunner::DoDeleteBySchemaType() {
 }
 
 void IcingMonkeyTestRunner::DoDeleteByQuery() {
-  SearchSpecProto search_spec =
-      GenerateRandomSearchSpecProto(&random_, document_generator_.get());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      MonkeyQueryPair query_pair,
+      GenerateRandomMonkeyQueryPair(&random_, document_generator_.get()));
+  SearchSpecProto search_spec = query_pair.search_spec;
   ICING_LOG(INFO) << "Monkey deleting by query: " << search_spec.query();
   DeleteByQueryResultProto delete_result = icing_->DeleteByQuery(search_spec);
-  ICING_ASSERT_OK_AND_ASSIGN(uint32_t num_docs_deleted,
-                             in_memory_icing_->DeleteByQuery(search_spec));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t num_docs_deleted,
+      in_memory_icing_->DeleteByQuery(query_pair.query_node.get()));
   if (num_docs_deleted != 0) {
     ASSERT_THAT(delete_result.status(), ProtoIsOk())
         << "Cannot delete documents that matches with the query.";
@@ -468,9 +556,11 @@ void IcingMonkeyTestRunner::DoDeleteByQuery() {
 }
 
 void IcingMonkeyTestRunner::DoSearch() {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      MonkeyQueryPair query_pair,
+      GenerateRandomMonkeyQueryPair(&random_, document_generator_.get()));
   std::unique_ptr<SearchSpecProto> search_spec =
-      std::make_unique<SearchSpecProto>(
-          GenerateRandomSearchSpecProto(&random_, document_generator_.get()));
+      std::make_unique<SearchSpecProto>(query_pair.search_spec);
   std::unique_ptr<ScoringSpecProto> scoring_spec =
       std::make_unique<ScoringSpecProto>(GenerateRandomScoringSpec(&random_));
   std::unique_ptr<ResultSpecProto> result_spec =
@@ -487,8 +577,9 @@ void IcingMonkeyTestRunner::DoSearch() {
   ICING_VLOG(1) << "scoring_spec:\n" << scoring_spec->DebugString();
   ICING_VLOG(1) << "result_spec:\n" << result_spec->DebugString();
 
-  ICING_ASSERT_OK_AND_ASSIGN(std::vector<DocumentProto> exp_documents,
-                             in_memory_icing_->Search(*search_spec));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<DocumentProto> exp_documents,
+      in_memory_icing_->Search(query_pair.query_node.get()));
 
   SearchResultProto search_result =
       icing_->Search(*search_spec, *scoring_spec, *result_spec);
@@ -545,8 +636,35 @@ void IcingMonkeyTestRunner::DoSearch() {
   ICING_LOG(INFO) << exp_documents.size() << " documents found by query.";
 }
 
+void IcingMonkeyTestRunner::DoGetDebugInfo() {
+  ICING_LOG(INFO) << "Monkey getting debug info";
+  int verbosity_code = GetRandomInt(
+          &random_, DebugInfoVerbosity::Code_MIN, DebugInfoVerbosity::Code_MAX);
+  DebugInfoVerbosity::Code verbosity =
+      static_cast<DebugInfoVerbosity::Code>(verbosity_code);
+  DebugInfoResultProto get_debug_info_result = icing_->GetDebugInfo(verbosity);
+  ASSERT_THAT(get_debug_info_result.status(), ProtoIsOk());
+}
+
+void IcingMonkeyTestRunner::DoPersistToDisk() {
+  PersistType::Code persist_type = static_cast<PersistType::Code>(
+      GetRandomInt(&random_, 1, PersistType::Code_MAX));
+  ICING_LOG(INFO) << "Monkey persisting to disk type: " << persist_type;
+  ASSERT_THAT(icing_->PersistToDisk(persist_type).status(), ProtoIsOk());
+}
+
 void IcingMonkeyTestRunner::ReloadFromDisk() {
   ICING_LOG(INFO) << "Monkey reloading from disk";
+
+  // The IcingSearchEngine destructor does not automatically persist data to
+  // disk in the monkey test environment. We introduce a 50% probability of
+  // invoking PersistToDisk() (with a randomly selected persist type) and a 50%
+  // probability of skipping it to simulate an unclean shutdown (e.g. crash or
+  // power loss).
+  if (GetRandomBoolean(&random_)) {
+    ASSERT_NO_FATAL_FAILURE(DoPersistToDisk());
+  }
+
   // Destruct the icing search engine by resetting the unique pointer.
   icing_.reset();
   ASSERT_NO_FATAL_FAILURE(CreateIcingSearchEngine());
@@ -571,23 +689,23 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   // flip this flag to test document store's compatibility.
   icing_options.set_document_store_namespace_id_fingerprint(
       GetRandomBoolean(&random_));
-  icing_options.set_enable_embedding_index(true);
-  icing_options.set_enable_embedding_quantization(true);
   icing_options.set_compression_threshold_bytes(
       GetRandomInt(&random_, /*min=*/0, /*max=*/10000));
-  icing_options.set_enable_eigen_embedding_scoring(GetRandomBoolean(&random_));
-  icing_options.set_enable_passing_filter_to_children(
-      GetRandomBoolean(&random_));
-  icing_options.set_enable_embedding_iterator_v2(GetRandomBoolean(&random_));
+
   // Randomly choose the number of shards from 1, 2, 4, 8, 16, 32.
   uint32_t num_shards = 1 << GetRandomInt(&random_, /*min=*/0, /*max=*/5);
   icing_options.set_embedding_index_num_shards(num_shards);
-  icing_options.set_enable_schema_database(GetRandomBoolean(&random_));
   icing_options.set_enable_schema_type_id_optimization(
       GetRandomBoolean(&random_));
   icing_options.set_enable_skip_set_schema_type_equality_check(
       GetRandomBoolean(&random_));
   icing_options.set_enable_embed_query_optimization(GetRandomBoolean(&random_));
+  icing_options.set_enable_optimize_improvements(true);
+  icing_options.set_enable_manual_persist_to_disk(true);
+  icing_options.set_enable_proto_log_new_header_format(true);
+  icing_options.set_enable_repeated_field_joins(true);
+  icing_options.set_enable_non_existent_qualified_id_join(true);
+  icing_options.set_enable_schema_definition_deduping(true);
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }
