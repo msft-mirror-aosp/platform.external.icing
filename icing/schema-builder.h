@@ -280,6 +280,12 @@ class SchemaTypeConfigBuilder {
     return *this;
   }
 
+  SchemaTypeConfigBuilder& AddAccountProperty(
+      std::string account_property) {
+    type_config_.add_account_properties(std::move(account_property));
+    return *this;
+  }
+
   SchemaTypeConfigProto Build() { return std::move(type_config_); }
 
   SchemaTypeConfigProto BuildAndPopulatePropertiesDigest() {

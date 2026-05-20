@@ -28,6 +28,7 @@ import com.google.android.icing.proto.DeleteByNamespaceResultProto;
 import com.google.android.icing.proto.DeleteByQueryResultProto;
 import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
+import com.google.android.icing.proto.DocumentGroupInfoProto;
 import com.google.android.icing.proto.DocumentProto;
 import com.google.android.icing.proto.GetAllNamespacesResultProto;
 import com.google.android.icing.proto.GetNextPageRequestProto;
@@ -179,6 +180,19 @@ public final class IcingSearchEngineTest {
     MessageDigest messageDigest = MessageDigest.getInstance("SHA-256");
     messageDigest.update(data);
     return messageDigest.digest();
+  }
+
+  /** Gets the document group entry by the given schema and namespace. */
+  private static DocumentGroupInfoProto.GroupEntryProto getDocumentGroupEntry(
+      DocumentGroupInfoProto documentGroupInfo, String schema, String namespace) {
+    for (DocumentGroupInfoProto.GroupEntryProto documentGroupEntry :
+        documentGroupInfo.getGroupsList()) {
+      if (documentGroupEntry.getSchema().equals(schema)
+          && documentGroupEntry.getNameSpace().equals(namespace)) {
+        return documentGroupEntry;
+      }
+    }
+    return null;
   }
 
   @Before
