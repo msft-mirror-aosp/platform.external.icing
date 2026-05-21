@@ -100,7 +100,7 @@ message IcingDatabaseStablenessProto {
 }
 
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 25
+// Next tag: 26
 message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -319,6 +319,9 @@ message InitializeStatsProto {
       [packed = true];
   repeated IcingApiCallType.Code after_last_flush_lite_call_types = 24
       [packed = true];
+
+  // The size of Icing's schema proto in bytes.
+  optional int64 schema_proto_byte_size = 25;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().
@@ -457,7 +460,7 @@ message QueryStatsProto {
   optional bool is_join_query = 23;
 
   // Stats of the search. Only valid for first page.
-  // Next tag: 20
+  // Next tag: 21
   message SearchStats {
     // The UTF-8 length of the query string
     optional int32 query_length = 1;
@@ -516,6 +519,10 @@ message QueryStatsProto {
 
     // Number of raw embedding bytes read from the embedding index.
     optional int64 num_embedding_bytes_read = 19;
+
+    // Indicates how many embeddings in the ANN index were scored. It does
+    // not include centroid embeddings.
+    optional int32 num_ann_embeddings_scored = 20;
   }
 
   // Search stats for parent. Only valid for first page.

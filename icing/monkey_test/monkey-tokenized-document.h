@@ -15,6 +15,7 @@
 #ifndef ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_
 #define ICING_MONKEY_TEST_MONKEY_TOKENIZED_DOCUMENT_H_
 
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -33,6 +34,7 @@ struct MonkeySection {
   std::string path;
   std::vector<std::string> string_values;
   std::vector<PropertyProto::VectorProto> vector_values;
+  std::vector<int64_t> integer_values;
 };
 
 // Note:

@@ -72,6 +72,9 @@ class MonkeySchemaGenerator {
 
   SchemaTypeConfigProto GenerateType();
 
+  // Adds a duplicate type to the input schema in place.
+  void AddDuplicateType(SchemaProto& schema);
+
   void UpdateType(SchemaTypeConfigProto& type_config,
                   UpdateSchemaResult& result);
 
@@ -111,7 +114,7 @@ class MonkeyDocumentGenerator {
     return kCommonWords[dist(*random_)];
   }
 
-  PropertyProto::VectorProto GetRandomVector() const;
+  PropertyProto::VectorProto GetRandomVector(bool allow_quantized_value) const;
 
   std::string GetNamespace() const;
   std::string GetNamespaceWithRange(int l, int r) const;
@@ -123,12 +126,17 @@ class MonkeyDocumentGenerator {
 
   int GetNumVectors(PropertyConfigProto::Cardinality::Code cardinality) const;
 
+  int GetNumInt64(PropertyConfigProto::Cardinality::Code cardinality) const;
+
   std::vector<std::string> GetStringPropertyContent() const;
 
   std::vector<std::string> GetQualifiedIds(
       PropertyConfigProto::Cardinality::Code cardinality) const;
 
   std::vector<PropertyProto::VectorProto> GetVectorPropertyContent(
+      PropertyConfigProto::Cardinality::Code cardinality) const;
+
+  std::vector<int64_t> GetInt64PropertyContent(
       PropertyConfigProto::Cardinality::Code cardinality) const;
 
   MonkeyTokenizedDocument GenerateDocument();

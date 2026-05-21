@@ -57,6 +57,11 @@ class PostingListIdentifier {
                 "block index and posting list index.");
 
  public:
+  static constexpr int kMaxPostingListIndexBits =
+      kEncodedPostingListIndexBits - 1;
+
+  static constexpr int kMaxNumPostingLists = (1u << kMaxPostingListIndexBits);
+
   static PostingListIdentifier kInvalid;
 
   explicit PostingListIdentifier() { *this = kInvalid; }
@@ -68,6 +73,16 @@ class PostingListIdentifier {
   explicit PostingListIdentifier(uint32_t block_index,
                                  PostingListIndex posting_list_index,
                                  int posting_list_index_bits) {
+    static_assert((1u << kMaxPostingListIndexBits) == kMaxNumPostingLists,
+                  "kMaxNumPostingLists must be 2^kMaxPostingListIndexBits");
+    // We only have kEncodedPostingListIndexBits (12) to encode the
+    // posting_list_index and the bits required to encode it. 1 bit is always
+    // used as a delimiter, so we can use at most
+    // kEncodedPostingListIndexBits - 1 (11) bits to encode the index itself.
+    if (posting_list_index_bits > kMaxPostingListIndexBits) {
+      *this = kInvalid;
+      return;
+    }
     val_ = 0;
     BITFIELD_OR(val_, /*offset=*/0, /*len=*/posting_list_index_bits,
                 /*val=*/static_cast<uint64_t>(posting_list_index));
