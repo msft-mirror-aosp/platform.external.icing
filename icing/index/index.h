@@ -45,6 +45,7 @@
 #include "icing/store/document-id.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/suggestion-result-checker.h"
+#include "icing/util/crc32.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -131,17 +132,17 @@ class Index {
   }
 
   // Updates all checksums in the index and returns the combined index checksum.
-  Crc32 UpdateChecksum() {
-    Crc32 lite_crc = lite_index_->UpdateChecksum();
-    Crc32 main_crc = main_index_->UpdateChecksum();
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum() {
+    ICING_ASSIGN_OR_RETURN(Crc32 lite_crc, lite_index_->UpdateChecksum());
+    ICING_ASSIGN_OR_RETURN(Crc32 main_crc, main_index_->UpdateChecksum());
     main_crc.Append(std::to_string(lite_crc.Get()));
     return main_crc;
   }
 
   // Calculates and returns the combined index checksum.
-  Crc32 GetChecksum() const {
-    Crc32 lite_crc = lite_index_->GetChecksum();
-    Crc32 main_crc = main_index_->GetChecksum();
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const {
+    ICING_ASSIGN_OR_RETURN(Crc32 lite_crc, lite_index_->GetChecksum());
+    ICING_ASSIGN_OR_RETURN(Crc32 main_crc, main_index_->GetChecksum());
     main_crc.Append(std::to_string(lite_crc.Get()));
     return main_crc;
   }

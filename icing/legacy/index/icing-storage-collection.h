@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/legacy/index/icing-storage.h"
 #include "icing/util/crc32.h"
 
@@ -48,7 +49,7 @@ class IcingStorageCollection : public IIcingStorage {
   libtextclassifier3::Status Sync() override;
   uint64_t GetDiskUsage() const override;
 
-  Crc32 UpdateCrc() override;
+  libtextclassifier3::StatusOr<Crc32> UpdateCrc() override;
 
   void GetDebugInfo(int verbosity, std::string *out) const override;
 

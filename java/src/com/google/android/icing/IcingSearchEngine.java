@@ -35,6 +35,8 @@ import com.google.android.icing.proto.HandleExpiredDocumentsResultProto;
 import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.LogSeverity;
+import com.google.android.icing.proto.MaintainAnnIndexOptions;
+import com.google.android.icing.proto.MaintainAnnIndexResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
@@ -199,6 +201,13 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   public @NonNull HandleExpiredDocumentsResultProto handleExpiredDocuments() {
     return IcingSearchEngineUtils.byteArrayToHandleExpiredDocumentsResultProto(
         icingSearchEngineImpl.handleExpiredDocuments());
+  }
+
+  @Override
+  public @NonNull MaintainAnnIndexResultProto maintainAnnIndex(
+      @NonNull MaintainAnnIndexOptions options) {
+    return IcingSearchEngineUtils.byteArrayToMaintainAnnIndexResultProto(
+        icingSearchEngineImpl.maintainAnnIndex(options.toByteArray()));
   }
 
   @Override

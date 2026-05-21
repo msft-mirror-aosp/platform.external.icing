@@ -42,6 +42,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/schema-builder.h"
+#include "icing/schema/schema-util.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/testing/common-matchers.h"
@@ -253,7 +254,7 @@ TEST_F(SchemaStoreTest, CorruptSchemaError) {
     result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
     EXPECT_THAT(schema_store->SetSchema(
                     schema_, /*ignore_errors_and_delete_documents=*/false),
-                IsOkAndHolds(EqualsSetSchemaResult(result)));
+                IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
     ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                                schema_store->GetFileBackedSchemaProto());
     EXPECT_THAT(*actual_schema,
@@ -294,7 +295,7 @@ TEST_F(SchemaStoreTest, RecoverCorruptDerivedFileOk) {
     result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
     EXPECT_THAT(schema_store->SetSchema(
                     schema_, /*ignore_errors_and_delete_documents=*/false),
-                IsOkAndHolds(EqualsSetSchemaResult(result)));
+                IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
     ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                                schema_store->GetFileBackedSchemaProto());
     EXPECT_THAT(*actual_schema,
@@ -330,6 +331,7 @@ TEST_F(SchemaStoreTest, RecoverCorruptDerivedFileOk) {
   EXPECT_THAT(initialize_stats.schema_store_recovery_cause(),
               Eq(InitializeStatsProto::IO_ERROR));
   EXPECT_THAT(initialize_stats.schema_store_recovery_latency_ms(), Eq(123));
+  EXPECT_GT(initialize_stats.schema_proto_byte_size(), 0);
 
   // Everything looks fine, ground truth and derived data
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -361,7 +363,7 @@ TEST_F(SchemaStoreTest, RecoverDiscardDerivedFilesOk) {
     result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
     EXPECT_THAT(schema_store->SetSchema(
                     schema_, /*ignore_errors_and_delete_documents=*/false),
-                IsOkAndHolds(EqualsSetSchemaResult(result)));
+                IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
     ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                                schema_store->GetFileBackedSchemaProto());
     EXPECT_THAT(*actual_schema,
@@ -392,6 +394,7 @@ TEST_F(SchemaStoreTest, RecoverDiscardDerivedFilesOk) {
   EXPECT_THAT(initialize_stats.schema_store_recovery_cause(),
               Eq(InitializeStatsProto::IO_ERROR));
   EXPECT_THAT(initialize_stats.schema_store_recovery_latency_ms(), Eq(123));
+  EXPECT_GT(initialize_stats.schema_proto_byte_size(), 0);
 
   // Everything looks fine, ground truth and derived data
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
@@ -423,7 +426,7 @@ TEST_F(SchemaStoreTest, RecoverBadChecksumOk) {
     result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
     EXPECT_THAT(schema_store->SetSchema(
                     schema_, /*ignore_errors_and_delete_documents=*/false),
-                IsOkAndHolds(EqualsSetSchemaResult(result)));
+                IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
     ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                                schema_store->GetFileBackedSchemaProto());
     EXPECT_THAT(*actual_schema,
@@ -523,7 +526,7 @@ TEST_F(SchemaStoreTest, CreateWithPreviousSchemaOk) {
   result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
   EXPECT_THAT(schema_store->SetSchema(
                   schema_, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   schema_store.reset();
   EXPECT_THAT(SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -551,7 +554,7 @@ TEST_F(SchemaStoreTest, MultipleCreateOk) {
   result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
   EXPECT_THAT(schema_store->SetSchema(
                   schema_, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   // Verify that our in-memory structures are ok
   if (!feature_flags_->enable_schema_definition_deduping()) {
@@ -631,12 +634,173 @@ TEST_F(SchemaStoreTest, SetNewSchemaOk) {
   result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
   EXPECT_THAT(schema_store->SetSchema(
                   schema_, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema_));
   EXPECT_THAT(schema_store->GetFullSchemaProto(),
               IsOkAndHolds(EqualsProto(schema_)));
+}
+
+TEST_F(SchemaStoreTest, SetSchemaWithUpdateDescriptionOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get(),
+                          /*initialize_stats=*/nullptr));
+
+  SchemaProto schema = SchemaBuilder()
+                           .AddType(SchemaTypeConfigBuilder()
+                                        .SetType("db1/email")
+                                        .SetDatabase("db1/")
+                                        .SetDescription("description"))
+                           .AddType(SchemaTypeConfigBuilder()
+                                        .SetType("db1/message")
+                                        .SetDatabase("db1/")
+                                        .SetDescription("description2"))
+                           .Build();
+  SchemaStore::SetSchemaResult result;
+  result.success = true;
+  result.schema_types_new_by_name.insert("db1/email");
+  result.schema_types_new_by_name.insert("db1/message");
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  schema, /*database=*/"db1/",
+                  /*ignore_errors_and_delete_documents=*/false)),
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
+  EXPECT_THAT(
+      schema_store->GetFileBackedSchemaProto(),
+      IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
+              IsOkAndHolds(EqualsProto(schema)));
+
+  // Update the description and reset
+  schema = SchemaBuilder()
+               .AddType(SchemaTypeConfigBuilder()
+                            .SetType("db1/email")
+                            .SetDatabase("db1/")
+                            .SetDescription("description_new"))
+               .AddType(SchemaTypeConfigBuilder()
+                            .SetType("db1/message")
+                            .SetDatabase("db1/")
+                            .SetDescription("description2_new"))
+               .Build();
+  result = SchemaStore::SetSchemaResult();
+  result.success = true;
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  schema, /*database=*/"",
+                  /*ignore_errors_and_delete_documents=*/false)),
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
+
+  EXPECT_THAT(
+      schema_store->GetFileBackedSchemaProto(),
+      IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
+              IsOkAndHolds(EqualsProto(schema)));
+}
+
+TEST_F(SchemaStoreTest, SetSchemaWithUpdateAccountPropertyDescriptionOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get(),
+                          /*initialize_stats=nullptr*/ nullptr));
+
+  SchemaTypeConfigProto type_config =
+      SchemaTypeConfigBuilder()
+          .SetType("db1/email")
+          .SetDatabase("db1/")
+          .AddAccountProperty("account1")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataType(TYPE_STRING)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+
+  SchemaProto schema = SchemaBuilder().AddType(type_config).Build();
+  SchemaStore::SetSchemaResult result;
+  result.success = true;
+  result.schema_types_new_by_name.insert("db1/email");
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  schema, /*database=*/"db1/",
+                  /*ignore_errors_and_delete_documents=*/false)),
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
+
+  // Add an account property description and reset
+  SchemaTypeConfigProto updated_type_config =
+      SchemaTypeConfigBuilder(type_config)
+          .AddAccountProperty("account2")
+          .Build();
+  schema = SchemaBuilder().AddType(updated_type_config).Build();
+  result = SchemaStore::SetSchemaResult();
+  result.success = true;
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  schema, /*database=*/"db1/",
+                  /*ignore_errors_and_delete_documents=*/false)),
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto actual_schema,
+                             schema_store->GetFullSchemaProto());
+  EXPECT_THAT(actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema));
+  EXPECT_THAT(actual_schema.types(0).account_properties(),
+              ElementsAre("account1", "account2"));
+}
+
+TEST_F(SchemaStoreTest, SetSchemaWithUpdatePropertyDescriptionOk) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get(),
+                          /*initialize_stats=nullptr*/ nullptr));
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db1/email")
+                       .SetDatabase("db1/")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED)
+                                        .SetDescription("old description")))
+          .Build();
+  SchemaStore::SetSchemaResult result;
+  result.success = true;
+  result.schema_types_new_by_name.insert("db1/email");
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  schema, /*database=*/"db1/",
+                  /*ignore_errors_and_delete_documents=*/false)),
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
+
+  // Update the property description and reset
+  schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db1/email")
+                       .SetDatabase("db1/")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("subject")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED)
+                                        .SetDescription("new description")))
+          .Build();
+  result = SchemaStore::SetSchemaResult();
+  result.success = true;
+  result.schema_types_changed_fully_compatible_by_name.insert("db1/email");
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  schema, /*database=*/"db1/",
+                  /*ignore_errors_and_delete_documents=*/false)),
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
+
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 }
 
 TEST_F(SchemaStoreTest, SetNewSchemaInDifferentDatabaseOk) {
@@ -661,7 +825,7 @@ TEST_F(SchemaStoreTest, SetNewSchemaInDifferentDatabaseOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(
                   EqualsSchemaProtoIgnorePropertiesDigest(db1_schema))));
@@ -686,7 +850,7 @@ TEST_F(SchemaStoreTest, SetNewSchemaInDifferentDatabaseOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   // Check the full schema. Databases that are updated last are appended to the
   // schema proto
@@ -733,7 +897,7 @@ TEST_F(SchemaStoreTest, SetEmptyDatabaseSchemaOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   schema, /*database=*/"",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   EXPECT_THAT(
       schema_store->GetFileBackedSchemaProto(),
       IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(schema))));
@@ -762,7 +926,7 @@ TEST_F(SchemaStoreTest, SetEmptyDatabaseSchemaOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   schema, /*database=*/"",
                   /*ignore_errors_and_delete_documents=*/true)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   EXPECT_THAT(
       schema_store->GetFileBackedSchemaProto(),
       IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(schema))));
@@ -789,7 +953,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithEmptyDatabaseResetsEntireSchema) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   schema, /*database=*/"",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   EXPECT_THAT(
       schema_store->GetFileBackedSchemaProto(),
       IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(schema))));
@@ -827,7 +991,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithEmptyDatabaseResetsEntireSchema) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   schema, /*database=*/"",
                   /*ignore_errors_and_delete_documents=*/true)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   EXPECT_THAT(
       schema_store->GetFileBackedSchemaProto(),
       IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(schema))));
@@ -877,7 +1041,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithUnpopulatedDatabaseResetsEntireSchema) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   schema, /*database=*/"",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   EXPECT_THAT(
       schema_store->GetFileBackedSchemaProto(),
       IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(schema))));
@@ -920,7 +1084,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithUnpopulatedDatabaseResetsEntireSchema) {
       /*ignore_errors_and_delete_documents=*/true);
 
   EXPECT_THAT(schema_store->SetSchema(std::move(set_schema_request)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   EXPECT_THAT(
       schema_store->GetFileBackedSchemaProto(),
       IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(schema))));
@@ -964,7 +1128,7 @@ TEST_F(SchemaStoreTest, SetSameSchemaOk) {
   result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
   EXPECT_THAT(schema_store->SetSchema(
                   schema_, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema_));
@@ -976,7 +1140,7 @@ TEST_F(SchemaStoreTest, SetSameSchemaOk) {
   result.success = true;
   EXPECT_THAT(schema_store->SetSchema(
                   schema_, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema_));
@@ -1029,7 +1193,7 @@ TEST_F(SchemaStoreTest, SetSameDatabaseSchemaOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   result = SchemaStore::SetSchemaResult();
   result.success = true;
   result.schema_types_new_by_name.insert("db2/email");
@@ -1037,7 +1201,7 @@ TEST_F(SchemaStoreTest, SetSameDatabaseSchemaOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema,
@@ -1051,7 +1215,7 @@ TEST_F(SchemaStoreTest, SetSameDatabaseSchemaOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   // Check the schema, this should not have changed
   EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
@@ -1126,7 +1290,7 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedTypesNoChange) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   // Set schema for db2
   result = SchemaStore::SetSchemaResult();
   result.success = true;
@@ -1135,7 +1299,7 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedTypesNoChange) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   // Set schema for db3
   result = SchemaStore::SetSchemaResult();
   result.success = true;
@@ -1144,7 +1308,7 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedTypesNoChange) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db3_schema, /*database=*/"db3/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   // Verify schema.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
                              schema_store->GetFileBackedSchemaProto());
@@ -1170,7 +1334,8 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedTypesNoChange) {
       schema_store->SetSchema(CreateSetSchemaRequestProto(
           reordered_db2_schema, /*database=*/"db2/",
           /*ignore_errors_and_delete_documents=*/false));
-  EXPECT_THAT(actual_result, IsOkAndHolds(EqualsSetSchemaResult(result)));
+  EXPECT_THAT(actual_result,
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   EXPECT_THAT(actual_result.ValueOrDie().old_schema_type_ids_changed,
               IsEmpty());
 
@@ -1194,9 +1359,6 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedTypesNoChange) {
 }
 
 TEST_F(SchemaStoreTest, SetDatabaseAddedTypesPreserveSchemaTypeIds) {
-  if (!feature_flags_->enable_schema_type_id_optimization()) {
-    GTEST_SKIP() << "Test for schema type id optimization.";
-  }
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -1254,28 +1416,31 @@ TEST_F(SchemaStoreTest, SetDatabaseAddedTypesPreserveSchemaTypeIds) {
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("db1/email");
   expected_result.schema_types_new_by_name.insert("db1/message");
-  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db1_schema, /*database=*/"db1/",
-                  /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(CreateSetSchemaRequestProto(
+          db1_schema, /*database=*/"db1/",
+          /*ignore_errors_and_delete_documents=*/false)),
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(expected_result)));
   // Set schema for db2
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("db2/email");
   expected_result.schema_types_new_by_name.insert("db2/message");
-  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db2_schema, /*database=*/"db2/",
-                  /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(CreateSetSchemaRequestProto(
+          db2_schema, /*database=*/"db2/",
+          /*ignore_errors_and_delete_documents=*/false)),
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(expected_result)));
   // Set schema for db3
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("db3/email");
   expected_result.schema_types_new_by_name.insert("db3/message");
-  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                  db3_schema, /*database=*/"db3/",
-                  /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(CreateSetSchemaRequestProto(
+          db3_schema, /*database=*/"db3/",
+          /*ignore_errors_and_delete_documents=*/false)),
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(expected_result)));
   // Verify schema.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
                              schema_store->GetFileBackedSchemaProto());
@@ -1329,8 +1494,9 @@ TEST_F(SchemaStoreTest, SetDatabaseAddedTypesPreserveSchemaTypeIds) {
       schema_store->SetSchema(CreateSetSchemaRequestProto(
           db2_schema, /*database=*/"db2/",
           /*ignore_errors_and_delete_documents=*/false));
-  EXPECT_THAT(actual_result,
-              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  EXPECT_THAT(
+      actual_result,
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(expected_result)));
   EXPECT_THAT(actual_result.ValueOrDie().old_schema_type_ids_changed,
               IsEmpty());
 
@@ -1360,10 +1526,6 @@ TEST_F(SchemaStoreTest, SetDatabaseAddedTypesPreserveSchemaTypeIds) {
 }
 
 TEST_F(SchemaStoreTest, SetDatabaseReorderedSchemaPreservesSchemaTypeIds) {
-  if (!feature_flags_->enable_schema_database()) {
-    GTEST_SKIP() << "Test for schema database id assignment.";
-  }
-
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -1423,7 +1585,7 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedSchemaPreservesSchemaTypeIds) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   // Set schema for db2
   result = SchemaStore::SetSchemaResult();
   result.success = true;
@@ -1433,7 +1595,7 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedSchemaPreservesSchemaTypeIds) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   // Verify schema.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
                              schema_store->GetFileBackedSchemaProto());
@@ -1460,7 +1622,8 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedSchemaPreservesSchemaTypeIds) {
       schema_store->SetSchema(CreateSetSchemaRequestProto(
           db2_schema, /*database=*/"db2/",
           /*ignore_errors_and_delete_documents=*/false));
-  EXPECT_THAT(actual_result, IsOkAndHolds(EqualsSetSchemaResult(result)));
+  EXPECT_THAT(actual_result,
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   EXPECT_THAT(actual_result.ValueOrDie().old_schema_type_ids_changed,
               IsEmpty());
 
@@ -1478,10 +1641,6 @@ TEST_F(SchemaStoreTest, SetDatabaseReorderedSchemaPreservesSchemaTypeIds) {
 
 TEST_F(SchemaStoreTest,
        SetDatabaseReorderedSchemaPreservesSchemaTypeIds_largeSchema) {
-  if (!feature_flags_->enable_schema_database()) {
-    GTEST_SKIP() << "Test for schema database id assignment.";
-  }
-
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -1509,10 +1668,11 @@ TEST_F(SchemaStoreTest,
     }
     SchemaProto db_schema = db_schema_builder.Build();
     expected_result.success = true;
-    EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                    db_schema, db_name,
-                    /*ignore_errors_and_delete_documents=*/false)),
-                IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+    EXPECT_THAT(
+        schema_store->SetSchema(CreateSetSchemaRequestProto(
+            db_schema, db_name,
+            /*ignore_errors_and_delete_documents=*/false)),
+        IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(expected_result)));
   }
   SchemaProto expected_full_schema = expected_full_schema_builder.Build();
 
@@ -1543,8 +1703,9 @@ TEST_F(SchemaStoreTest,
         schema_store->SetSchema(CreateSetSchemaRequestProto(
             db_schema_reversed, db_name,
             /*ignore_errors_and_delete_documents=*/false));
-    EXPECT_THAT(actual_result,
-                IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+    EXPECT_THAT(
+        actual_result,
+        IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(expected_result)));
 
     // Verify that no type ids changed.
     EXPECT_THAT(actual_result.ValueOrDie().old_schema_type_ids_changed,
@@ -1601,7 +1762,7 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   // Set schema for db2
   result = SchemaStore::SetSchemaResult();
   result.success = true;
@@ -1610,7 +1771,7 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   // Set schema for db3
   result = SchemaStore::SetSchemaResult();
   result.success = true;
@@ -1619,7 +1780,7 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db3_schema, /*database=*/"db3/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   SchemaProto expected_full_schema =
       SchemaBuilder()
@@ -1657,97 +1818,52 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesOk) {
                                 .SetType("db2/message")
                                 .SetDatabase("db2/"))
                    .Build();
-  if (feature_flags_->enable_schema_type_id_optimization()) {
-    expected_full_schema =
-        SchemaBuilder()
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db1/email")  // SchemaTypeId 0
-                         .SetDatabase("db1/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db1/message")  // SchemaTypeId 1
-                         .SetDatabase("db1/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db3/message")  // SchemaTypeId 5 -> 2
-                         .SetDatabase("db3/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db2/message")  // SchemaTypeId 3 (unchanged)
-                         .SetDatabase("db2/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db3/email")  // SchemaTypeId 4 (unchanged)
-                         .SetDatabase("db3/"))
-            .Build();
-    result = SchemaStore::SetSchemaResult();
-    result.success = true;
-    result.schema_types_deleted_by_name.insert("db2/email");
-    result.schema_types_deleted_by_id.insert(2);   // db2_email
-    result.old_schema_type_ids_changed.insert(5);  // db3_message
-    EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                    db2_schema, /*database=*/"db2/",
-                    /*ignore_errors_and_delete_documents=*/true)),
-                IsOkAndHolds(EqualsSetSchemaResult(result)));
-    // Check the schema
-    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
-                IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(
-                    expected_full_schema))));
-    EXPECT_THAT(schema_store->GetFullSchemaProto(),
-                IsOkAndHolds(EqualsProto(expected_full_schema)));
-    EXPECT_THAT(schema_store->GetSchema("db1/"),
-                IsOkAndHolds(EqualsProto(db1_schema)));
-    EXPECT_THAT(schema_store->GetSchema("db2/"),
-                IsOkAndHolds(EqualsProto(db2_schema)));
-    EXPECT_THAT(
-        schema_store->GetSchema("db3/"),
-        IsOkAndHolds(EqualsProto(SchemaBuilder()
-                                     .AddType(SchemaTypeConfigBuilder()
-                                                  .SetType("db3/message")
-                                                  .SetDatabase("db3/"))
-                                     .AddType(SchemaTypeConfigBuilder()
-                                                  .SetType("db3/email")
-                                                  .SetDatabase("db3/"))
-                                     .Build())));
-  } else {
-    expected_full_schema =
-        SchemaBuilder()
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db1/email")  // SchemaTypeId 0
-                         .SetDatabase("db1/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db1/message")  // SchemaTypeId 1
-                         .SetDatabase("db1/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db2/message")  // SchemaTypeId 3 -> 2
-                         .SetDatabase("db2/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db3/email")  // SchemaTypeId 4 -> 3
-                         .SetDatabase("db3/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db3/message")  // SchemaTypeId 5 -> 4
-                         .SetDatabase("db3/"))
-            .Build();
-    result = SchemaStore::SetSchemaResult();
-    result.success = true;
-    result.schema_types_deleted_by_name.insert("db2/email");
-    result.schema_types_deleted_by_id.insert(2);   // db2_email
-    result.old_schema_type_ids_changed.insert(3);  // db2_message
-    result.old_schema_type_ids_changed.insert(4);  // db3_email
-    result.old_schema_type_ids_changed.insert(5);  // db3_message
-    EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                    db2_schema, /*database=*/"db2/",
-                    /*ignore_errors_and_delete_documents=*/true)),
-                IsOkAndHolds(EqualsSetSchemaResult(result)));
-    // Check the schema
-    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
-                IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(
-                    expected_full_schema))));
-    EXPECT_THAT(schema_store->GetFullSchemaProto(),
-                IsOkAndHolds(EqualsProto(expected_full_schema)));
-    EXPECT_THAT(schema_store->GetSchema("db1/"),
-                IsOkAndHolds(EqualsProto(db1_schema)));
-    EXPECT_THAT(schema_store->GetSchema("db2/"),
-                IsOkAndHolds(EqualsProto(db2_schema)));
-    EXPECT_THAT(schema_store->GetSchema("db3/"),
-                IsOkAndHolds(EqualsProto(db3_schema)));
-  }
+  expected_full_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db1/email")  // SchemaTypeId 0
+                       .SetDatabase("db1/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db1/message")  // SchemaTypeId 1
+                       .SetDatabase("db1/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db3/message")  // SchemaTypeId 5 -> 2
+                       .SetDatabase("db3/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db2/message")  // SchemaTypeId 3 (unchanged)
+                       .SetDatabase("db2/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db3/email")  // SchemaTypeId 4 (unchanged)
+                       .SetDatabase("db3/"))
+          .Build();
+  result = SchemaStore::SetSchemaResult();
+  result.success = true;
+  result.schema_types_deleted_by_name.insert("db2/email");
+  result.schema_types_deleted_by_id.insert(2);   // db2_email
+  result.old_schema_type_ids_changed.insert(5);  // db3_message
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  db2_schema, /*database=*/"db2/",
+                  /*ignore_errors_and_delete_documents=*/true)),
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
+  // Check the schema
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
+              IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(
+                  expected_full_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
+              IsOkAndHolds(EqualsProto(db1_schema)));
+  EXPECT_THAT(schema_store->GetSchema("db2/"),
+              IsOkAndHolds(EqualsProto(db2_schema)));
+  EXPECT_THAT(schema_store->GetSchema("db3/"),
+              IsOkAndHolds(EqualsProto(SchemaBuilder()
+                                           .AddType(SchemaTypeConfigBuilder()
+                                                        .SetType("db3/message")
+                                                        .SetDatabase("db3/"))
+                                           .AddType(SchemaTypeConfigBuilder()
+                                                        .SetType("db3/email")
+                                                        .SetDatabase("db3/"))
+                                           .Build())));
 }
 
 TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesWithLastTypeRemovedOk) {
@@ -1804,151 +1920,70 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesWithLastTypeRemovedOk) {
                                             .SetType("db2/message")
                                             .SetDatabase("db2/"))
                                .Build();
-  if (feature_flags_->enable_schema_type_id_optimization()) {
-    SchemaProto expected_full_schema =
-        SchemaBuilder()
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db1/email")  // SchemaTypeId 0
-                         .SetDatabase("db1/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db1/message")  // SchemaTypeId 1
-                         .SetDatabase("db1/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db3/message")  // SchemaTypeId 5 -> 2
-                         .SetDatabase("db3/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db2/message")  // SchemaTypeId 3
-                         .SetDatabase("db2/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db3/email")  // SchemaTypeId 4
-                         .SetDatabase("db3/"))
-            .Build();
-    SchemaStore::SetSchemaResult result = SchemaStore::SetSchemaResult();
-    result.success = true;
-    result.schema_types_deleted_by_name.insert("db2/email");
-    result.schema_types_deleted_by_name.insert("db2/recipient");
-    result.schema_types_deleted_by_id.insert(
-        schema_store->GetSchemaTypeId("db2/email").ValueOrDie());  // 2
-    result.schema_types_deleted_by_id.insert(
-        schema_store->GetSchemaTypeId("db2/recipient").ValueOrDie());  // 6
-    // Only 1 type id is changed.
-    result.old_schema_type_ids_changed.insert(
-        schema_store->GetSchemaTypeId("db3/message").ValueOrDie());  // 5
-    EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                    db2_schema, /*database=*/"db2/",
-                    /*ignore_errors_and_delete_documents=*/true)),
-                IsOkAndHolds(EqualsSetSchemaResult(result)));
+  SchemaProto expected_full_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db1/email")  // SchemaTypeId 0
+                       .SetDatabase("db1/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db1/message")  // SchemaTypeId 1
+                       .SetDatabase("db1/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db3/message")  // SchemaTypeId 5 -> 2
+                       .SetDatabase("db3/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db2/message")  // SchemaTypeId 3
+                       .SetDatabase("db2/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db3/email")  // SchemaTypeId 4
+                       .SetDatabase("db3/"))
+          .Build();
+  SchemaStore::SetSchemaResult result = SchemaStore::SetSchemaResult();
+  result.success = true;
+  result.schema_types_deleted_by_name.insert("db2/email");
+  result.schema_types_deleted_by_name.insert("db2/recipient");
+  result.schema_types_deleted_by_id.insert(
+      schema_store->GetSchemaTypeId("db2/email").ValueOrDie());  // 2
+  result.schema_types_deleted_by_id.insert(
+      schema_store->GetSchemaTypeId("db2/recipient").ValueOrDie());  // 6
+  // Only 1 type id is changed.
+  result.old_schema_type_ids_changed.insert(
+      schema_store->GetSchemaTypeId("db3/message").ValueOrDie());  // 5
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  db2_schema, /*database=*/"db2/",
+                  /*ignore_errors_and_delete_documents=*/true)),
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
-    // Check the schema
-    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
-                IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(
-                    expected_full_schema))));
-    EXPECT_THAT(schema_store->GetFullSchemaProto(),
-                IsOkAndHolds(EqualsProto(expected_full_schema)));
-    EXPECT_THAT(
-        schema_store->GetSchema("db1/"),
-        IsOkAndHolds(EqualsProto(SchemaBuilder()
-                                     .AddType(SchemaTypeConfigBuilder()
-                                                  .SetType("db1/email")
-                                                  .SetDatabase("db1/"))
-                                     .AddType(SchemaTypeConfigBuilder()
-                                                  .SetType("db1/message")
-                                                  .SetDatabase("db1/"))
-                                     .Build())));
-    EXPECT_THAT(
-        schema_store->GetSchema("db2/"),
-        IsOkAndHolds(EqualsProto(SchemaBuilder()
-                                     .AddType(SchemaTypeConfigBuilder()
-                                                  .SetType("db2/message")
-                                                  .SetDatabase("db2/"))
-                                     .Build())));
-    EXPECT_THAT(
-        schema_store->GetSchema("db3/"),
-        IsOkAndHolds(EqualsProto(SchemaBuilder()
-                                     .AddType(SchemaTypeConfigBuilder()
-                                                  .SetType("db3/message")
-                                                  .SetDatabase("db3/"))
-                                     .AddType(SchemaTypeConfigBuilder()
-                                                  .SetType("db3/email")
-                                                  .SetDatabase("db3/"))
-                                     .Build())));
-  } else {
-    SchemaProto expected_full_schema =
-        SchemaBuilder()
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db1/email")  // SchemaTypeId 0
-                         .SetDatabase("db1/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db1/message")  // SchemaTypeId 1
-                         .SetDatabase("db1/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db2/message")  // SchemaTypeId 3 -> 2
-                         .SetDatabase("db2/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db3/email")  // SchemaTypeId 4 -> 3
-                         .SetDatabase("db3/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db3/message")  // SchemaTypeId 5 -> 4
-                         .SetDatabase("db3/"))
-            .Build();
-    SchemaStore::SetSchemaResult result = SchemaStore::SetSchemaResult();
-    result.success = true;
-    result.success = true;
-    result.schema_types_deleted_by_name.insert("db2/email");
-    result.schema_types_deleted_by_name.insert("db2/recipient");
-    result.schema_types_deleted_by_id.insert(
-        schema_store->GetSchemaTypeId("db2/email").ValueOrDie());  // 2
-    result.schema_types_deleted_by_id.insert(
-        schema_store->GetSchemaTypeId("db2/recipient").ValueOrDie());  // 6
-    // 3 type ids are changed
-    result.old_schema_type_ids_changed.insert(
-        schema_store->GetSchemaTypeId("db2/message")
-            .ValueOrDie());  // db2_message
-    result.old_schema_type_ids_changed.insert(
-        schema_store->GetSchemaTypeId("db3/email").ValueOrDie());  // db3_email
-    result.old_schema_type_ids_changed.insert(
-        schema_store->GetSchemaTypeId("db3/message")
-            .ValueOrDie());  // db3_message
-
-    EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                    db2_schema, /*database=*/"db2/",
-                    /*ignore_errors_and_delete_documents=*/true)),
-                IsOkAndHolds(EqualsSetSchemaResult(result)));
-
-    // Check the schema
-    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
-                IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(
-                    expected_full_schema))));
-    EXPECT_THAT(schema_store->GetFullSchemaProto(),
-                IsOkAndHolds(EqualsProto(expected_full_schema)));
-    EXPECT_THAT(
-        schema_store->GetSchema("db1/"),
-        IsOkAndHolds(EqualsProto(SchemaBuilder()
-                                     .AddType(SchemaTypeConfigBuilder()
-                                                  .SetType("db1/email")
-                                                  .SetDatabase("db1/"))
-                                     .AddType(SchemaTypeConfigBuilder()
-                                                  .SetType("db1/message")
-                                                  .SetDatabase("db1/"))
-                                     .Build())));
-    EXPECT_THAT(
-        schema_store->GetSchema("db2/"),
-        IsOkAndHolds(EqualsProto(SchemaBuilder()
-                                     .AddType(SchemaTypeConfigBuilder()
-                                                  .SetType("db2/message")
-                                                  .SetDatabase("db2/"))
-                                     .Build())));
-    EXPECT_THAT(
-        schema_store->GetSchema("db3/"),
-        IsOkAndHolds(EqualsProto(SchemaBuilder()
-                                     .AddType(SchemaTypeConfigBuilder()
-                                                  .SetType("db3/email")
-                                                  .SetDatabase("db3/"))
-                                     .AddType(SchemaTypeConfigBuilder()
-                                                  .SetType("db3/message")
-                                                  .SetDatabase("db3/"))
-                                     .Build())));
-  }
+  // Check the schema
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
+              IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(
+                  expected_full_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
+              IsOkAndHolds(EqualsProto(SchemaBuilder()
+                                           .AddType(SchemaTypeConfigBuilder()
+                                                        .SetType("db1/email")
+                                                        .SetDatabase("db1/"))
+                                           .AddType(SchemaTypeConfigBuilder()
+                                                        .SetType("db1/message")
+                                                        .SetDatabase("db1/"))
+                                           .Build())));
+  EXPECT_THAT(schema_store->GetSchema("db2/"),
+              IsOkAndHolds(EqualsProto(SchemaBuilder()
+                                           .AddType(SchemaTypeConfigBuilder()
+                                                        .SetType("db2/message")
+                                                        .SetDatabase("db2/"))
+                                           .Build())));
+  EXPECT_THAT(schema_store->GetSchema("db3/"),
+              IsOkAndHolds(EqualsProto(SchemaBuilder()
+                                           .AddType(SchemaTypeConfigBuilder()
+                                                        .SetType("db3/message")
+                                                        .SetDatabase("db3/"))
+                                           .AddType(SchemaTypeConfigBuilder()
+                                                        .SetType("db3/email")
+                                                        .SetDatabase("db3/"))
+                                           .Build())));
 }
 
 TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesWithGapsOk) {
@@ -2014,185 +2049,92 @@ TEST_F(SchemaStoreTest, SetDatabaseDeletedTypesWithGapsOk) {
                                             .SetDatabase("db2/"))
                                .Build();
 
-  if (feature_flags_->enable_schema_type_id_optimization()) {
-    expected_full_schema =
-        SchemaBuilder()
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db1/type1")  // SchemaTypeId 0
-                         .SetDatabase("db1/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db1/type2")  // SchemaTypeId 1
-                         .SetDatabase("db1/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db3/type2")  // SchemaTypeId 8 -> 2
-                         .SetDatabase("db3/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db2/type2")  // SchemaTypeId 3
-                         .SetDatabase("db2/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db3/type3")  // SchemaTypeId 9 -> 4
-                         .SetDatabase("db3/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db3/type1")  // SchemaTypeId 5
-                         .SetDatabase("db3/"))
-            .Build();
+  expected_full_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db1/type1")  // SchemaTypeId 0
+                       .SetDatabase("db1/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db1/type2")  // SchemaTypeId 1
+                       .SetDatabase("db1/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db3/type2")  // SchemaTypeId 8 -> 2
+                       .SetDatabase("db3/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db2/type2")  // SchemaTypeId 3
+                       .SetDatabase("db2/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db3/type3")  // SchemaTypeId 9 -> 4
+                       .SetDatabase("db3/"))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("db3/type1")  // SchemaTypeId 5
+                       .SetDatabase("db3/"))
+          .Build();
 
-    SchemaStore::SetSchemaResult result = SchemaStore::SetSchemaResult();
-    result.success = true;
-    result.schema_types_deleted_by_name.insert("db2/type1");
-    result.schema_types_deleted_by_name.insert("db2/type3");
-    result.schema_types_deleted_by_name.insert("db2/type4");
-    result.schema_types_deleted_by_name.insert("db2/type5");
-    result.schema_types_deleted_by_id.insert(
-        schema_store->GetSchemaTypeId("db2/type1").ValueOrDie());  // 2
-    result.schema_types_deleted_by_id.insert(
-        schema_store->GetSchemaTypeId("db2/type3").ValueOrDie());  // 4
-    result.schema_types_deleted_by_id.insert(
-        schema_store->GetSchemaTypeId("db2/type4").ValueOrDie());  // 6
-    result.schema_types_deleted_by_id.insert(
-        schema_store->GetSchemaTypeId("db2/type5").ValueOrDie());  // 7
+  SchemaStore::SetSchemaResult result = SchemaStore::SetSchemaResult();
+  result.success = true;
+  result.schema_types_deleted_by_name.insert("db2/type1");
+  result.schema_types_deleted_by_name.insert("db2/type3");
+  result.schema_types_deleted_by_name.insert("db2/type4");
+  result.schema_types_deleted_by_name.insert("db2/type5");
+  result.schema_types_deleted_by_id.insert(
+      schema_store->GetSchemaTypeId("db2/type1").ValueOrDie());  // 2
+  result.schema_types_deleted_by_id.insert(
+      schema_store->GetSchemaTypeId("db2/type3").ValueOrDie());  // 4
+  result.schema_types_deleted_by_id.insert(
+      schema_store->GetSchemaTypeId("db2/type4").ValueOrDie());  // 6
+  result.schema_types_deleted_by_id.insert(
+      schema_store->GetSchemaTypeId("db2/type5").ValueOrDie());  // 7
 
-    // Only 2 schema type ids are changed since we move the fast few types at
-    // the end of the original schema to fill the gaps of the deleted types.
-    result.old_schema_type_ids_changed.insert(
-        schema_store->GetSchemaTypeId("db3/type2").ValueOrDie());  // 8
-    result.old_schema_type_ids_changed.insert(
-        schema_store->GetSchemaTypeId("db3/type3").ValueOrDie());  // 9
+  // Only 2 schema type ids are changed since we move the fast few types at
+  // the end of the original schema to fill the gaps of the deleted types.
+  result.old_schema_type_ids_changed.insert(
+      schema_store->GetSchemaTypeId("db3/type2").ValueOrDie());  // 8
+  result.old_schema_type_ids_changed.insert(
+      schema_store->GetSchemaTypeId("db3/type3").ValueOrDie());  // 9
 
-    EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                    db2_schema, /*database=*/"db2/",
-                    /*ignore_errors_and_delete_documents=*/true)),
-                IsOkAndHolds(EqualsSetSchemaResult(result)));
+  EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
+                  db2_schema, /*database=*/"db2/",
+                  /*ignore_errors_and_delete_documents=*/true)),
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
-    // Check the schema
-    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
-                IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(
-                    expected_full_schema))));
-    EXPECT_THAT(schema_store->GetFullSchemaProto(),
-                IsOkAndHolds(EqualsProto(expected_full_schema)));
+  // Check the schema
+  EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
+              IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(
+                  expected_full_schema))));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(expected_full_schema)));
 
-    EXPECT_THAT(schema_store->GetSchema("db1/"),
-                IsOkAndHolds(EqualsProto(SchemaBuilder()
-                                             .AddType(SchemaTypeConfigBuilder()
-                                                          .SetType("db1/type1")
-                                                          .SetDatabase("db1/"))
-                                             .AddType(SchemaTypeConfigBuilder()
-                                                          .SetType("db1/type2")
-                                                          .SetDatabase("db1/"))
-                                             .Build())));
-    EXPECT_THAT(schema_store->GetSchema("db2/"),
-                IsOkAndHolds(EqualsProto(SchemaBuilder()
-                                             .AddType(SchemaTypeConfigBuilder()
-                                                          .SetType("db2/type2")
-                                                          .SetDatabase("db2/"))
-                                             .Build())));
-    EXPECT_THAT(schema_store->GetSchema("db3/"),
-                IsOkAndHolds(EqualsProto(SchemaBuilder()
-                                             .AddType(SchemaTypeConfigBuilder()
-                                                          .SetType("db3/type2")
-                                                          .SetDatabase("db3/"))
-                                             .AddType(SchemaTypeConfigBuilder()
-                                                          .SetType("db3/type3")
-                                                          .SetDatabase("db3/"))
-                                             .AddType(SchemaTypeConfigBuilder()
-                                                          .SetType("db3/type1")
-                                                          .SetDatabase("db3/"))
-                                             .Build())));
-  } else {
-    expected_full_schema =
-        SchemaBuilder()
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db1/type1")  // SchemaTypeId 0
-                         .SetDatabase("db1/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db1/type2")  // SchemaTypeId 1
-                         .SetDatabase("db1/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db2/type2")  // SchemaTypeId 3 -> 2
-                         .SetDatabase("db2/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db3/type1")  // SchemaTypeId 5 -> 3
-                         .SetDatabase("db3/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db3/type2")  // SchemaTypeId 8 -> 4
-                         .SetDatabase("db3/"))
-            .AddType(SchemaTypeConfigBuilder()
-                         .SetType("db3/type3")  // SchemaTypeId 9 -> 5
-                         .SetDatabase("db3/"))
-            .Build();
-    SchemaStore::SetSchemaResult result = SchemaStore::SetSchemaResult();
-    result.success = true;
-    result.schema_types_deleted_by_name.insert("db2/type1");
-    result.schema_types_deleted_by_name.insert("db2/type3");
-    result.schema_types_deleted_by_name.insert("db2/type4");
-    result.schema_types_deleted_by_name.insert("db2/type5");
-    result.schema_types_deleted_by_id.insert(
-        schema_store->GetSchemaTypeId("db2/type1").ValueOrDie());  // 2
-    result.schema_types_deleted_by_id.insert(
-        schema_store->GetSchemaTypeId("db2/type3").ValueOrDie());  // 4
-    result.schema_types_deleted_by_id.insert(
-        schema_store->GetSchemaTypeId("db2/type4").ValueOrDie());  // 6
-    result.schema_types_deleted_by_id.insert(
-        schema_store->GetSchemaTypeId("db2/type5").ValueOrDie());  // 7
-
-    // 4 type ids are changed since the type ids are assigned based on the
-    // order of the types in the existing schema.
-    result.old_schema_type_ids_changed.insert(
-        schema_store->GetSchemaTypeId("db2/type2").ValueOrDie());  // 3
-    result.old_schema_type_ids_changed.insert(
-        schema_store->GetSchemaTypeId("db3/type1").ValueOrDie());  // 5
-    result.old_schema_type_ids_changed.insert(
-        schema_store->GetSchemaTypeId("db3/type2").ValueOrDie());  // 8
-    result.old_schema_type_ids_changed.insert(
-        schema_store->GetSchemaTypeId("db3/type3").ValueOrDie());  // 9
-
-    EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
-                    db2_schema, /*database=*/"db2/",
-                    /*ignore_errors_and_delete_documents=*/true)),
-                IsOkAndHolds(EqualsSetSchemaResult(result)));
-
-    // Check the schema
-    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
-                IsOkAndHolds(Pointee(EqualsSchemaProtoIgnorePropertiesDigest(
-                    expected_full_schema))));
-    EXPECT_THAT(schema_store->GetFullSchemaProto(),
-                IsOkAndHolds(EqualsProto(expected_full_schema)));
-
-    EXPECT_THAT(schema_store->GetSchema("db1/"),
-                IsOkAndHolds(EqualsProto(SchemaBuilder()
-                                             .AddType(SchemaTypeConfigBuilder()
-                                                          .SetType("db1/type1")
-                                                          .SetDatabase("db1/"))
-                                             .AddType(SchemaTypeConfigBuilder()
-                                                          .SetType("db1/type2")
-                                                          .SetDatabase("db1/"))
-                                             .Build())));
-    EXPECT_THAT(schema_store->GetSchema("db2/"),
-                IsOkAndHolds(EqualsProto(SchemaBuilder()
-                                             .AddType(SchemaTypeConfigBuilder()
-                                                          .SetType("db2/type2")
-                                                          .SetDatabase("db2/"))
-                                             .Build())));
-    EXPECT_THAT(schema_store->GetSchema("db3/"),
-                IsOkAndHolds(EqualsProto(SchemaBuilder()
-                                             .AddType(SchemaTypeConfigBuilder()
-                                                          .SetType("db3/type1")
-                                                          .SetDatabase("db3/"))
-                                             .AddType(SchemaTypeConfigBuilder()
-                                                          .SetType("db3/type2")
-                                                          .SetDatabase("db3/"))
-                                             .AddType(SchemaTypeConfigBuilder()
-                                                          .SetType("db3/type3")
-                                                          .SetDatabase("db3/"))
-                                             .Build())));
-  }
+  EXPECT_THAT(schema_store->GetSchema("db1/"),
+              IsOkAndHolds(EqualsProto(SchemaBuilder()
+                                           .AddType(SchemaTypeConfigBuilder()
+                                                        .SetType("db1/type1")
+                                                        .SetDatabase("db1/"))
+                                           .AddType(SchemaTypeConfigBuilder()
+                                                        .SetType("db1/type2")
+                                                        .SetDatabase("db1/"))
+                                           .Build())));
+  EXPECT_THAT(schema_store->GetSchema("db2/"),
+              IsOkAndHolds(EqualsProto(SchemaBuilder()
+                                           .AddType(SchemaTypeConfigBuilder()
+                                                        .SetType("db2/type2")
+                                                        .SetDatabase("db2/"))
+                                           .Build())));
+  EXPECT_THAT(schema_store->GetSchema("db3/"),
+              IsOkAndHolds(EqualsProto(SchemaBuilder()
+                                           .AddType(SchemaTypeConfigBuilder()
+                                                        .SetType("db3/type2")
+                                                        .SetDatabase("db3/"))
+                                           .AddType(SchemaTypeConfigBuilder()
+                                                        .SetType("db3/type3")
+                                                        .SetDatabase("db3/"))
+                                           .AddType(SchemaTypeConfigBuilder()
+                                                        .SetType("db3/type1")
+                                                        .SetDatabase("db3/"))
+                                           .Build())));
 }
 
 TEST_F(SchemaStoreTest, SetDatabaseRenamedTypesPreserveTypeIds) {
-  if (!feature_flags_->enable_schema_type_id_optimization()) {
-    GTEST_SKIP() << "Test for schema type id optimization.";
-  }
-
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -2233,7 +2175,7 @@ TEST_F(SchemaStoreTest, SetDatabaseRenamedTypesPreserveTypeIds) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   // Set schema for db2
   result = SchemaStore::SetSchemaResult();
   result.success = true;
@@ -2242,7 +2184,7 @@ TEST_F(SchemaStoreTest, SetDatabaseRenamedTypesPreserveTypeIds) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   // Set schema for db3
   result = SchemaStore::SetSchemaResult();
   result.success = true;
@@ -2251,7 +2193,7 @@ TEST_F(SchemaStoreTest, SetDatabaseRenamedTypesPreserveTypeIds) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db3_schema, /*database=*/"db3/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   // Set schema again for db2 and rename email -> email2. The type ids of other
   // existing types should not change.
@@ -2271,7 +2213,7 @@ TEST_F(SchemaStoreTest, SetDatabaseRenamedTypesPreserveTypeIds) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/true)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   SchemaProto expected_full_schema =
       SchemaBuilder()
@@ -2320,10 +2262,6 @@ TEST_F(SchemaStoreTest, SetDatabaseRenamedTypesPreserveTypeIds) {
 }
 
 TEST_F(SchemaStoreTest, SetDatabaseAddMoreTypesThanDeletedPreserveTypeIds) {
-  if (!feature_flags_->enable_schema_type_id_optimization()) {
-    GTEST_SKIP() << "Test for schema type id optimization.";
-  }
-
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaStore> schema_store,
       SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -2364,7 +2302,7 @@ TEST_F(SchemaStoreTest, SetDatabaseAddMoreTypesThanDeletedPreserveTypeIds) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   // Set schema for db2
   result = SchemaStore::SetSchemaResult();
   result.success = true;
@@ -2373,7 +2311,7 @@ TEST_F(SchemaStoreTest, SetDatabaseAddMoreTypesThanDeletedPreserveTypeIds) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   // Set schema for db3
   result = SchemaStore::SetSchemaResult();
   result.success = true;
@@ -2382,7 +2320,7 @@ TEST_F(SchemaStoreTest, SetDatabaseAddMoreTypesThanDeletedPreserveTypeIds) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db3_schema, /*database=*/"db3/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   // Set schema again for db2. Delete the email type, and add 2 more types.
   // The type id of existing types should not change.
@@ -2406,7 +2344,7 @@ TEST_F(SchemaStoreTest, SetDatabaseAddMoreTypesThanDeletedPreserveTypeIds) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/true)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   SchemaProto expected_full_schema =
       SchemaBuilder()
@@ -2484,7 +2422,7 @@ TEST_F(SchemaStoreTest, SetEmptySchemaOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   schema, /*database=*/"db/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   // Verify schema.
   EXPECT_THAT(
@@ -2501,7 +2439,7 @@ TEST_F(SchemaStoreTest, SetEmptySchemaOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   SchemaProto(), /*database=*/"db/",
                   /*ignore_errors_and_delete_documents=*/true)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   // Check the schema. It should be empty.
   EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
@@ -2554,7 +2492,7 @@ TEST_F(SchemaStoreTest, SetEmptySchemaClearsDatabase) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   // Set schema for db2
   result = SchemaStore::SetSchemaResult();
   result.success = true;
@@ -2563,7 +2501,7 @@ TEST_F(SchemaStoreTest, SetEmptySchemaClearsDatabase) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   // Set schema for db3
   result = SchemaStore::SetSchemaResult();
   result.success = true;
@@ -2572,7 +2510,7 @@ TEST_F(SchemaStoreTest, SetEmptySchemaClearsDatabase) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db3_schema, /*database=*/"db3/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   // Verify schema.
   SchemaProto expected_full_schema =
       SchemaBuilder()
@@ -2616,7 +2554,7 @@ TEST_F(SchemaStoreTest, SetEmptySchemaClearsDatabase) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/true)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   // Check the schema. Schema types for db1 and db3 should be unchanged, but if
   // schema_type_id_optimization is enabled, then the schema type order for db3
@@ -2624,45 +2562,28 @@ TEST_F(SchemaStoreTest, SetEmptySchemaClearsDatabase) {
   // backfilled from the last type in the original schema.
   EXPECT_THAT(schema_store->GetSchema("db1/"),
               IsOkAndHolds(EqualsProto(db1_schema)));
-  if (feature_flags_->enable_schema_type_id_optimization()) {
-    db3_schema = SchemaBuilder()
-                     .AddType(SchemaTypeConfigBuilder()
-                                  .SetType("db3/email")
-                                  .SetDatabase("db3/"))
-                     .AddType(SchemaTypeConfigBuilder()
-                                  .SetType("db3/message")
-                                  .SetDatabase("db3/"))
-                     .Build();
-    expected_full_schema = SchemaBuilder()
-                               .AddType(SchemaTypeConfigBuilder()
-                                            .SetType("db1/email")
-                                            .SetDatabase("db1/"))
-                               .AddType(SchemaTypeConfigBuilder()
-                                            .SetType("db1/message")
-                                            .SetDatabase("db1/"))
-                               .AddType(SchemaTypeConfigBuilder()
-                                            .SetType("db3/email")
-                                            .SetDatabase("db3/"))
-                               .AddType(SchemaTypeConfigBuilder()
-                                            .SetType("db3/message")
-                                            .SetDatabase("db3/"))
-                               .Build();
-  } else {
-    expected_full_schema = SchemaBuilder()
-                               .AddType(SchemaTypeConfigBuilder()
-                                            .SetType("db1/email")
-                                            .SetDatabase("db1/"))
-                               .AddType(SchemaTypeConfigBuilder()
-                                            .SetType("db1/message")
-                                            .SetDatabase("db1/"))
-                               .AddType(SchemaTypeConfigBuilder()
-                                            .SetType("db3/email")
-                                            .SetDatabase("db3/"))
-                               .AddType(SchemaTypeConfigBuilder()
-                                            .SetType("db3/message")
-                                            .SetDatabase("db3/"))
-                               .Build();
-  }
+  db3_schema = SchemaBuilder()
+                   .AddType(SchemaTypeConfigBuilder()
+                                .SetType("db3/email")
+                                .SetDatabase("db3/"))
+                   .AddType(SchemaTypeConfigBuilder()
+                                .SetType("db3/message")
+                                .SetDatabase("db3/"))
+                   .Build();
+  expected_full_schema = SchemaBuilder()
+                             .AddType(SchemaTypeConfigBuilder()
+                                          .SetType("db1/email")
+                                          .SetDatabase("db1/"))
+                             .AddType(SchemaTypeConfigBuilder()
+                                          .SetType("db1/message")
+                                          .SetDatabase("db1/"))
+                             .AddType(SchemaTypeConfigBuilder()
+                                          .SetType("db3/email")
+                                          .SetDatabase("db3/"))
+                             .AddType(SchemaTypeConfigBuilder()
+                                          .SetType("db3/message")
+                                          .SetDatabase("db3/"))
+                             .Build();
   EXPECT_THAT(schema_store->GetSchema("db3/"),
               IsOkAndHolds(EqualsProto(db3_schema)));
 
@@ -2690,7 +2611,7 @@ TEST_F(SchemaStoreTest, SetIncompatibleSchemaOk) {
   result.schema_types_new_by_name.insert(schema_.types(0).schema_type());
   EXPECT_THAT(schema_store->SetSchema(
                   schema_, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema_));
@@ -2707,7 +2628,7 @@ TEST_F(SchemaStoreTest, SetIncompatibleSchemaOk) {
   result.schema_types_deleted_by_id.emplace(0);
   EXPECT_THAT(schema_store->SetSchema(
                   schema_, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 }
 
 TEST_F(SchemaStoreTest, SetIncompatibleInDifferentDatabaseOk) {
@@ -2755,7 +2676,7 @@ TEST_F(SchemaStoreTest, SetIncompatibleInDifferentDatabaseOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   result = SchemaStore::SetSchemaResult();
   result.success = true;
   result.schema_types_new_by_name.insert("db2/email");
@@ -2763,7 +2684,7 @@ TEST_F(SchemaStoreTest, SetIncompatibleInDifferentDatabaseOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema,
@@ -2789,7 +2710,7 @@ TEST_F(SchemaStoreTest, SetIncompatibleInDifferentDatabaseOk) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema_incompatible, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   // Check the schema, this should not have changed
   EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
@@ -2848,7 +2769,7 @@ TEST_F(SchemaStoreTest, SetInvalidInDifferentDatabaseFails) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   result = SchemaStore::SetSchemaResult();
   result.success = true;
   result.schema_types_new_by_name.insert("db2/email");
@@ -2856,7 +2777,7 @@ TEST_F(SchemaStoreTest, SetInvalidInDifferentDatabaseFails) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db2_schema, /*database=*/"db2/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_full_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_full_schema,
@@ -2982,7 +2903,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithDuplicateTypeNameAcrossDifferentDbFails) {
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   db1_schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
               IsOkAndHolds(Pointee(
                   EqualsSchemaProtoIgnorePropertiesDigest(db1_schema))));
@@ -3031,7 +2952,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedTypeOk) {
   result.schema_types_new_by_name.insert("email");
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema));
@@ -3049,7 +2970,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedTypeOk) {
   result.schema_types_new_by_name.insert("new_type");
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema));
@@ -3076,7 +2997,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithDeletedTypeOk) {
   result.schema_types_new_by_name.insert("message");
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema));
@@ -3100,9 +3021,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithDeletedTypeOk) {
       old_email_schema_type_id);
 
   // Can't set the incompatible schema
-  EXPECT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(incompatible_result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(schema,
+                              /*ignore_errors_and_delete_documents=*/false),
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(incompatible_result)));
 
   SchemaStore::SetSchemaResult force_result;
   force_result.success = true;
@@ -3113,7 +3035,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithDeletedTypeOk) {
   // Force set the incompatible schema
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/true),
-              IsOkAndHolds(EqualsSetSchemaResult(force_result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(force_result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema));
@@ -3140,7 +3062,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
   result.schema_types_new_by_name.insert("message");
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema));
@@ -3155,44 +3077,17 @@ TEST_F(SchemaStoreTest, SetSchemaWithReorderedTypesOk) {
           .Build();
 
   // Set the compatible schema and verify with GetSchema
-  if (feature_flags_->enable_schema_database()) {
-    // Setting reordered types is a no-op for the new set schema after schema
-    // database is enabled. So everything should be the same as before.
-    result = SchemaStore::SetSchemaResult();
-    result.success = true;
-    EXPECT_THAT(
-        schema_store->SetSchema(reordered_schema,
-                                /*ignore_errors_and_delete_documents=*/false),
-        IsOkAndHolds(EqualsSetSchemaResult(result)));
-
-    ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
-                               schema_store->GetFileBackedSchemaProto());
-    EXPECT_THAT(*actual_schema,
-                EqualsSchemaProtoIgnorePropertiesDigest(schema));
-    EXPECT_THAT(schema_store->GetFullSchemaProto(),
-                IsOkAndHolds(EqualsProto(schema)));
-  } else {
-    // Since we assign SchemaTypeIds based on order in the SchemaProto, this
-    // will cause SchemaTypeIds to change
-    result = SchemaStore::SetSchemaResult();
-    result.success = true;
-    // Old SchemaTypeId of "email"
-    result.old_schema_type_ids_changed.emplace(0);
-    // Old SchemaTypeId of "message"
-    result.old_schema_type_ids_changed.emplace(1);
-
-    // Set the compatible schema
-    EXPECT_THAT(
-        schema_store->SetSchema(reordered_schema,
-                                /*ignore_errors_and_delete_documents=*/false),
-        IsOkAndHolds(EqualsSetSchemaResult(result)));
-    ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
-                               schema_store->GetFileBackedSchemaProto());
-    EXPECT_THAT(*actual_schema,
-                EqualsSchemaProtoIgnorePropertiesDigest(reordered_schema));
-    EXPECT_THAT(schema_store->GetFullSchemaProto(),
-                IsOkAndHolds(EqualsProto(reordered_schema)));
-  }
+  result = SchemaStore::SetSchemaResult();
+  result.success = true;
+  EXPECT_THAT(
+      schema_store->SetSchema(reordered_schema,
+                              /*ignore_errors_and_delete_documents=*/false),
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
+  ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
+                             schema_store->GetFileBackedSchemaProto());
+  EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema));
+  EXPECT_THAT(schema_store->GetFullSchemaProto(),
+              IsOkAndHolds(EqualsProto(schema)));
 }
 
 TEST_F(SchemaStoreTest, IndexedPropertyChangeRequiresReindexingOk) {
@@ -3217,7 +3112,7 @@ TEST_F(SchemaStoreTest, IndexedPropertyChangeRequiresReindexingOk) {
   result.schema_types_new_by_name.insert("email");
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema));
@@ -3239,7 +3134,7 @@ TEST_F(SchemaStoreTest, IndexedPropertyChangeRequiresReindexingOk) {
   result.schema_types_index_incompatible_by_name.insert("email");
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema));
@@ -3293,7 +3188,7 @@ TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
   EXPECT_THAT(
       schema_store->SetSchema(no_nested_index_schema,
                               /*ignore_errors_and_delete_documents=*/false),
-      IsOkAndHolds(EqualsSetSchemaResult(result)));
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema,
@@ -3309,7 +3204,7 @@ TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
   EXPECT_THAT(
       schema_store->SetSchema(nested_index_schema,
                               /*ignore_errors_and_delete_documents=*/false),
-      IsOkAndHolds(EqualsSetSchemaResult(result)));
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema,
@@ -3325,7 +3220,7 @@ TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
   EXPECT_THAT(
       schema_store->SetSchema(no_nested_index_schema,
                               /*ignore_errors_and_delete_documents=*/false),
-      IsOkAndHolds(EqualsSetSchemaResult(result)));
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema,
@@ -3356,7 +3251,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
   result.schema_types_new_by_name.insert("email");
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema));
@@ -3383,9 +3278,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
       old_email_schema_type_id);
 
   // Can't set the incompatible schema
-  EXPECT_THAT(schema_store->SetSchema(
-                  schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(incompatible_result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(schema,
+                              /*ignore_errors_and_delete_documents=*/false),
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(incompatible_result)));
 
   SchemaStore::SetSchemaResult force_result;
   force_result.success = true;
@@ -3396,7 +3292,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleTypesOk) {
   // Force set the incompatible schema
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/true),
-              IsOkAndHolds(EqualsSetSchemaResult(force_result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(force_result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema));
@@ -3459,7 +3355,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleNestedTypesOk) {
   EXPECT_THAT(
       schema_store->SetSchema(new_schema,
                               /*ignore_errors_and_delete_documents=*/false),
-      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema,
@@ -3473,7 +3369,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithIncompatibleNestedTypesOk) {
   EXPECT_THAT(
       schema_store->SetSchema(new_schema,
                               /*ignore_errors_and_delete_documents=*/true),
-      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema,
@@ -3534,7 +3430,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithIndexIncompatibleNestedTypesOk) {
   EXPECT_THAT(
       schema_store->SetSchema(new_schema,
                               /*ignore_errors_and_delete_documents=*/false),
-      IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema,
@@ -3592,9 +3488,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithCompatibleNestedTypesOk) {
   expected_result.schema_types_changed_fully_compatible_by_name.insert(
       "ContactPoint");
   expected_result.schema_types_new_by_name.insert("Person");
-  EXPECT_THAT(schema_store->SetSchema(
-                  new_schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(new_schema,
+                              /*ignore_errors_and_delete_documents=*/false),
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema,
@@ -3660,9 +3557,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedIndexableNestedTypeOk) {
   expected_result.schema_types_index_incompatible_by_name.insert("Person");
   expected_result.schema_types_join_incompatible_by_name.insert("Person");
 
-  EXPECT_THAT(schema_store->SetSchema(
-                  new_schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(new_schema,
+                              /*ignore_errors_and_delete_documents=*/false),
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema,
@@ -3727,9 +3625,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedJoinableNestedTypeOk) {
   expected_result.success = true;
   expected_result.schema_types_join_incompatible_by_name.insert("Person");
 
-  EXPECT_THAT(schema_store->SetSchema(
-                  new_schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(new_schema,
+                              /*ignore_errors_and_delete_documents=*/false),
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema,
@@ -3771,9 +3670,10 @@ TEST_F(SchemaStoreTest, SetSchemaByUpdatingScorablePropertyOk) {
   SchemaStore::SetSchemaResult expected_result;
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("email");
-  EXPECT_THAT(schema_store->SetSchema(
-                  old_schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(old_schema,
+                              /*ignore_errors_and_delete_documents=*/false),
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema,
@@ -3789,9 +3689,10 @@ TEST_F(SchemaStoreTest, SetSchemaByUpdatingScorablePropertyOk) {
       0);
   new_expected_result.schema_types_scorable_property_inconsistent_by_name
       .insert("email");
-  EXPECT_THAT(schema_store->SetSchema(
-                  new_schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(new_expected_result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(new_schema,
+                              /*ignore_errors_and_delete_documents=*/false),
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(new_expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema,
@@ -3844,9 +3745,10 @@ TEST_F(SchemaStoreTest,
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("email");
   expected_result.schema_types_new_by_name.insert("message");
-  EXPECT_THAT(schema_store->SetSchema(
-                  old_schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(expected_result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(old_schema,
+                              /*ignore_errors_and_delete_documents=*/false),
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema,
@@ -3867,9 +3769,10 @@ TEST_F(SchemaStoreTest,
   new_expected_result.old_schema_type_ids_changed.insert(1);
   new_expected_result.schema_types_deleted_by_id.insert(0);
   new_expected_result.schema_types_deleted_by_name.insert("message");
-  EXPECT_THAT(schema_store->SetSchema(
-                  new_schema, /*ignore_errors_and_delete_documents=*/true),
-              IsOkAndHolds(EqualsSetSchemaResult(new_expected_result)));
+  EXPECT_THAT(
+      schema_store->SetSchema(new_schema,
+                              /*ignore_errors_and_delete_documents=*/true),
+      IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(new_expected_result)));
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema,
@@ -3902,7 +3805,7 @@ TEST_F(SchemaStoreTest, GetSchemaTypeId) {
   result.schema_types_new_by_name.insert(second_type);
   EXPECT_THAT(schema_store->SetSchema(
                   schema_, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   EXPECT_THAT(schema_store->GetSchemaTypeId(first_type), IsOkAndHolds(0));
   EXPECT_THAT(schema_store->GetSchemaTypeId(second_type), IsOkAndHolds(1));
@@ -4042,6 +3945,7 @@ TEST_F(SchemaStoreTest, UpdateChecksumAvoidsRecovery) {
                           feature_flags_.get(), &initialize_stats));
   EXPECT_THAT(initialize_stats.schema_store_recovery_cause(),
               Eq(InitializeStatsProto::NONE));
+  EXPECT_GT(initialize_stats.schema_proto_byte_size(), 0);
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
                              schema_store_two->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema));
@@ -4093,6 +3997,7 @@ TEST_F(SchemaStoreTest, PersistToDiskPreservesAcrossInstances) {
                           feature_flags_.get(), &initialize_stats));
   EXPECT_THAT(initialize_stats.schema_store_recovery_cause(),
               Eq(InitializeStatsProto::NONE));
+  EXPECT_GT(initialize_stats.schema_proto_byte_size(), 0);
   ICING_ASSERT_OK_AND_ASSIGN(actual_schema,
                              schema_store->GetFileBackedSchemaProto());
   EXPECT_THAT(*actual_schema, EqualsSchemaProtoIgnorePropertiesDigest(schema));
@@ -4133,7 +4038,7 @@ TEST_F(SchemaStoreTest, SchemaStoreStorageInfoProto) {
   result.schema_types_new_by_name.insert("fullSectionsType");
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
 
   SchemaStoreStorageInfoProto storage_info = schema_store->GetStorageInfo();
   EXPECT_THAT(storage_info.schema_store_size(), Ge(0));
@@ -4152,9 +4057,10 @@ TEST_F(SchemaStoreTest, GetDebugInfo) {
   ASSERT_THAT(
       schema_store->SetSchema(schema_,
                               /*ignore_errors_and_delete_documents=*/false),
-      IsOkAndHolds(EqualsSetSchemaResult(SchemaStore::SetSchemaResult{
-          .success = true,
-          .schema_types_new_by_name = {schema_.types(0).schema_type()}})));
+      IsOkAndHolds(
+          EqualsSetSchemaResultIgnoringStats(SchemaStore::SetSchemaResult{
+              .success = true,
+              .schema_types_new_by_name = {schema_.types(0).schema_type()}})));
 
   // Check debug info
   ICING_ASSERT_OK_AND_ASSIGN(SchemaDebugInfoProto out,
@@ -4312,7 +4218,7 @@ TEST_F(SchemaStoreTest, CanCheckForPropertiesDefinedInSchema) {
 
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false),
-              IsOkAndHolds(EqualsSetSchemaResult(result)));
+              IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
   ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId schema_id,
                              schema_store->GetSchemaTypeId("email"));
   EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(schema_id, "subject"));
@@ -4932,6 +4838,47 @@ TEST_F(SchemaStoreTest, IntermediateDocumentPropertiesAreDefined) {
                                                       "nestedNonIndexable"));
 }
 
+TEST_F(SchemaStoreTest, DedupedSchemaPropertiesAreDefined) {
+  if (!feature_flags_->enable_schema_definition_deduping()) {
+    GTEST_SKIP() << "Schema property deduping is disabled.";
+  }
+  SchemaTypeConfigProto email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("tagQualifiedId")
+                           .SetDataType(TYPE_STRING)
+                           .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                        DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                           .SetCardinality(CARDINALITY_REQUIRED))
+          .Build();
+
+  SchemaProto first_schema = SchemaBuilder().AddType(email_type).Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<SchemaStore> schema_store,
+      SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                          feature_flags_.get()));
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      first_schema, /*ignore_errors_and_delete_documents=*/true));
+  SchemaProto second_schema = schema_store->GetFullSchemaProto().ValueOrDie();
+  SchemaTypeConfigProto duped_email_type = email_type;
+  duped_email_type.set_schema_type("DupedEmail");
+  *second_schema.add_types() = duped_email_type;
+  ICING_ASSERT_OK(schema_store->SetSchema(
+      second_schema, /*ignore_errors_and_delete_documents=*/true));
+
+  // Verify that the duped schema type has been deduped.
+  SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder =
+      schema_store->GetSchemaTypeConfigHolder("DupedEmail").ValueOrDie();
+  EXPECT_EQ(type_config_holder.base_type_config().schema_type(), "DupedEmail");
+  EXPECT_EQ(type_config_holder.base_type_config().properties().size(), 0);
+
+  // Verify that even when deduped, the property is still defined.
+  constexpr SchemaTypeId kTypeDupedEmailSchemaId = 1;
+  EXPECT_TRUE(schema_store->IsPropertyDefinedInSchema(kTypeDupedEmailSchemaId,
+                                                      "tagQualifiedId"));
+}
+
 TEST_F(SchemaStoreTest, CyclePathsAreDefined) {
   SchemaTypeConfigProto type_a =
       SchemaTypeConfigBuilder()
@@ -5500,7 +5447,8 @@ TEST_F(SchemaStoreTest, MigrateSchemaCompatibleNoChange) {
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, version_util::StateChange::kCompatible,
       version_util::kVersion, /*perform_schema_database_migration=*/false,
-      /*recalculate_schema_properties_digests=*/false));
+      /*recalculate_schema_properties_digests=*/false,
+      /*schema_deduping_flag_rollback=*/false));
 
   {
     // Create a new of the schema store and check that the same schema is
@@ -5546,7 +5494,8 @@ TEST_F(SchemaStoreTest, MigrateSchemaUpgradeNoChange) {
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, version_util::StateChange::kUpgrade,
       version_util::kVersion + 1, /*perform_schema_database_migration=*/false,
-      /*recalculate_schema_properties_digests=*/false));
+      /*recalculate_schema_properties_digests=*/false,
+      /*schema_deduping_flag_rollback=*/false));
 
   {
     // Create a new of the schema store and check that the same schema is
@@ -5593,7 +5542,8 @@ TEST_F(SchemaStoreTest, MigrateSchemaVersionZeroUpgradeNoChange) {
       &filesystem_, schema_store_dir_,
       version_util::StateChange::kVersionZeroUpgrade,
       version_util::kVersion + 1, /*perform_schema_database_migration=*/false,
-      /*recalculate_schema_properties_digests=*/false));
+      /*recalculate_schema_properties_digests=*/false,
+      /*schema_deduping_flag_rollback=*/false));
 
   {
     // Create a new of the schema store and check that the same schema is
@@ -5646,7 +5596,8 @@ TEST_F(SchemaStoreTest,
       &filesystem_, schema_store_dir_, version_util::StateChange::kRollBack,
       version_util::kSchemaDefinitionDedupingVersion - 1,
       /*perform_schema_database_migration=*/false,
-      /*recalculate_schema_properties_digests=*/false));
+      /*recalculate_schema_properties_digests=*/false,
+      /*schema_deduping_flag_rollback=*/false));
 
   {
     // Create a new of the schema store and check that we fell back to the
@@ -5713,20 +5664,12 @@ TEST_F(
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_schema_database=*/true,
-        /*release_backup_schema_file_if_overlay_present=*/true,
-        /*enable_strict_page_byte_size_limit=*/true,
-        /*enable_smaller_decompression_buffer_size=*/true,
-        /*enable_passing_filter_to_children=*/true,
-        /*enable_proto_log_new_header_format=*/true,
-        /*enable_reusable_decompression_buffer=*/true,
-        /*enable_schema_type_id_optimization=*/true,
         /*enable_optimize_improvements=*/true,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_embed_query_optimization=*/true,
-        /*enable_schema_definition_deduping=*/true);
+        /*enable_schema_definition_deduping=*/true,
+        /*enable_delete_propagation_from=*/true);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -5761,7 +5704,8 @@ TEST_F(
       /*version_state_change=*/version_util::StateChange::kRollBack,
       version_util::kSchemaDefinitionDedupingVersion - 1,
       /*perform_schema_database_migration=*/true,
-      /*recalculate_schema_properties_digests=*/true));
+      /*recalculate_schema_properties_digests=*/true,
+      /*schema_deduping_flag_rollback=*/false));
 
   {
     // Previous version would have deduping disabled.
@@ -5769,20 +5713,12 @@ TEST_F(
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_schema_database=*/true,
-        /*release_backup_schema_file_if_overlay_present=*/true,
-        /*enable_strict_page_byte_size_limit=*/true,
-        /*enable_smaller_decompression_buffer_size=*/true,
-        /*enable_passing_filter_to_children=*/true,
-        /*enable_proto_log_new_header_format=*/true,
-        /*enable_reusable_decompression_buffer=*/true,
-        /*enable_schema_type_id_optimization=*/true,
         /*enable_optimize_improvements=*/true,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_embed_query_optimization=*/true,
-        /*enable_schema_definition_deduping=*/false);
+        /*enable_schema_definition_deduping=*/false,
+        /*enable_delete_propagation_from=*/true);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -5890,7 +5826,8 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollbackKeepsCompatibleOverlaySchema) {
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, version_util::StateChange::kRollBack,
       version_util::kVersion, /*perform_schema_database_migration=*/false,
-      /*recalculate_schema_properties_digests=*/false));
+      /*recalculate_schema_properties_digests=*/false,
+      /*schema_deduping_flag_rollback=*/false));
 
   {
     // Create a new of the schema store and check that the same schema is
@@ -5937,7 +5874,8 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollforwardRetainsBaseSchema) {
       &filesystem_, schema_store_dir_, version_util::StateChange::kRollBack,
       version_util::kVersionOne - 1,
       /*perform_schema_database_migration=*/false,
-      /*recalculate_schema_properties_digests=*/false));
+      /*recalculate_schema_properties_digests=*/false,
+      /*schema_deduping_flag_rollback=*/false));
 
   SchemaTypeConfigProto other_type_a =
       SchemaTypeConfigBuilder()
@@ -5967,7 +5905,8 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollforwardRetainsBaseSchema) {
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, version_util::StateChange::kRollForward,
       version_util::kVersion, /*perform_schema_database_migration=*/false,
-      /*recalculate_schema_properties_digests=*/false));
+      /*recalculate_schema_properties_digests=*/false,
+      /*schema_deduping_flag_rollback=*/false));
   {
     // Create a new of the schema store and check that we fell back to the
     // base schema.
@@ -6013,7 +5952,8 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollforwardRetainsOverlaySchema) {
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, version_util::StateChange::kRollBack,
       version_util::kVersion, /*perform_schema_database_migration=*/false,
-      /*recalculate_schema_properties_digests=*/false));
+      /*recalculate_schema_properties_digests=*/false,
+      /*schema_deduping_flag_rollback=*/false));
 
   {
     // Create a new of the schema store and check that the same schema is
@@ -6033,7 +5973,8 @@ TEST_F(SchemaStoreTest, MigrateSchemaRollforwardRetainsOverlaySchema) {
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, version_util::StateChange::kRollForward,
       version_util::kVersion, /*perform_schema_database_migration=*/false,
-      /*recalculate_schema_properties_digests=*/false));
+      /*recalculate_schema_properties_digests=*/false,
+      /*schema_deduping_flag_rollback=*/false));
   {
     // Create a new of the schema store and check that the same schema is
     // present.
@@ -6080,7 +6021,8 @@ TEST_F(SchemaStoreTest,
       &filesystem_, schema_store_dir_,
       version_util::StateChange::kVersionZeroRollForward,
       version_util::kVersion, /*perform_schema_database_migration=*/false,
-      /*recalculate_schema_properties_digests=*/false));
+      /*recalculate_schema_properties_digests=*/false,
+      /*schema_deduping_flag_rollback=*/false));
 
   SchemaTypeConfigProto other_type_a =
       SchemaTypeConfigBuilder()
@@ -6137,7 +6079,8 @@ TEST_F(SchemaStoreTest, MigrateSchemaVersionUndeterminedDiscardsOverlaySchema) {
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, version_util::StateChange::kUndetermined,
       version_util::kVersion, /*perform_schema_database_migration=*/false,
-      /*recalculate_schema_properties_digests=*/false));
+      /*recalculate_schema_properties_digests=*/false,
+      /*schema_deduping_flag_rollback=*/false));
 
   SchemaTypeConfigProto other_type_a =
       SchemaTypeConfigBuilder()
@@ -6630,7 +6573,8 @@ TEST_P(SchemaStoreTestWithParam, MigrateSchemaWithDatabaseMigration) {
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, /*version_state_change=*/GetParam(),
       version_util::kVersion, /*perform_schema_database_migration=*/true,
-      /*recalculate_schema_properties_digests=*/false));
+      /*recalculate_schema_properties_digests=*/false,
+      /*schema_deduping_flag_rollback=*/false));
   {
     // Create a new instance of the schema store and check that the database
     // field is populated.
@@ -6740,7 +6684,8 @@ TEST_P(SchemaStoreTestWithParam,
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, /*version_state_change=*/GetParam(),
       version_util::kVersion, /*perform_schema_database_migration=*/true,
-      /*recalculate_schema_properties_digests=*/false));
+      /*recalculate_schema_properties_digests=*/false,
+      /*schema_deduping_flag_rollback=*/false));
 
   {
     // Create a new instance of the schema store and check that the database
@@ -6834,20 +6779,12 @@ TEST_P(SchemaStoreTestWithParam,
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_schema_database=*/true,
-        /*release_backup_schema_file_if_overlay_present=*/true,
-        /*enable_strict_page_byte_size_limit=*/true,
-        /*enable_smaller_decompression_buffer_size=*/true,
-        /*enable_passing_filter_to_children=*/true,
-        /*enable_proto_log_new_header_format=*/true,
-        /*enable_reusable_decompression_buffer=*/true,
-        /*enable_schema_type_id_optimization=*/true,
         /*enable_optimize_improvements=*/true,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_embed_query_optimization=*/true,
-        /*enable_schema_definition_deduping=*/false);
+        /*enable_schema_definition_deduping=*/false,
+        /*enable_delete_propagation_from=*/true);
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
@@ -6864,27 +6801,20 @@ TEST_P(SchemaStoreTestWithParam,
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, /*version_state_change=*/GetParam(),
       version_util::kVersion, /*perform_schema_database_migration=*/false,
-      /*recalculate_schema_properties_digests=*/true));
+      /*recalculate_schema_properties_digests=*/true,
+      /*schema_deduping_flag_rollback=*/false));
   {
     // Create a new instance of the schema store with schema_deduping enabled.
     FeatureFlags feature_flags(
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_schema_database=*/true,
-        /*release_backup_schema_file_if_overlay_present=*/true,
-        /*enable_strict_page_byte_size_limit=*/true,
-        /*enable_smaller_decompression_buffer_size=*/true,
-        /*enable_passing_filter_to_children=*/true,
-        /*enable_proto_log_new_header_format=*/true,
-        /*enable_reusable_decompression_buffer=*/true,
-        /*enable_schema_type_id_optimization=*/true,
         /*enable_optimize_improvements=*/true,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_embed_query_optimization=*/true,
-        /*enable_schema_definition_deduping=*/true);
+        /*enable_schema_definition_deduping=*/true,
+        /*enable_delete_propagation_from=*/true);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -7088,20 +7018,12 @@ TEST_P(SchemaStoreTestWithParam,
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_schema_database=*/false,
-        /*release_backup_schema_file_if_overlay_present=*/true,
-        /*enable_strict_page_byte_size_limit=*/true,
-        /*enable_smaller_decompression_buffer_size=*/true,
-        /*enable_passing_filter_to_children=*/true,
-        /*enable_proto_log_new_header_format=*/true,
-        /*enable_reusable_decompression_buffer=*/true,
-        /*enable_schema_type_id_optimization=*/true,
         /*enable_optimize_improvements=*/true,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_embed_query_optimization=*/true,
-        /*enable_schema_definition_deduping=*/false);
+        /*enable_schema_definition_deduping=*/false,
+        /*enable_delete_propagation_from=*/true);
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
@@ -7118,27 +7040,20 @@ TEST_P(SchemaStoreTestWithParam,
   ICING_EXPECT_OK(SchemaStore::MigrateSchema(
       &filesystem_, schema_store_dir_, /*version_state_change=*/GetParam(),
       version_util::kVersion, /*perform_schema_database_migration=*/true,
-      /*recalculate_schema_properties_digests=*/true));
+      /*recalculate_schema_properties_digests=*/true,
+      /*schema_deduping_flag_rollback=*/false));
   {
     // Create a new instance of the schema store with both flags enabled.
     FeatureFlags feature_flags(
         /*allow_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_schema_database=*/true,
-        /*release_backup_schema_file_if_overlay_present=*/true,
-        /*enable_strict_page_byte_size_limit=*/true,
-        /*enable_smaller_decompression_buffer_size=*/true,
-        /*enable_passing_filter_to_children=*/true,
-        /*enable_proto_log_new_header_format=*/true,
-        /*enable_reusable_decompression_buffer=*/true,
-        /*enable_schema_type_id_optimization=*/true,
         /*enable_optimize_improvements=*/true,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,
         /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_embed_query_optimization=*/true,
-        /*enable_schema_definition_deduping=*/true);
+        /*enable_schema_definition_deduping=*/true,
+        /*enable_delete_propagation_from=*/true);
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -7323,6 +7238,163 @@ TEST_P(SchemaStoreTestWithParam,
       EXPECT_THAT(schema_store->GetSchemaTypeId("db1/email"), IsOkAndHolds(0));
       EXPECT_THAT(schema_store->GetSchemaTypeId("db2/email"), IsOkAndHolds(1));
     }
+  }
+}
+
+TEST_P(SchemaStoreTestWithParam, MigrateSchemaWithSchemaDedupingFlagRollback) {
+  SchemaTypeConfigProto db1_email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("db1/email")
+          .SetDatabase("db1/")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_RFC822)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaTypeConfigProto db2_email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("db2/email")
+          .SetDatabase("db2/")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_RFC822)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema =
+      SchemaBuilder().AddType(db1_email_type).AddType(db2_email_type).Build();
+  {
+    // Create an instance of the schema store and set the schema with schema
+    // deduping flag enabled.
+    FeatureFlags feature_flags(
+        /*allow_circular_schema_definitions=*/true,
+        /*enable_repeated_field_joins=*/true,
+        /*enable_embedding_backup_generation=*/true,
+        /*enable_optimize_improvements=*/true,
+        /*expired_document_purge_threshold_ms=*/0,
+        /*enable_non_existent_qualified_id_join=*/true,
+        /*enable_skip_set_schema_type_equality_check=*/true,
+        /*enable_schema_definition_deduping=*/true,
+        /*enable_delete_propagation_from=*/true);
+
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                            &feature_flags));
+    ICING_ASSERT_OK(schema_store->SetSchema(
+        schema, /*ignore_errors_and_delete_documents=*/false));
+
+    // Schema is set as is.
+    EXPECT_THAT(
+        schema_store->GetFullSchemaProto(),
+        IsOkAndHolds((EqualsSchemaProtoIgnorePropertiesDigest(schema))));
+  }
+
+  ICING_EXPECT_OK(SchemaStore::MigrateSchema(
+      &filesystem_, schema_store_dir_, /*version_state_change=*/GetParam(),
+      version_util::kVersion, /*perform_schema_database_migration=*/false,
+      /*recalculate_schema_properties_digests=*/false,
+      /*schema_deduping_flag_rollback=*/true));
+  {
+    // Create a new instance of the schema store with schema deduping flag
+    // disabled.
+    FeatureFlags feature_flags(
+        /*allow_circular_schema_definitions=*/true,
+        /*enable_repeated_field_joins=*/true,
+        /*enable_embedding_backup_generation=*/true,
+        /*enable_optimize_improvements=*/true,
+        /*expired_document_purge_threshold_ms=*/0,
+        /*enable_non_existent_qualified_id_join=*/true,
+        /*enable_skip_set_schema_type_equality_check=*/true,
+        /*enable_schema_definition_deduping=*/false,
+        /*enable_delete_propagation_from=*/true);
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<SchemaStore> schema_store,
+        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
+                            &feature_flags));
+
+    // The overlay schema is discarded and we fall back to the backup schema
+    // (without RFC822 property and without deduping).
+    SchemaTypeConfigProto db1_email_backup =
+        SchemaTypeConfigBuilder()
+            .SetType("db1/email")
+            .SetDatabase("db1/")
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("subject")
+                    .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                    .SetCardinality(CARDINALITY_OPTIONAL))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName("body")
+                             .SetDataType(TYPE_STRING)
+                             .SetCardinality(CARDINALITY_OPTIONAL))
+            .Build();
+    SchemaTypeConfigProto db2_email_backup =
+        SchemaTypeConfigBuilder()
+            .SetType("db2/email")
+            .SetDatabase("db2/")
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("subject")
+                    .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                    .SetCardinality(CARDINALITY_OPTIONAL))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName("body")
+                             .SetDataType(TYPE_STRING)
+                             .SetCardinality(CARDINALITY_OPTIONAL))
+            .Build();
+    SchemaProto backup_schema = SchemaBuilder()
+                                    .AddType(db1_email_backup)
+                                    .AddType(db2_email_backup)
+                                    .Build();
+    EXPECT_THAT(schema_store->GetFileBackedSchemaProto(),
+                IsOkAndHolds(Pointee(
+                    EqualsSchemaProtoIgnorePropertiesDigest(backup_schema))));
+    // GetSchema via database should also work.
+    EXPECT_THAT(schema_store->GetSchema("db1/"),
+                IsOkAndHolds(EqualsSchemaProtoIgnorePropertiesDigest(
+                    SchemaBuilder().AddType(db1_email_backup).Build())));
+    EXPECT_THAT(schema_store->GetSchema("db2/"),
+                IsOkAndHolds(EqualsSchemaProtoIgnorePropertiesDigest(
+                    SchemaBuilder().AddType(db2_email_backup).Build())));
+
+    // Verify that our in-memory structures are ok
+    DocumentProto db1_email_doc =
+        DocumentBuilder()
+            .SetKey("namespace", "uri1")
+            .SetSchema("db1/email")
+            .AddStringProperty("subject", "subject_db1")
+            .AddStringProperty("body", "body_db1")
+            .Build();
+    DocumentProto db2_email_doc =
+        DocumentBuilder()
+            .SetKey("namespace", "uri3")
+            .SetSchema("db2/email")
+            .AddStringProperty("subject", "subject_db2")
+            .AddStringProperty("body", "body_db2")
+            .Build();
+
+    ICING_ASSERT_OK_AND_ASSIGN(SectionGroup section_group,
+                               schema_store->ExtractSections(db1_email_doc));
+    EXPECT_THAT(section_group.string_sections[0].content,
+                ElementsAre("subject_db1"));
+    ICING_ASSERT_OK_AND_ASSIGN(section_group,
+                               schema_store->ExtractSections(db2_email_doc));
+    EXPECT_THAT(section_group.string_sections[0].content,
+                ElementsAre("subject_db2"));
+
+    // Verify that our persisted data are ok
+    EXPECT_THAT(schema_store->GetSchemaTypeId("db1/email"), IsOkAndHolds(0));
+    EXPECT_THAT(schema_store->GetSchemaTypeId("db2/email"), IsOkAndHolds(1));
   }
 }
 
