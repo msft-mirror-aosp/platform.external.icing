@@ -46,6 +46,7 @@
 #include "icing/store/corpus-id.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
+#include "icing/store/document-group-info.h"
 #include "icing/store/document-id.h"
 #include "icing/store/key-mapper.h"
 #include "icing/store/namespace-id-fingerprint.h"
@@ -114,13 +115,6 @@ class DocumentStore {
     // been regenerated or not. This is usually a signal for callers to detect
     // if any id assignment has changed (e.g. NamespaceId).
     bool derived_files_regenerated;
-  };
-
-  struct DocumentMetadata {
-    std::string schema_type_name;
-    std::string name_space;
-    std::string uri;
-    DocumentId document_id;
   };
 
   // Not copyable
@@ -251,7 +245,8 @@ class DocumentStore {
   // or expired). Order of namespaces is undefined.
   std::vector<std::string> GetAllNamespaces() const;
 
-  // TODO(b/384947619): migrate Delete APIs to return DocumentMetadata.
+  // TODO(b/384947619): migrate Delete APIs to return DocumentGroupInfo or
+  // DocumentMetadata.
 
   // Deletes the document identified by the given namespace and uri, only if it
   // is still alive. The document proto will be erased immediately.
@@ -482,10 +477,11 @@ class DocumentStore {
   //   will also be purged.
   //
   // Returns:
-  //   A vector of purged expired document metadata on success
+  //   A DocumentGroupInfo that contains the information about the purged
+  //     expired document metadata on success
   //   INTERNAL_ERROR on IO error
-  libtextclassifier3::StatusOr<std::vector<DocumentMetadata>>
-  PurgeExpiredDocuments(int64_t current_time_ms);
+  libtextclassifier3::StatusOr<DocumentGroupInfo> PurgeExpiredDocuments(
+      int64_t current_time_ms);
 
   // Returns the expiration timestamp (in milliseconds) of the document that
   // will expire next, relative to current_time_ms. If there are no more expired
@@ -567,7 +563,20 @@ class DocumentStore {
   DocumentStorageInfoProto GetStorageInfo() const;
 
   struct UpdateSchemaStoreResult {
+    // Grouped metadata of deleted documents due to (force) schema changes.
+    //
+    // Note: this field is only populated if
+    //   feature_flags_.enable_delete_propagation_from() is true. If populated,
+    //   deleted_doc_group_info.GetTotalNumDocs() will be equal to
+    //   deleted_document_count.
+    DocumentGroupInfo deleted_doc_group_info;
+
+    // # of deleted documents due to (force) schema changes.
+    // TODO(b/446719537): remove this field once deleted_doc_group_info is fully
+    // released.
     int deleted_document_count = 0;
+
+    // Whether any document store derived files have been changed.
     bool derived_files_changed = false;
   };
   // Update any derived data off of the SchemaStore with the new SchemaStore.
