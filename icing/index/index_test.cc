@@ -207,7 +207,6 @@ TEST_F(IndexTest, EmptyIndexAfterMerge) {
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 }
 
-
 TEST_F(IndexTest, AdvancePastEnd) {
   Index::Editor edit =
       index_->Edit(kDocumentId0, kSectionId2, /*namespace_id=*/0);
@@ -2796,9 +2795,6 @@ class IndexUpdateChecksumEnsuresDataConsistencyTest
         /*enable_circular_schema_definitions=*/true,
         /*enable_repeated_field_joins=*/true,
         /*enable_embedding_backup_generation=*/true,
-        /*enable_proto_log_new_header_format=*/true,
-        /*enable_reusable_decompression_buffer=*/true,
-        /*enable_schema_type_id_optimization=*/true,
         enable_optimize_improvements,
         /*expired_document_purge_threshold_ms=*/0,
         /*enable_non_existent_qualified_id_join=*/true,

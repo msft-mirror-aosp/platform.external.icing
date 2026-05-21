@@ -276,9 +276,16 @@ class SchemaStore {
       const Clock* clock, const FeatureFlags* feature_flags,
       InitializeStatsProto* initialize_stats = nullptr);
 
-  // Migrates schema files (backup v.s. new schema) according to version state
-  // change. Also performs schema database migration and populates the database
-  // fields in the persisted schema file if necessary.
+  // Migrates schema files (backup vs. new schema) based on version changes and
+  // feature flag updates. This includes:
+  // - Handling overlay schema: If the overlay schema is incompatible with
+  //   the new version or if deduping is rolled back, it's discarded.
+  // - Schema database migration: If `perform_schema_database_migration` is
+  //   true, rewrites the schema file to populate the `database` field for
+  //   schema types.
+  // - Recalculating properties digests: If `recalculate_properties_digests` is
+  //   true, rewrites the schema to compute and populate `properties_digests`
+  //   to support schema deduplication.
   //
   // Returns:
   //   OK on success or nothing to migrate
@@ -286,7 +293,7 @@ class SchemaStore {
       const Filesystem* filesystem, const std::string& base_dir,
       version_util::StateChange version_state_change, int32_t new_version,
       bool perform_schema_database_migration,
-      bool recalculate_properties_digests);
+      bool recalculate_properties_digests, bool schema_deduping_flag_rollback);
 
   // Discards all derived data in the schema store.
   //
@@ -690,7 +697,8 @@ class SchemaStore {
   //   INTERNAL_ERROR on any IO errors
   static libtextclassifier3::Status HandleOverlaySchemaForVersionChange(
       const Filesystem* filesystem, const std::string& base_dir,
-      version_util::StateChange version_state_change, int32_t new_version);
+      version_util::StateChange version_state_change, int32_t new_version,
+      bool schema_deduping_flag_rollback);
 
   // Rewrites the schema file on disk by recomputing and updating its metadata
   // fields as specified.
@@ -933,44 +941,6 @@ class SchemaStore {
   libtextclassifier3::StatusOr<SchemaProto> GetFullOptimizedSchemaProto(
       SchemaProto input_database_schema, const std::string& database_to_update,
       const SchemaUtil::SchemaDelta& schema_delta) const;
-
-  // TODO: b/434218554 - Remove this method once schema type id optimization is
-  // fully rolled out.
-  //
-  // This method should only be called when
-  // `feature_flags_->enable_schema_type_id_optimization` is false.
-  //
-  // Returns a SchemaProto representing the full schema, which is a combination
-  // of the existing schema and the input database schema. Deletes all types
-  // belonging to the specified database if input_database_schema is an empty
-  // proto.
-  //
-  // For the database being updated by the input database schema:
-  // - If the existing schema does not contain the database, the input types
-  //   are appended to the end of the SchemaProto, without changing the order
-  //   of the existing schema types.
-  // - Otherwise, the existing schema types are replaced with types from the
-  //   input database schema in their original position in the existing
-  //   SchemaProto.
-  //   - Types from input_database_schema are added in the order in which they
-  //     appear.
-  //   - If more types are added to the database, the additional types are
-  //     appended at the end of the SchemaProto, without changing the order of
-  //     existing types from unaffected databases.
-  //
-  // Requires:
-  //   - input_database_schema is valid according to `ValidateSchemaDatabase`
-  //     and `SchemaUtil::Validate`.
-  //
-  // Returns:
-  //   - SchemaProto on success
-  //   - INTERNAL_ERROR on any IO errors, or if the schema store was not
-  //     previously initialized properly.
-  //   - INVALID_ARGUMENT_ERROR if the input schema contains types from multiple
-  //     databases.
-  libtextclassifier3::StatusOr<SchemaProto> GetFullSchemaProtoWithUpdatedDb(
-      SchemaProto input_database_schema,
-      const std::string& database_to_update) const;
 
   // Merges new types into the existing schema and returns a deduped
   // SchemaProto.

@@ -1206,7 +1206,7 @@ TEST_F(IcingSearchEngineDeleteTest,
   EXPECT_THAT(result_proto1.status(), ProtoIsOk());
   EXPECT_THAT(result_proto1.num_expired_documents(), Eq(0));
   EXPECT_THAT(result_proto1.num_propagated_deleted_documents(), Eq(0));
-  EXPECT_THAT(result_proto1.deleted_documents(), IsEmpty());
+  EXPECT_THAT(result_proto1.deleted_document_group_info().groups(), IsEmpty());
   EXPECT_THAT(result_proto1.next_expiration_timestamp_ms(), Eq(1010));
   EXPECT_THAT(
       icing.Get("namespace", "uri", GetResultSpecProto::default_instance()),
@@ -1220,17 +1220,14 @@ TEST_F(IcingSearchEngineDeleteTest,
   EXPECT_THAT(result_google::protobuf.status(), ProtoIsOk());
   EXPECT_THAT(result_google::protobuf.num_expired_documents(), Eq(1));
   EXPECT_THAT(result_google::protobuf.num_propagated_deleted_documents(), Eq(0));
-  EXPECT_THAT(
-      result_google::protobuf.deleted_documents(),
-      UnorderedElementsAre(AllOf(
-          Property(
-              &HandleExpiredDocumentsResultProto::DocumentGroupInfo::name_space,
-              Eq("namespace")),
-          Property(
-              &HandleExpiredDocumentsResultProto::DocumentGroupInfo::schema,
-              Eq("Message")),
-          Property(&HandleExpiredDocumentsResultProto::DocumentGroupInfo::uris,
-                   UnorderedElementsAre("uri")))));
+  EXPECT_THAT(result_google::protobuf.deleted_document_group_info().groups(),
+              UnorderedElementsAre(AllOf(
+                  Property(&DocumentGroupInfoProto::GroupEntryProto::schema,
+                           Eq("Message")),
+                  Property(&DocumentGroupInfoProto::GroupEntryProto::name_space,
+                           Eq("namespace")),
+                  Property(&DocumentGroupInfoProto::GroupEntryProto::uris,
+                           UnorderedElementsAre("uri")))));
   EXPECT_THAT(result_google::protobuf.next_expiration_timestamp_ms(), Eq(-1));
 
   GetResultProto expected_get_result_google::protobuf;
@@ -1421,38 +1418,26 @@ TEST_F(
   EXPECT_THAT(result_proto.num_expired_documents(), Eq(1));
   EXPECT_THAT(result_proto.num_propagated_deleted_documents(), Eq(2));
   EXPECT_THAT(
-      result_proto.deleted_documents(),
+      result_proto.deleted_document_group_info().groups(),
       UnorderedElementsAre(
-          AllOf(
-              Property(&HandleExpiredDocumentsResultProto::DocumentGroupInfo::
-                           name_space,
-                       Eq("namespace")),
-              Property(
-                  &HandleExpiredDocumentsResultProto::DocumentGroupInfo::schema,
-                  Eq("Person")),
-              Property(
-                  &HandleExpiredDocumentsResultProto::DocumentGroupInfo::uris,
-                  UnorderedElementsAre("person1"))),
-          AllOf(
-              Property(&HandleExpiredDocumentsResultProto::DocumentGroupInfo::
-                           name_space,
-                       Eq("namespace")),
-              Property(
-                  &HandleExpiredDocumentsResultProto::DocumentGroupInfo::schema,
-                  Eq("Email")),
-              Property(
-                  &HandleExpiredDocumentsResultProto::DocumentGroupInfo::uris,
-                  UnorderedElementsAre("email1"))),
-          AllOf(
-              Property(&HandleExpiredDocumentsResultProto::DocumentGroupInfo::
-                           name_space,
-                       Eq("namespace")),
-              Property(
-                  &HandleExpiredDocumentsResultProto::DocumentGroupInfo::schema,
-                  Eq("Label")),
-              Property(
-                  &HandleExpiredDocumentsResultProto::DocumentGroupInfo::uris,
-                  UnorderedElementsAre("label1")))));
+          AllOf(Property(&DocumentGroupInfoProto::GroupEntryProto::schema,
+                         Eq("Person")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::name_space,
+                         Eq("namespace")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::uris,
+                         UnorderedElementsAre("person1"))),
+          AllOf(Property(&DocumentGroupInfoProto::GroupEntryProto::schema,
+                         Eq("Email")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::name_space,
+                         Eq("namespace")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::uris,
+                         UnorderedElementsAre("email1"))),
+          AllOf(Property(&DocumentGroupInfoProto::GroupEntryProto::schema,
+                         Eq("Label")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::name_space,
+                         Eq("namespace")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::uris,
+                         UnorderedElementsAre("label1")))));
   EXPECT_THAT(result_proto.next_expiration_timestamp_ms(), Eq(3010));
 
   // Adjust the clock back to 500 ms and verify Get API for email, message and
@@ -1641,28 +1626,20 @@ TEST_F(
   EXPECT_THAT(result_proto.num_expired_documents(), Eq(2));
   EXPECT_THAT(result_proto.num_propagated_deleted_documents(), Eq(2));
   EXPECT_THAT(
-      result_proto.deleted_documents(),
+      result_proto.deleted_document_group_info().groups(),
       UnorderedElementsAre(
-          AllOf(
-              Property(&HandleExpiredDocumentsResultProto::DocumentGroupInfo::
-                           name_space,
-                       Eq("namespace")),
-              Property(
-                  &HandleExpiredDocumentsResultProto::DocumentGroupInfo::schema,
-                  Eq("Person")),
-              Property(
-                  &HandleExpiredDocumentsResultProto::DocumentGroupInfo::uris,
-                  UnorderedElementsAre("person1", "person3"))),
-          AllOf(
-              Property(&HandleExpiredDocumentsResultProto::DocumentGroupInfo::
-                           name_space,
-                       Eq("namespace")),
-              Property(
-                  &HandleExpiredDocumentsResultProto::DocumentGroupInfo::schema,
-                  Eq("Email")),
-              Property(
-                  &HandleExpiredDocumentsResultProto::DocumentGroupInfo::uris,
-                  UnorderedElementsAre("email1", "email3")))));
+          AllOf(Property(&DocumentGroupInfoProto::GroupEntryProto::schema,
+                         Eq("Person")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::name_space,
+                         Eq("namespace")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::uris,
+                         UnorderedElementsAre("person1", "person3"))),
+          AllOf(Property(&DocumentGroupInfoProto::GroupEntryProto::schema,
+                         Eq("Email")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::name_space,
+                         Eq("namespace")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::uris,
+                         UnorderedElementsAre("email1", "email3")))));
   EXPECT_THAT(result_proto.next_expiration_timestamp_ms(), Eq(1111));
 }
 

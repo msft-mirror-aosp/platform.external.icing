@@ -26,6 +26,7 @@
 #include "icing/file/derived-file-util.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/posting_list/flash-index-storage-header.h"
+#include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/initialize.pb.h"
 #include "icing/testing/common-matchers.h"
@@ -120,7 +121,8 @@ TEST_P(VersionUtilReadVersionTest, ReadVersion) {
 
   // Prepare flash index file.
   if (param.existing_flash_index_magic.has_value()) {
-    HeaderBlock header_block(&filesystem_, /*block_size=*/4096);
+    HeaderBlock header_block(
+        &filesystem_, /*block_size=*/FlashIndexStorage::SelectBlockSize());
     header_block.header()->magic = param.existing_flash_index_magic.value();
 
     std::string main_index_dir = index_path_ + "/idx/main";
@@ -1494,57 +1496,46 @@ TEST(VersionUtilTest, SchemaDatabaseMigrationNotRequired) {
   EXPECT_FALSE(SchemaDatabaseMigrationRequired(previous_version_proto));
 }
 
-TEST(VersionUtilTest, ShouldRecalculatePropertiesDigestsForDeduping_required) {
-  // Migration is required if the previous version is less than the version at
-  // which the schema definition deduping is introduced.
-  IcingSearchEngineVersionProto previous_version_proto;
-  previous_version_proto.set_version(kSchemaDefinitionDedupingVersion - 1);
-  previous_version_proto.set_max_version(kSchemaDefinitionDedupingVersion - 1);
-  previous_version_proto.add_enabled_features()->set_feature_type(
+TEST(VersionUtilTest, IsSchemaDedupingEnabled_notEnabled) {
+  // Previous version < kSchemaDefinitionDedupingVersion.
+  IcingSearchEngineVersionProto version_proto;
+  version_proto.set_version(kSchemaDefinitionDedupingVersion - 1);
+  version_proto.set_max_version(kSchemaDefinitionDedupingVersion - 1);
+  version_proto.add_enabled_features()->set_feature_type(
       IcingSearchEngineFeatureInfoProto::
           FEATURE_SCHEMA_DEFINITION_DEDUPLICATION);
-  EXPECT_TRUE(
-      ShouldRecalculatePropertiesDigestsForDeduping(previous_version_proto));
+  EXPECT_FALSE(IsSchemaDedupingEnabled(version_proto));
 
-  // Migration is required if the schema duplication feature was not enabled in
-  // the previous version.
-  previous_version_proto.set_version(kSchemaDatabaseVersion);
-  previous_version_proto.set_max_version(kSchemaDatabaseVersion);
-  previous_version_proto.mutable_enabled_features()->Clear();
+  // Feature not enabled
+  version_proto.set_version(kSchemaDatabaseVersion);
+  version_proto.set_max_version(kSchemaDatabaseVersion);
+  version_proto.mutable_enabled_features()->Clear();
   // Add a feature that is not the schema database feature.
-  previous_version_proto.add_enabled_features()->set_feature_type(
+  version_proto.add_enabled_features()->set_feature_type(
       IcingSearchEngineFeatureInfoProto::FEATURE_HAS_PROPERTY_OPERATOR);
-  EXPECT_TRUE(
-      ShouldRecalculatePropertiesDigestsForDeduping(previous_version_proto));
+  EXPECT_FALSE(IsSchemaDedupingEnabled(version_proto));
 
-  previous_version_proto.set_version(kSchemaDatabaseVersion + 1);
-  previous_version_proto.set_max_version(kSchemaDatabaseVersion + 1);
-  previous_version_proto.mutable_enabled_features()->Clear();
-  EXPECT_TRUE(
-      ShouldRecalculatePropertiesDigestsForDeduping(previous_version_proto));
+  version_proto.set_version(kSchemaDatabaseVersion + 1);
+  version_proto.set_max_version(kSchemaDatabaseVersion + 1);
+  version_proto.mutable_enabled_features()->Clear();
+  EXPECT_FALSE(IsSchemaDedupingEnabled(version_proto));
 }
 
-TEST(VersionUtilTest,
-     ShouldRecalculatePropertiesDigestsForDeduping_notRequired) {
-  // Migration is not required if previous version is >= the version at which
-  // the schema deduplication is introduced and the feature was enabled in the
-  // previous version.
-  IcingSearchEngineVersionProto previous_version_proto;
-  previous_version_proto.set_version(kSchemaDefinitionDedupingVersion);
-  previous_version_proto.set_max_version(kSchemaDefinitionDedupingVersion);
-  previous_version_proto.add_enabled_features()->set_feature_type(
+TEST(VersionUtilTest, IsSchemaDedupingEnabled_enabled) {
+  IcingSearchEngineVersionProto version_proto;
+  version_proto.set_version(kSchemaDefinitionDedupingVersion);
+  version_proto.set_max_version(kSchemaDefinitionDedupingVersion);
+  version_proto.add_enabled_features()->set_feature_type(
       IcingSearchEngineFeatureInfoProto::
           FEATURE_SCHEMA_DEFINITION_DEDUPLICATION);
-  EXPECT_FALSE(
-      ShouldRecalculatePropertiesDigestsForDeduping(previous_version_proto));
+  EXPECT_TRUE(IsSchemaDedupingEnabled(version_proto));
 
-  previous_version_proto.set_version(kSchemaDefinitionDedupingVersion + 1);
-  previous_version_proto.set_max_version(kSchemaDefinitionDedupingVersion + 1);
-  previous_version_proto.add_enabled_features()->set_feature_type(
+  version_proto.set_version(kSchemaDefinitionDedupingVersion + 1);
+  version_proto.set_max_version(kSchemaDefinitionDedupingVersion + 1);
+  version_proto.add_enabled_features()->set_feature_type(
       IcingSearchEngineFeatureInfoProto::
           FEATURE_SCHEMA_DEFINITION_DEDUPLICATION);
-  EXPECT_FALSE(
-      ShouldRecalculatePropertiesDigestsForDeduping(previous_version_proto));
+  EXPECT_TRUE(IsSchemaDedupingEnabled(version_proto));
 }
 
 TEST(VersionUtilTest,

@@ -65,5 +65,22 @@ std::unordered_set<DocumentId> DocumentGroupInfo::GetAllDocumentIds() const {
   return all_document_ids;
 }
 
+DocumentGroupInfoProto DocumentGroupInfo::SerializeToProto() && {
+  DocumentGroupInfoProto proto;
+  for (auto& [group_key, document_uri_id_pair_list] : doc_group_info_map_) {
+    DocumentGroupInfoProto::GroupEntryProto* group_entry_proto =
+        proto.add_groups();
+    group_entry_proto->set_schema(group_key.schema_type_name);
+    group_entry_proto->set_name_space(group_key.name_space);
+
+    group_entry_proto->mutable_uris()->Reserve(
+        static_cast<int>(document_uri_id_pair_list.size()));
+    for (auto& [uri, _] : document_uri_id_pair_list) {
+      group_entry_proto->add_uris(std::move(uri));
+    }
+  }
+  return proto;
+}
+
 }  // namespace lib
 }  // namespace icing

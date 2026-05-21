@@ -22,6 +22,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "icing/proto/document.pb.h"
 #include "icing/store/document-id.h"
 
 namespace icing {
@@ -82,6 +83,9 @@ class DocumentGroupInfo {
 
   // Returns all document ids in the map from all groups.
   std::unordered_set<DocumentId> GetAllDocumentIds() const;
+
+  // Returns the document group info map as a proto.
+  DocumentGroupInfoProto SerializeToProto() &&;
 
   // Returns the document group info map.
   const MapType& Get() const { return doc_group_info_map_; }
