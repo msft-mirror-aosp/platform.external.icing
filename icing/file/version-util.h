@@ -195,13 +195,9 @@ bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
 bool SchemaDatabaseMigrationRequired(
     const IcingSearchEngineVersionProto& prev_version_proto);
 
-// Returns whether the schema's stored properties digests should be recalculated
-// for deduping.
-//
-// This is true if the previous version is less than the version at which the
-// schema property definition deduplication is introduced, or if the schema
-// definition deduplication feature was not enabled in the previous version.
-bool ShouldRecalculatePropertiesDigestsForDeduping(
+// Returns whether schema definition deduplication is enabled as per the
+// provided version proto.
+bool IsSchemaDedupingEnabled(
     const IcingSearchEngineVersionProto& prev_version_proto);
 
 // Returns the derived files rebuilds required for a given feature.

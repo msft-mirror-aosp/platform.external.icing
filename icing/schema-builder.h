@@ -65,6 +65,9 @@ constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
 constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
     EMBEDDING_INDEXING_LINEAR_SEARCH =
         EmbeddingIndexingConfig::EmbeddingIndexingType::LINEAR_SEARCH;
+constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+    EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR = EmbeddingIndexingConfig::
+        EmbeddingIndexingType::APPROXIMATE_NEAREST_NEIGHBOR;
 constexpr EmbeddingIndexingConfig::QuantizationType::Code
     QUANTIZATION_TYPE_NONE = EmbeddingIndexingConfig::QuantizationType::NONE;
 constexpr EmbeddingIndexingConfig::QuantizationType::Code
@@ -274,6 +277,12 @@ class SchemaTypeConfigBuilder {
     type_config_.set_properties_digest(
         reinterpret_cast<const char*>(properties_digest.data()),
         properties_digest.size());
+    return *this;
+  }
+
+  SchemaTypeConfigBuilder& AddAccountProperty(
+      std::string account_property) {
+    type_config_.add_account_properties(std::move(account_property));
     return *this;
   }
 
