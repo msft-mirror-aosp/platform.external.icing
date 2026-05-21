@@ -428,8 +428,9 @@ MainIndex::AddTerms(const IcingDynamicTrie& other_lexicon,
     // Add other to main mapping.
     outputs.other_tvi_to_main_tvi.emplace(other_tvi, new_main_tvi);
 
-    memcpy(&posting_list_id, main_lexicon_->GetValueAtIndex(new_main_tvi),
-           sizeof(posting_list_id));
+    ICING_ASSIGN_OR_RETURN(const void* posting_list_id_ptr,
+                           main_lexicon_->GetValueAtIndex(new_main_tvi));
+    memcpy(&posting_list_id, posting_list_id_ptr, sizeof(posting_list_id));
     if (posting_list_id.block_index() != kInvalidBlockIndex) {
       outputs.main_tvi_to_block_index[new_main_tvi] =
           posting_list_id.block_index();
@@ -496,8 +497,9 @@ MainIndex::AddBranchPoints(const IcingDynamicTrie& other_lexicon,
 
       outputs.prefix_tvis_buf.push_back(prefix_tvi);
 
-      memcpy(&posting_list_id, main_lexicon_->GetValueAtIndex(prefix_tvi),
-             sizeof(posting_list_id));
+      ICING_ASSIGN_OR_RETURN(const void* posting_list_id_ptr,
+                             main_lexicon_->GetValueAtIndex(prefix_tvi));
+      memcpy(&posting_list_id, posting_list_id_ptr, sizeof(posting_list_id));
       if (posting_list_id.block_index() != kInvalidBlockIndex) {
         outputs.main_tvi_to_block_index[prefix_tvi] =
             posting_list_id.block_index();
@@ -569,7 +571,8 @@ libtextclassifier3::Status MainIndex::AddHits(
         PostingListIdentifier::kInvalid;
     auto itr = backfill_map.find(cur_decoded_term.tvi);
     if (itr != backfill_map.end()) {
-      const void* value = main_lexicon_->GetValueAtIndex(itr->second);
+      ICING_ASSIGN_OR_RETURN(const void* value,
+                             main_lexicon_->GetValueAtIndex(itr->second));
       memcpy(&backfill_posting_list_id, value,
              sizeof(backfill_posting_list_id));
       backfill_map.erase(itr);
@@ -588,8 +591,10 @@ libtextclassifier3::Status MainIndex::AddHits(
   for (auto other_tvi_main_tvi_pair : backfill_map) {
     PostingListIdentifier backfill_posting_list_id =
         PostingListIdentifier::kInvalid;
-    memcpy(&backfill_posting_list_id,
-           main_lexicon_->GetValueAtIndex(other_tvi_main_tvi_pair.second),
+    ICING_ASSIGN_OR_RETURN(
+        const void* backfill_posting_list_id_ptr,
+        main_lexicon_->GetValueAtIndex(other_tvi_main_tvi_pair.second));
+    memcpy(&backfill_posting_list_id, backfill_posting_list_id_ptr,
            sizeof(backfill_posting_list_id));
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<PostingListHitAccessor> hit_accum,
@@ -614,8 +619,9 @@ libtextclassifier3::Status MainIndex::AddHitsForTerm(
   // 1. Create a PostingListHitAccessor - either from the pre-existing block, if
   // one exists, or from scratch.
   PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
-  memcpy(&posting_list_id, main_lexicon_->GetValueAtIndex(tvi),
-         sizeof(posting_list_id));
+  ICING_ASSIGN_OR_RETURN(const void* posting_list_id_ptr,
+                         main_lexicon_->GetValueAtIndex(tvi));
+  memcpy(&posting_list_id, posting_list_id_ptr, sizeof(posting_list_id));
   std::unique_ptr<PostingListHitAccessor> pl_accessor;
   if (posting_list_id.is_valid()) {
     if (posting_list_id.block_index() >= flash_index_storage_->num_blocks()) {

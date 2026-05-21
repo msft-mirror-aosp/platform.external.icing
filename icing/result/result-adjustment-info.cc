@@ -122,7 +122,14 @@ SnippetContext CreateSnippetContext(
       for (int i = 0; i < search_spec.embedding_query_vectors_size(); ++i) {
         const PropertyProto::VectorProto& query_vector =
             search_spec.embedding_query_vectors(i);
-        int dimension = query_vector.values().size();
+        auto dimension_or = embedding_util::GetDimension(query_vector);
+        if (!dimension_or.ok()) {
+          ICING_LOG(WARNING)
+              << "Failed to get dimension for query vector property: "
+              << dimension_or.status().error_message();
+          continue;
+        }
+        int dimension = static_cast<int>(dimension_or.ValueOrDie());
         std::string model_signature = query_vector.model_signature();
         embedding_query_vector_metadata[dimension][std::move(model_signature)]
             .insert(i);

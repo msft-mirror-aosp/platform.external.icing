@@ -19,6 +19,7 @@
 #include <string>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-storage.h"
 #include "icing/util/crc32.h"
@@ -102,10 +103,10 @@ uint64_t IcingStorageCollection::GetDiskUsage() const {
   return total;
 }
 
-Crc32 IcingStorageCollection::UpdateCrc() {
+libtextclassifier3::StatusOr<Crc32> IcingStorageCollection::UpdateCrc() {
   Crc32 crc32;
   for (size_t i = 0; i < files_.size(); ++i) {
-    Crc32 this_crc = files_[i].file->UpdateCrc();
+    ICING_ASSIGN_OR_RETURN(Crc32 this_crc, files_[i].file->UpdateCrc());
     crc32.Append(std::to_string(this_crc.Get()));
   }
   return crc32;

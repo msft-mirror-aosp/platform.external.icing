@@ -275,10 +275,11 @@ bool FlashIndexStorage::PersistToDisk() {
 
 libtextclassifier3::Status FlashIndexStorage::Reset() {
   // Reset in-memory members to default values.
-  num_blocks_ = 0;
-  header_block_.reset();
-  storage_sfd_.reset();
+  has_in_memory_freelists_ = false;
   in_memory_freelists_.clear();
+  header_block_.reset();
+  num_blocks_ = 0;
+  storage_sfd_.reset();
 
   // Delete the underlying file.
   if (!filesystem_->DeleteFile(index_filename_.c_str())) {
