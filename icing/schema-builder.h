@@ -19,9 +19,12 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/schema/schema-util.h"
+#include "icing/util/sha256.h"
 
 namespace icing {
 namespace lib {
@@ -62,6 +65,9 @@ constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
 constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
     EMBEDDING_INDEXING_LINEAR_SEARCH =
         EmbeddingIndexingConfig::EmbeddingIndexingType::LINEAR_SEARCH;
+constexpr EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+    EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR = EmbeddingIndexingConfig::
+        EmbeddingIndexingType::APPROXIMATE_NEAREST_NEIGHBOR;
 constexpr EmbeddingIndexingConfig::QuantizationType::Code
     QUANTIZATION_TYPE_NONE = EmbeddingIndexingConfig::QuantizationType::NONE;
 constexpr EmbeddingIndexingConfig::QuantizationType::Code
@@ -163,7 +169,7 @@ class PropertyConfigBuilder {
 
   PropertyConfigBuilder& SetDataTypeDocument(
       std::string_view schema_type,
-      std::initializer_list<std::string> indexable_nested_properties_list) {
+      std::vector<std::string> indexable_nested_properties_list) {
     property_.set_data_type(PropertyConfigProto::DataType::DOCUMENT);
     property_.set_schema_type(std::string(schema_type));
     property_.mutable_document_indexing_config()->set_index_nested_properties(
@@ -261,7 +267,25 @@ class SchemaTypeConfigBuilder {
     return *this;
   }
 
+  SchemaTypeConfigBuilder& SetPropertiesDigest(std::string properties_digest) {
+    type_config_.set_properties_digest(std::move(properties_digest));
+    return *this;
+  }
+
+  SchemaTypeConfigBuilder& SetPropertiesDigest(
+      const Sha256Digest& properties_digest) {
+    type_config_.set_properties_digest(
+        reinterpret_cast<const char*>(properties_digest.data()),
+        properties_digest.size());
+    return *this;
+  }
+
   SchemaTypeConfigProto Build() { return std::move(type_config_); }
+
+  SchemaTypeConfigProto BuildAndPopulatePropertiesDigest() {
+    SchemaUtil::PopulatePropertiesDigestField(type_config_);
+    return std::move(type_config_);
+  }
 
  private:
   SchemaTypeConfigProto type_config_;

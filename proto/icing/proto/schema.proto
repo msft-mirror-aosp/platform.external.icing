@@ -35,7 +35,7 @@ option objc_class_prefix = "ICNG";
 // TODO(cassiewang) Define a sample proto file that can be used by tests and for
 // documentation.
 //
-// Next tag: 10
+// Next tag: 12
 message SchemaTypeConfigProto {
   // REQUIRED: Named type that identifies the structured, logical schema being
   // defined.
@@ -69,6 +69,10 @@ message SchemaTypeConfigProto {
   // easier.
   repeated PropertyConfigProto properties = 4;
 
+  // Sha256 digest of all properties. This is a field used for Icing's internal
+  // optimizations and should not be set by clients.
+  optional bytes properties_digest = 10;
+
   // Version is an arbitrary number that the client may use to keep track of
   // different incarnations of the schema. Icing library imposes no requirements
   // on this field and will not validate it in anyway. If a client calls
@@ -87,6 +91,10 @@ message SchemaTypeConfigProto {
   // List of all account properties that need to be managed. All accounts under
   // this property should be existed in the account manager.
   repeated string account_properties = 9;
+
+  // If true, then this schema type is only ever used as a property of another
+  // type.
+  optional bool is_nested_only = 11;
 
   reserved 2, 3;
 }
@@ -222,6 +230,10 @@ message EmbeddingIndexingConfig {
 
       // Contents in this property will be indexed for linear search.
       LINEAR_SEARCH = 1;
+
+      // Contents in this property will be indexed for Approximate Nearest
+      // Neighbor (ANN) search.
+      APPROXIMATE_NEAREST_NEIGHBOR = 2;
     }
   }
   optional EmbeddingIndexingType.Code embedding_indexing_type = 1;
@@ -549,7 +561,7 @@ message SetSchemaResultProto {
 }
 
 // Stats and latencies for IcingSearchEngine::SetSchema.
-// Next tag: 7
+// Next tag: 8
 message SetSchemaStatsProto {
   // Overall time used for the function call. This is the sum of the latencies
   // recorded in the other fields (schema_store_set_schema_latency,
@@ -576,6 +588,9 @@ message SetSchemaStatsProto {
 
   // Latency for regenerating the scorable property cache.
   optional int32 scorable_property_cache_regeneration_latency_ms = 6;
+
+  // Byte size of the full schema proto written by this SetSchema call.
+  optional int64 schema_proto_byte_size = 7;
 }
 
 // Result of a call to IcingSearchEngine.GetSchema

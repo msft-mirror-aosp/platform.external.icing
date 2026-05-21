@@ -43,6 +43,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
+#include "icing/store/document-group-info.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
@@ -68,6 +69,7 @@ using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::IsTrue;
 using ::testing::Ne;
+using ::testing::Pair;
 using ::testing::UnorderedElementsAre;
 
 class DeletePropagationHandlerTest : public ::testing::Test {
@@ -316,10 +318,14 @@ TEST_F(DeletePropagationHandlerTest, Handle) {
       DeletePropagationHandler::Create(
           schema_store_.get(), qualified_id_join_index_.get(), doc_store_.get(),
           fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(
-      delete_propagation_handler.Handle(/*parent_doc_ids=*/{person_doc_id}),
-      IsOkAndHolds(UnorderedElementsAre(EqualsDocumentMetadata(
-          "Message", "pkg$db/namespace", "message", message_doc_id))));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo deleted_child_docs_info,
+      delete_propagation_handler.Handle(/*parent_doc_ids=*/{person_doc_id}));
+  EXPECT_THAT(deleted_child_docs_info.Get(),
+              UnorderedElementsAre(
+                  Pair(EqualsDocumentGroupKey("Message", "pkg$db/namespace"),
+                       UnorderedElementsAre(
+                           EqualsDocumentUriId("message", message_doc_id)))));
   EXPECT_THAT(doc_store_->GetNonDeletedDocumentFilterData(message_doc_id),
               Eq(std::nullopt));
 }
@@ -358,9 +364,10 @@ TEST_F(DeletePropagationHandlerTest,
       DeletePropagationHandler::Create(
           schema_store_.get(), qualified_id_join_index_.get(), doc_store_.get(),
           fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(
-      delete_propagation_handler.Handle(/*parent_doc_ids=*/{person_doc_id}),
-      IsOkAndHolds(IsEmpty()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo deleted_child_docs_info,
+      delete_propagation_handler.Handle(/*parent_doc_ids=*/{person_doc_id}));
+  EXPECT_THAT(deleted_child_docs_info.Get(), IsEmpty());
   EXPECT_THAT(doc_store_->GetNonDeletedDocumentFilterData(message_doc_id),
               Ne(std::nullopt));
 }
@@ -397,9 +404,10 @@ TEST_F(DeletePropagationHandlerTest,
       DeletePropagationHandler::Create(
           schema_store_.get(), qualified_id_join_index_.get(), doc_store_.get(),
           fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(
-      delete_propagation_handler.Handle(/*parent_doc_ids=*/{person_doc_id}),
-      IsOkAndHolds(IsEmpty()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo deleted_child_docs_info,
+      delete_propagation_handler.Handle(/*parent_doc_ids=*/{person_doc_id}));
+  EXPECT_THAT(deleted_child_docs_info.Get(), IsEmpty());
   EXPECT_THAT(doc_store_->GetNonDeletedDocumentFilterData(message_doc_id),
               Ne(std::nullopt));
 }
@@ -442,10 +450,14 @@ TEST_F(DeletePropagationHandlerTest, Handle_propagateViaMultipleProperties) {
       DeletePropagationHandler::Create(
           schema_store_.get(), qualified_id_join_index_.get(), doc_store_.get(),
           fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(
-      delete_propagation_handler.Handle(/*parent_doc_ids=*/{person_doc_id}),
-      IsOkAndHolds(UnorderedElementsAre(EqualsDocumentMetadata(
-          "Message", "pkg$db/namespace", "message", message_doc_id))));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo deleted_child_docs_info,
+      delete_propagation_handler.Handle(/*parent_doc_ids=*/{person_doc_id}));
+  EXPECT_THAT(deleted_child_docs_info.Get(),
+              UnorderedElementsAre(
+                  Pair(EqualsDocumentGroupKey("Message", "pkg$db/namespace"),
+                       UnorderedElementsAre(
+                           EqualsDocumentUriId("message", message_doc_id)))));
   EXPECT_THAT(doc_store_->GetNonDeletedDocumentFilterData(message_doc_id),
               Eq(std::nullopt));
 }
@@ -495,13 +507,16 @@ TEST_F(DeletePropagationHandlerTest, Handle_propagateToMultipleChildren) {
       DeletePropagationHandler::Create(
           schema_store_.get(), qualified_id_join_index_.get(), doc_store_.get(),
           fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(
-      delete_propagation_handler.Handle(/*parent_doc_ids=*/{person_doc_id}),
-      IsOkAndHolds(UnorderedElementsAre(
-          EqualsDocumentMetadata("Message", "pkg$db/namespace", "message1",
-                                 message1_doc_id),
-          EqualsDocumentMetadata("Message", "pkg$db/namespace", "message2",
-                                 message2_doc_id))));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo deleted_child_docs_info,
+      delete_propagation_handler.Handle(/*parent_doc_ids=*/{person_doc_id}));
+  EXPECT_THAT(deleted_child_docs_info.Get(),
+              UnorderedElementsAre(
+                  Pair(EqualsDocumentGroupKey("Message", "pkg$db/namespace"),
+                       UnorderedElementsAre(
+                           EqualsDocumentUriId("message1", message1_doc_id),
+                           EqualsDocumentUriId("message2", message2_doc_id)))));
+
   EXPECT_THAT(doc_store_->GetNonDeletedDocumentFilterData(message1_doc_id),
               Eq(std::nullopt));
   EXPECT_THAT(doc_store_->GetNonDeletedDocumentFilterData(message2_doc_id),
@@ -554,10 +569,15 @@ TEST_F(DeletePropagationHandlerTest, Handle_propagateFromMultipleProperties) {
       DeletePropagationHandler::Create(
           schema_store_.get(), qualified_id_join_index_.get(), doc_store_.get(),
           fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(delete_propagation_handler.Handle(
-                  /*parent_doc_ids=*/{person1_doc_id, person2_doc_id}),
-              IsOkAndHolds(UnorderedElementsAre(EqualsDocumentMetadata(
-                  "Message", "pkg$db/namespace", "message", message_doc_id))));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo deleted_child_docs_info,
+      delete_propagation_handler.Handle(
+          /*parent_doc_ids=*/{person1_doc_id, person2_doc_id}));
+  EXPECT_THAT(deleted_child_docs_info.Get(),
+              UnorderedElementsAre(
+                  Pair(EqualsDocumentGroupKey("Message", "pkg$db/namespace"),
+                       UnorderedElementsAre(
+                           EqualsDocumentUriId("message", message_doc_id)))));
   EXPECT_THAT(doc_store_->GetNonDeletedDocumentFilterData(message_doc_id),
               Eq(std::nullopt));
 }
@@ -655,13 +675,17 @@ TEST_F(DeletePropagationHandlerTest, Handle_propagateToGrandChildren) {
       DeletePropagationHandler::Create(
           schema_store_.get(), qualified_id_join_index_.get(), doc_store_.get(),
           fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(
-      delete_propagation_handler.Handle(/*parent_doc_ids=*/{person_doc_id}),
-      IsOkAndHolds(UnorderedElementsAre(
-          EqualsDocumentMetadata("Message", "pkg$db/namespace", "message1",
-                                 message1_doc_id),
-          EqualsDocumentMetadata("Label", "pkg$db/namespace", "label1",
-                                 label1_doc_id))));
+  ICING_ASSERT_OK_AND_ASSIGN(DocumentGroupInfo deleted_child_docs_info,
+                             delete_propagation_handler.Handle(
+                                 /*parent_doc_ids=*/{person_doc_id}));
+  EXPECT_THAT(deleted_child_docs_info.Get(),
+              UnorderedElementsAre(
+                  Pair(EqualsDocumentGroupKey("Message", "pkg$db/namespace"),
+                       UnorderedElementsAre(
+                           EqualsDocumentUriId("message1", message1_doc_id))),
+                  Pair(EqualsDocumentGroupKey("Label", "pkg$db/namespace"),
+                       UnorderedElementsAre(
+                           EqualsDocumentUriId("label1", label1_doc_id)))));
 
   // message1 and label1 should be deleted, while message2 and label2/3/4
   // should not be deleted.
@@ -747,13 +771,15 @@ TEST_F(DeletePropagationHandlerTest, Handle_cycleReference) {
   //   - label1_doc_id is already deleted, so it should not be propagated
   //     again.
   //   - There should be no infinite propagation loop.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo deleted_child_docs_info,
+      delete_propagation_handler.Handle(/*parent_doc_ids=*/{label1_doc_id}));
   EXPECT_THAT(
-      delete_propagation_handler.Handle(/*parent_doc_ids=*/{label1_doc_id}),
-      IsOkAndHolds(UnorderedElementsAre(
-          EqualsDocumentMetadata("Label", "pkg$db/namespace", "label2",
-                                 label2_doc_id),
-          EqualsDocumentMetadata("Label", "pkg$db/namespace", "label3",
-                                 label3_doc_id))));
+      deleted_child_docs_info.Get(),
+      UnorderedElementsAre(Pair(
+          EqualsDocumentGroupKey("Label", "pkg$db/namespace"),
+          UnorderedElementsAre(EqualsDocumentUriId("label2", label2_doc_id),
+                               EqualsDocumentUriId("label3", label3_doc_id)))));
   EXPECT_THAT(doc_store_->GetNonDeletedDocumentFilterData(label2_doc_id),
               Eq(std::nullopt));
   EXPECT_THAT(doc_store_->GetNonDeletedDocumentFilterData(label3_doc_id),
@@ -785,9 +811,10 @@ TEST_F(DeletePropagationHandlerTest, Handle_selfCycleReference) {
       DeletePropagationHandler::Create(
           schema_store_.get(), qualified_id_join_index_.get(), doc_store_.get(),
           fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(
-      delete_propagation_handler.Handle(/*parent_doc_ids=*/{label_doc_id}),
-      IsOkAndHolds(IsEmpty()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo deleted_child_docs_info,
+      delete_propagation_handler.Handle(/*parent_doc_ids=*/{label_doc_id}));
+  EXPECT_THAT(deleted_child_docs_info.Get(), IsEmpty());
 }
 
 TEST_F(DeletePropagationHandlerTest, Handle_shouldPropagateToExpiredDocuments) {
@@ -868,13 +895,15 @@ TEST_F(DeletePropagationHandlerTest, Handle_shouldPropagateToExpiredDocuments) {
       DeletePropagationHandler::Create(
           schema_store_.get(), qualified_id_join_index_.get(), doc_store_.get(),
           fake_clock_.GetSystemTimeMilliseconds()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo deleted_child_docs_info,
+      delete_propagation_handler.Handle(/*parent_doc_ids=*/{label1_doc_id}));
   EXPECT_THAT(
-      delete_propagation_handler.Handle(/*parent_doc_ids=*/{label1_doc_id}),
-      IsOkAndHolds(UnorderedElementsAre(
-          EqualsDocumentMetadata("Label", "pkg$db/namespace", "label2",
-                                 label2_doc_id),
-          EqualsDocumentMetadata("Label", "pkg$db/namespace", "label3",
-                                 label3_doc_id))));
+      deleted_child_docs_info.Get(),
+      UnorderedElementsAre(Pair(
+          EqualsDocumentGroupKey("Label", "pkg$db/namespace"),
+          UnorderedElementsAre(EqualsDocumentUriId("label2", label2_doc_id),
+                               EqualsDocumentUriId("label3", label3_doc_id)))));
   EXPECT_THAT(doc_store_->GetNonDeletedDocumentFilterData(label2_doc_id),
               Eq(std::nullopt));
   EXPECT_THAT(doc_store_->GetNonDeletedDocumentFilterData(label3_doc_id),
@@ -925,9 +954,10 @@ TEST_F(DeletePropagationHandlerTest,
       DeletePropagationHandler::Create(
           schema_store_.get(), qualified_id_join_index_.get(), doc_store_.get(),
           fake_clock_.GetSystemTimeMilliseconds()));
-  EXPECT_THAT(
-      delete_propagation_handler.Handle(/*parent_doc_ids=*/{label1_doc_id}),
-      IsOkAndHolds(IsEmpty()));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo deleted_child_docs_info,
+      delete_propagation_handler.Handle(/*parent_doc_ids=*/{label1_doc_id}));
+  EXPECT_THAT(deleted_child_docs_info.Get(), IsEmpty());
 }
 
 }  // namespace

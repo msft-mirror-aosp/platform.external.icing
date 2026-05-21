@@ -15,6 +15,8 @@
 #ifndef ICING_PORTABLE_PLATFORM_H_
 #define ICING_PORTABLE_PLATFORM_H_
 
+#include <cstdlib>
+
 #include "unicode/uconfig.h"  // IWYU pragma: keep
 // clang-format: do not reorder the above include.
 
@@ -42,6 +44,13 @@ inline bool IsReverseJniTokenization() {
 
 inline bool IsIcuTokenization() {
   return !IsReverseJniTokenization() && !IsCfStringTokenization();
+}
+
+// Returns true if the code is running in a test environment.
+// We check the TEST_TMPDIR environment variable, which is typically set for all
+// tests.
+inline bool IsTestEnvironment() {
+  return std::getenv("TEST_TMPDIR") != nullptr;
 }
 
 // ICU and Reverse JNI tokenization are enabled.
