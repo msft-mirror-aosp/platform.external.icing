@@ -142,6 +142,21 @@ message PropertyProto {
   repeated BlobHandleProto blob_handle_values = 9;
 }
 
+// Metadata for documents, grouped by namespace and schema. It is usually used
+// by an API result to report a list of affected documents grouped by namespace
+// and schema.
+//
+// Next tag: 2
+message DocumentGroupInfoProto {
+  // Next tag: 4
+  message GroupEntryProto {
+    optional string schema = 1;
+    optional string name_space = 2;
+    repeated string uris = 3;
+  }
+  repeated GroupEntryProto groups = 1;
+}
+
 // Holds a list of PutResultProto.
 // Next tag: 6
 message BatchPutResultProto {
@@ -358,7 +373,7 @@ message DeleteBySchemaTypeResultProto {
 }
 
 // Result of a call to IcingSearchEngine.DeleteByQuery
-// Next tag: 7
+// Next tag: 8
 message DeleteByQueryResultProto {
   // Status code can be one of:
   //   OK
@@ -377,6 +392,8 @@ message DeleteByQueryResultProto {
 
   // Used by DeleteByQueryResultProto to return information about deleted
   // documents.
+  //
+  // TODO(b/512989426): migrate to use DocumentGroupInfoProto.
   message DocumentGroupInfo {
     optional string namespace = 1;
     optional string schema = 2;
@@ -386,6 +403,8 @@ message DeleteByQueryResultProto {
   // Additional return message that shows the uris of the deleted documents, if
   // users set return_deleted_document_info to true.
   // The result is grouped by the corresponding namespace and type.
+  //
+  // TODO(b/512989426): migrate to use DocumentGroupInfoProto.
   repeated DocumentGroupInfo deleted_documents = 4;
 
   reserved 2;
@@ -398,7 +417,7 @@ message DeleteByQueryResultProto {
   optional int64 vm_binder_transaction_latency_start_time_ms = 6;
 }
 
-// Next tag: 6
+// Next tag: 7
 message HandleExpiredDocumentsResultProto {
   // Status code can be one of:
   //   OK
@@ -412,17 +431,7 @@ message HandleExpiredDocumentsResultProto {
   // go/icing-library-apis.
   optional StatusProto status = 1;
 
-  // Metadata for the deleted documents, grouped by namespace and schema.
-  message DocumentGroupInfo {
-    optional string name_space = 1;
-    optional string schema = 2;
-    repeated string uris = 3;
-  }
-  // A list of groups of deleted documents. A document was deleted because:
-  // - It was expired.
-  // - OR it was a child document of an expired document with delete propagation
-  //   enabled.
-  repeated DocumentGroupInfo deleted_documents = 2;
+  reserved 2;
 
   // The number of expired documents that were deleted. This DOES NOT include
   // the propagated child documents.
@@ -434,4 +443,10 @@ message HandleExpiredDocumentsResultProto {
 
   // The expiration timestamp (in milliseconds) of the next expired document.
   optional int64 next_expiration_timestamp_ms = 5;
+
+  // Group info of all deleted documents. A document was deleted because:
+  // - It was expired.
+  // - OR it was a child document of an expired document with delete propagation
+  //   enabled.
+  optional DocumentGroupInfoProto deleted_document_group_info = 6;
 }

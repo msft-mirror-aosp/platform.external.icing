@@ -176,9 +176,7 @@ libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
           filesystem, blob_info_proto_file_name,
           PortableFileBackedProtoLog<BlobInfoProto>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize, compression_level,
-              /*compression_threshold_bytes=*/0, compression_mem_level,
-              /*enable_proto_log_new_header_format_in=*/
-              true, feature_flags->enable_reusable_decompression_buffer())));
+              /*compression_threshold_bytes=*/0, compression_mem_level)));
   // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
   //   It is a remaining task to rollout new header format for proto log.
 
@@ -555,9 +553,7 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
           PortableFileBackedProtoLog<BlobInfoProto>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize,
               compression_level_, /*compression_threshold_bytes=*/0,
-              compression_mem_level_,
-              /*enable_proto_log_new_header_format=*/true,
-              feature_flags->enable_reusable_decompression_buffer())));
+              compression_mem_level_)));
   // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
   //   It is a remaining task to rollout new header format for proto log.
   std::unique_ptr<PortableFileBackedProtoLog<BlobInfoProto>> new_blob_info_log =
@@ -623,9 +619,7 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
           PortableFileBackedProtoLog<BlobInfoProto>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize,
               compression_level_, /*compression_threshold_bytes=*/0,
-              compression_mem_level_,
-              /*enable_proto_log_new_header_format=*/true,
-              feature_flags->enable_reusable_decompression_buffer())));
+              compression_mem_level_)));
   // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
   //   It is a remaining task to rollout new header format for proto log.
   blob_info_log_ = std::move(log_create_result.proto_log);

@@ -2956,5 +2956,48 @@ TEST_F(EmbeddingIndexTest, CanAdoptDelegateReturnsFalseWhenHasDelegate) {
   EXPECT_FALSE(iterator->CanAdoptDelegate());
 }
 
+TEST_F(EmbeddingIndexTest, ResetsDocHitInfoWhenEncounteringError) {
+  PropertyProto::VectorProto query_vector = test_vector1_;
+  DocumentId document_id = 0;
+
+  EmbeddingQueryResults embedding_query_results(/*num_query_vectors=*/1);
+  std::vector<double> global_scores = {0.1};
+
+  // Add a single document to the index.
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(/*section_id=*/0, /*document_id=*/0), test_vector1_,
+      QUANTIZATION_TYPE_NONE, kDefaultSchemaName));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+  embedding_index_->set_last_added_document_id(0);
+
+  // Add a single score to the embedding query results.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      EmbeddingQueryResults::EmbeddingQueryMatchInfoMap * info_map,
+      embedding_query_results.GetOrCreateMatchInfoMap(
+          /*query_vector_index=*/0,
+          SearchSpecProto::EmbeddingQueryMetricType::COSINE));
+  (*info_map)[document_id].AppendScore(global_scores, 0.1);
+
+  std::vector<uint32_t> cluster_ids = {embedding_util::kLinearSearchClusterId};
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIteratorEmbeddingV2> iterator,
+      DocHitInfoIteratorEmbeddingV2::Create(
+          &query_vector, SearchSpecProto::EmbeddingQueryMetricType::COSINE,
+          /*score_low=*/0.0, /*score_high=*/1.0, info_map, &global_scores,
+          /*global_section_infos=*/nullptr, cluster_ids, embedding_index_.get(),
+          document_store_.get(), schema_store_.get(), /*current_time_ms=*/0));
+
+  // Advance to the only document.
+  iterator->Advance();
+  EXPECT_EQ(iterator->doc_hit_info().document_id(), document_id);
+
+  // Advance again to trigger an error.
+  iterator->Advance();
+  // Verify that the document id is reset to kInvalidDocumentId and not the last
+  // valid document id.
+  EXPECT_EQ(iterator->doc_hit_info().document_id(), kInvalidDocumentId);
+}
+
 }  // namespace lib
 }  // namespace icing

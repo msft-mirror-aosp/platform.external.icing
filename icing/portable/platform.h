@@ -60,7 +60,8 @@ inline bool IsIcuWithReverseTokenization() {
 
 inline int GetIcuTokenizationVersion() {
   return (IsIcuTokenization() || IsIcuWithReverseTokenization())
-      ? U_ICU_VERSION_MAJOR_NUM : 0;
+             ? U_ICU_VERSION_MAJOR_NUM
+             : 0;
 }
 // Indicates whether stemming is enabled.
 //
@@ -95,7 +96,7 @@ inline bool IsIosPlatform() {
 // TODO(b/259129263): verify the flag works for different platforms.
 #if defined(__arm__) || defined(__i386__)
 #define ICING_ARCH_BIT_32
-#elif defined(__aarch64__) || defined(__x86_64__)
+#elif defined(__aarch64__) || defined(__x86_64__) || defined(__arm64__)
 #define ICING_ARCH_BIT_64
 #else
 #define ICING_ARCH_BIT_UNKNOWN

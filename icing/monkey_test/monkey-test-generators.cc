@@ -37,6 +37,7 @@
 #include "icing/proto/term.pb.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/section.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -389,6 +390,8 @@ void MonkeySchemaGenerator::AddDuplicateType(SchemaProto& schema) {
   SchemaTypeConfigProto new_dupe_type = base_type;
   new_dupe_type.set_schema_type(std::string(kSchemaTypeNamePrefix) +
                                 std::to_string(num_types_generated_++));
+  ICING_LOG(INFO) << "Adding duplicate type: " << new_dupe_type.schema_type()
+                  << "; base type: " << base_type.schema_type();
   int max_property_id = 0;
   for (const PropertyConfigProto& property : new_dupe_type.properties()) {
     max_property_id =

@@ -31,6 +31,7 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/icing-search-engine.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-abstract-leaf-node.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-abstract-query-node.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-semantic-query-node.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-term-query-node.h"
@@ -168,6 +169,12 @@ std::unique_ptr<MonkeySemanticQueryNode> GenerateRandomSemanticNode(
   return query_node;
 }
 
+// Vector of functions that generate a random leaf node. Adding a new leaf node
+// generator to this list will enable the generation of that type of leaf node.
+std::vector<std::function<std::unique_ptr<MonkeyAbstractLeafQueryNode>(
+    MonkeyTestRandomEngine*, MonkeyDocumentGenerator*, SearchSpecProto&)>>
+    leaf_node_generators = {GenerateRandomTermNode, GenerateRandomSemanticNode};
+
 // Generates a random query tree with the given depth.
 // As a part of generating the query tree, the some fields in the
 // SearchSpecProto will also be written and read to (depending on the type of
@@ -181,12 +188,10 @@ GenerateRandomQueryTree(MonkeyTestRandomEngine* random,
   }
   // Generate a random leaf node.
   if (depth == 1) {
-    if (GetRandomBoolean(random)) {
-      return GenerateRandomTermNode(random, document_generator, search_spec);
-    } else {
-      return GenerateRandomSemanticNode(random, document_generator,
-                                        search_spec);
-    }
+    int leaf_node_generator_index =
+        GetRandomInt(random, 0, leaf_node_generators.size() - 1);
+    return leaf_node_generators[leaf_node_generator_index](
+        random, document_generator, search_spec);
   } else {
     // TODO(b/491571627): Handle cases where depth > 1 i.e. we have nodes with
     // children.
@@ -638,8 +643,8 @@ void IcingMonkeyTestRunner::DoSearch() {
 
 void IcingMonkeyTestRunner::DoGetDebugInfo() {
   ICING_LOG(INFO) << "Monkey getting debug info";
-  int verbosity_code = GetRandomInt(
-          &random_, DebugInfoVerbosity::Code_MIN, DebugInfoVerbosity::Code_MAX);
+  int verbosity_code = GetRandomInt(&random_, DebugInfoVerbosity::Code_MIN,
+                                    DebugInfoVerbosity::Code_MAX);
   DebugInfoVerbosity::Code verbosity =
       static_cast<DebugInfoVerbosity::Code>(verbosity_code);
   DebugInfoResultProto get_debug_info_result = icing_->GetDebugInfo(verbosity);
@@ -695,14 +700,10 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   // Randomly choose the number of shards from 1, 2, 4, 8, 16, 32.
   uint32_t num_shards = 1 << GetRandomInt(&random_, /*min=*/0, /*max=*/5);
   icing_options.set_embedding_index_num_shards(num_shards);
-  icing_options.set_enable_schema_type_id_optimization(
-      GetRandomBoolean(&random_));
   icing_options.set_enable_skip_set_schema_type_equality_check(
       GetRandomBoolean(&random_));
-  icing_options.set_enable_embed_query_optimization(GetRandomBoolean(&random_));
   icing_options.set_enable_optimize_improvements(true);
   icing_options.set_enable_manual_persist_to_disk(true);
-  icing_options.set_enable_proto_log_new_header_format(true);
   icing_options.set_enable_repeated_field_joins(true);
   icing_options.set_enable_non_existent_qualified_id_join(true);
   icing_options.set_enable_schema_definition_deduping(true);

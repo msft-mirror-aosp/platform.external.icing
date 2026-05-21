@@ -25,9 +25,12 @@ namespace lib {
 
 namespace {
 
+using ::testing::AllOf;
 using ::testing::ElementsAre;
+using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::Pair;
+using ::testing::Property;
 using ::testing::UnorderedElementsAre;
 
 TEST(DocumentGroupInfoTest, AddDocument) {
@@ -56,7 +59,7 @@ TEST(DocumentGroupInfoTest, AddDocument) {
   document_group_info.AddDocument(
       DocumentMetadata{.schema_type_name = "schema2",
                        .name_space = "namespace1",
-                       .uri = "uri1",
+                       .uri = "uri3",
                        .document_id = 3});
   EXPECT_THAT(
       document_group_info.Get(),
@@ -64,12 +67,12 @@ TEST(DocumentGroupInfoTest, AddDocument) {
                                 ElementsAre(EqualsDocumentUriId("uri1", 1),
                                             EqualsDocumentUriId("uri2", 2))),
                            Pair(EqualsDocumentGroupKey("schema2", "namespace1"),
-                                ElementsAre(EqualsDocumentUriId("uri1", 3)))));
+                                ElementsAre(EqualsDocumentUriId("uri3", 3)))));
 
   document_group_info.AddDocument(
       DocumentMetadata{.schema_type_name = "schema1",
                        .name_space = "namespace2",
-                       .uri = "uri1",
+                       .uri = "uri4",
                        .document_id = 4});
   EXPECT_THAT(
       document_group_info.Get(),
@@ -77,25 +80,85 @@ TEST(DocumentGroupInfoTest, AddDocument) {
                                 ElementsAre(EqualsDocumentUriId("uri1", 1),
                                             EqualsDocumentUriId("uri2", 2))),
                            Pair(EqualsDocumentGroupKey("schema2", "namespace1"),
-                                ElementsAre(EqualsDocumentUriId("uri1", 3))),
+                                ElementsAre(EqualsDocumentUriId("uri3", 3))),
                            Pair(EqualsDocumentGroupKey("schema1", "namespace2"),
-                                ElementsAre(EqualsDocumentUriId("uri1", 4)))));
+                                ElementsAre(EqualsDocumentUriId("uri4", 4)))));
 
   document_group_info.AddDocument(
       DocumentMetadata{.schema_type_name = "schema1",
                        .name_space = "namespace1",
-                       .uri = "uri3",
+                       .uri = "uri5",
                        .document_id = 5});
   EXPECT_THAT(
       document_group_info.Get(),
       UnorderedElementsAre(Pair(EqualsDocumentGroupKey("schema1", "namespace1"),
                                 ElementsAre(EqualsDocumentUriId("uri1", 1),
                                             EqualsDocumentUriId("uri2", 2),
-                                            EqualsDocumentUriId("uri3", 5))),
+                                            EqualsDocumentUriId("uri5", 5))),
                            Pair(EqualsDocumentGroupKey("schema2", "namespace1"),
-                                ElementsAre(EqualsDocumentUriId("uri1", 3))),
+                                ElementsAre(EqualsDocumentUriId("uri3", 3))),
                            Pair(EqualsDocumentGroupKey("schema1", "namespace2"),
-                                ElementsAre(EqualsDocumentUriId("uri1", 4)))));
+                                ElementsAre(EqualsDocumentUriId("uri4", 4)))));
+}
+
+TEST(DocumentGroupInfoTest, AddDocument_sameValueWithDifferentKeys) {
+  // In Icing, document ids are unique within a namespace, so it is impossible
+  // to have multiple documents with the same document id but in different
+  // groups. Still, DocumentGroupInfo doesn't enforce that requirement. This
+  // test is just for verifying that the key of the map is only based on the
+  // schema type name and namespace.
+  DocumentGroupInfo document_group_info;
+  document_group_info.AddDocument(
+      DocumentMetadata{.schema_type_name = "schema1",
+                       .name_space = "namespace1",
+                       .uri = "uri1",
+                       .document_id = 1});
+  EXPECT_THAT(
+      document_group_info.Get(),
+      UnorderedElementsAre(Pair(EqualsDocumentGroupKey("schema1", "namespace1"),
+                                ElementsAre(EqualsDocumentUriId("uri1", 1)))));
+
+  document_group_info.AddDocument(
+      DocumentMetadata{.schema_type_name = "schema1",
+                       .name_space = "namespace2",
+                       .uri = "uri1",
+                       .document_id = 1});
+  EXPECT_THAT(
+      document_group_info.Get(),
+      UnorderedElementsAre(Pair(EqualsDocumentGroupKey("schema1", "namespace1"),
+                                ElementsAre(EqualsDocumentUriId("uri1", 1))),
+                           Pair(EqualsDocumentGroupKey("schema1", "namespace2"),
+                                ElementsAre(EqualsDocumentUriId("uri1", 1)))));
+
+  document_group_info.AddDocument(
+      DocumentMetadata{.schema_type_name = "schema2",
+                       .name_space = "namespace1",
+                       .uri = "uri1",
+                       .document_id = 1});
+  EXPECT_THAT(
+      document_group_info.Get(),
+      UnorderedElementsAre(Pair(EqualsDocumentGroupKey("schema1", "namespace1"),
+                                ElementsAre(EqualsDocumentUriId("uri1", 1))),
+                           Pair(EqualsDocumentGroupKey("schema1", "namespace2"),
+                                ElementsAre(EqualsDocumentUriId("uri1", 1))),
+                           Pair(EqualsDocumentGroupKey("schema2", "namespace1"),
+                                ElementsAre(EqualsDocumentUriId("uri1", 1)))));
+
+  document_group_info.AddDocument(
+      DocumentMetadata{.schema_type_name = "schema2",
+                       .name_space = "namespace2",
+                       .uri = "uri1",
+                       .document_id = 1});
+  EXPECT_THAT(
+      document_group_info.Get(),
+      UnorderedElementsAre(Pair(EqualsDocumentGroupKey("schema1", "namespace1"),
+                                ElementsAre(EqualsDocumentUriId("uri1", 1))),
+                           Pair(EqualsDocumentGroupKey("schema1", "namespace2"),
+                                ElementsAre(EqualsDocumentUriId("uri1", 1))),
+                           Pair(EqualsDocumentGroupKey("schema2", "namespace1"),
+                                ElementsAre(EqualsDocumentUriId("uri1", 1))),
+                           Pair(EqualsDocumentGroupKey("schema2", "namespace2"),
+                                ElementsAre(EqualsDocumentUriId("uri1", 1)))));
 }
 
 TEST(DocumentGroupInfoTest, Merge) {
@@ -372,6 +435,131 @@ TEST(DocumentGroupInfoTest, GetAllDocumentIds) {
 TEST(DocumentGroupInfoTest, GetAllDocumentIds_emptyMap) {
   DocumentGroupInfo document_group_info;
   EXPECT_THAT(document_group_info.GetAllDocumentIds(), IsEmpty());
+}
+
+TEST(DocumentGroupInfoTest, SerializeToProto) {
+  DocumentGroupInfo document_group_info;
+  document_group_info.AddDocument(
+      DocumentMetadata{.schema_type_name = "schema1",
+                       .name_space = "namespace1",
+                       .uri = "uri1",
+                       .document_id = 1});
+  document_group_info.AddDocument(
+      DocumentMetadata{.schema_type_name = "schema1",
+                       .name_space = "namespace1",
+                       .uri = "uri2",
+                       .document_id = 2});
+  document_group_info.AddDocument(
+      DocumentMetadata{.schema_type_name = "schema1",
+                       .name_space = "namespace2",
+                       .uri = "uri3",
+                       .document_id = 3});
+  document_group_info.AddDocument(
+      DocumentMetadata{.schema_type_name = "schema2",
+                       .name_space = "namespace1",
+                       .uri = "uri4",
+                       .document_id = 4});
+  document_group_info.AddDocument(
+      DocumentMetadata{.schema_type_name = "schema2",
+                       .name_space = "namespace1",
+                       .uri = "uri5",
+                       .document_id = 5});
+  document_group_info.AddDocument(
+      DocumentMetadata{.schema_type_name = "schema2",
+                       .name_space = "namespace2",
+                       .uri = "uri6",
+                       .document_id = 6});
+
+  EXPECT_THAT(
+      std::move(document_group_info).SerializeToProto().groups(),
+      UnorderedElementsAre(
+          AllOf(Property(&DocumentGroupInfoProto::GroupEntryProto::schema,
+                         Eq("schema1")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::name_space,
+                         Eq("namespace1")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::uris,
+                         UnorderedElementsAre("uri1", "uri2"))),
+          AllOf(Property(&DocumentGroupInfoProto::GroupEntryProto::schema,
+                         Eq("schema1")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::name_space,
+                         Eq("namespace2")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::uris,
+                         UnorderedElementsAre("uri3"))),
+          AllOf(Property(&DocumentGroupInfoProto::GroupEntryProto::schema,
+                         Eq("schema2")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::name_space,
+                         Eq("namespace1")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::uris,
+                         UnorderedElementsAre("uri4", "uri5"))),
+          AllOf(Property(&DocumentGroupInfoProto::GroupEntryProto::schema,
+                         Eq("schema2")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::name_space,
+                         Eq("namespace2")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::uris,
+                         UnorderedElementsAre("uri6")))));
+}
+
+TEST(DocumentGroupInfoTest, SerializeToProto_sameValueWithDifferentKeys) {
+  // In Icing, document ids are unique within a namespace, so it is impossible
+  // to have multiple documents with the same document id but in different
+  // groups. Still, DocumentGroupInfo doesn't enforce that requirement. This
+  // test is just for verifying that the key of the map is only based on the
+  // schema type name and namespace.
+  DocumentGroupInfo document_group_info;
+  document_group_info.AddDocument(
+      DocumentMetadata{.schema_type_name = "schema1",
+                       .name_space = "namespace1",
+                       .uri = "uri1",
+                       .document_id = 1});
+  document_group_info.AddDocument(
+      DocumentMetadata{.schema_type_name = "schema1",
+                       .name_space = "namespace2",
+                       .uri = "uri1",
+                       .document_id = 1});
+  document_group_info.AddDocument(
+      DocumentMetadata{.schema_type_name = "schema2",
+                       .name_space = "namespace1",
+                       .uri = "uri1",
+                       .document_id = 1});
+  document_group_info.AddDocument(
+      DocumentMetadata{.schema_type_name = "schema2",
+                       .name_space = "namespace2",
+                       .uri = "uri1",
+                       .document_id = 1});
+
+  EXPECT_THAT(
+      std::move(document_group_info).SerializeToProto().groups(),
+      UnorderedElementsAre(
+          AllOf(Property(&DocumentGroupInfoProto::GroupEntryProto::schema,
+                         Eq("schema1")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::name_space,
+                         Eq("namespace1")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::uris,
+                         UnorderedElementsAre("uri1"))),
+          AllOf(Property(&DocumentGroupInfoProto::GroupEntryProto::schema,
+                         Eq("schema1")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::name_space,
+                         Eq("namespace2")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::uris,
+                         UnorderedElementsAre("uri1"))),
+          AllOf(Property(&DocumentGroupInfoProto::GroupEntryProto::schema,
+                         Eq("schema2")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::name_space,
+                         Eq("namespace1")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::uris,
+                         UnorderedElementsAre("uri1"))),
+          AllOf(Property(&DocumentGroupInfoProto::GroupEntryProto::schema,
+                         Eq("schema2")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::name_space,
+                         Eq("namespace2")),
+                Property(&DocumentGroupInfoProto::GroupEntryProto::uris,
+                         UnorderedElementsAre("uri1")))));
+}
+
+TEST(DocumentGroupInfoTest, SerializeToProto_emptyMap) {
+  DocumentGroupInfo document_group_info;
+  EXPECT_THAT(std::move(document_group_info).SerializeToProto().groups(),
+              IsEmpty());
 }
 
 }  // namespace

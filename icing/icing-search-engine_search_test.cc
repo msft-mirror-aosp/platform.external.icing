@@ -12753,6 +12753,130 @@ TEST_F(IcingSearchEngineSearchTest,
   EXPECT_THAT(results.results(0).document(), EqualsProto(document));
 }
 
+// Demonstrates that `semanticSearch() AND ...` works correctly even though
+// sectionless iterators (e.g. hasProperty, propertyDefined, uri filter) return
+// hits with an empty section mask.
+TEST_F(IcingSearchEngineSearchTest,
+       SemanticSearchAndSectionlessIteratorsWorks) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Item")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("tag")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("marker")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emb")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("ns", "doc1")
+          .SetSchema("Item")
+          .SetCreationTimestampMs(1000)
+          .AddStringProperty("tag", "hello")
+          .AddStringProperty("marker", "present")
+          .AddVectorProperty("emb", CreateVector("model", {1.0, 0.0, 0.0}))
+          .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_build_property_existence_metadata_hits(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  PropertyProto::VectorProto query_embedding =
+      CreateVector("model", {0.9, 0.1, 0.0});
+
+  ResultSpecProto result_spec;
+  result_spec.set_num_per_page(10);
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  auto create_search_spec = [&](std::string_view query) {
+    SearchSpecProto search_spec;
+    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+    search_spec.set_embedding_query_metric_type(
+        SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+    search_spec.add_enabled_features(
+        std::string(kListFilterQueryLanguageFeature));
+    search_spec.add_enabled_features(std::string(kHasPropertyFunctionFeature));
+    *search_spec.add_embedding_query_vectors() = query_embedding;
+    search_spec.set_query(std::string(query));
+    search_spec.add_schema_type_filters("Item");
+    return search_spec;
+  };
+
+  auto verify_query = [&](const SearchSpecProto& search_spec) {
+    SearchResultProto results =
+        icing.Search(search_spec, scoring_spec, result_spec);
+    EXPECT_THAT(results.status(), ProtoIsOk());
+    EXPECT_THAT(results.results(), SizeIs(1));
+    EXPECT_THAT(results.results(0).document(), EqualsProto(document));
+  };
+
+  // 1. Verify semanticSearch alone returns the document.
+  verify_query(create_search_spec("semanticSearch(getEmbeddingParameter(0))"));
+
+  // 2. Verify sectionless iterators alone return the document.
+  {
+    verify_query(create_search_spec("hasProperty(\"marker\")"));
+
+    verify_query(create_search_spec("propertyDefined(\"marker\")"));
+
+    SearchSpecProto spec = create_search_spec("");
+    NamespaceDocumentUriGroup* uris = spec.add_document_uri_filters();
+    uris->set_namespace_("ns");
+    uris->add_document_uris("doc1");
+    verify_query(spec);
+  }
+
+  // 3. Verify semanticSearch AND term returns the document.
+  verify_query(
+      create_search_spec("semanticSearch(getEmbeddingParameter(0)) AND hello"));
+
+  // 4. Verify semanticSearch AND sectionless iterators return the document.
+  {
+    // semanticSearch AND hasProperty
+    verify_query(
+        create_search_spec("semanticSearch(getEmbeddingParameter(0)) "
+                           "AND hasProperty(\"marker\")"));
+
+    // hasProperty AND semanticSearch
+    verify_query(
+        create_search_spec("hasProperty(\"marker\") AND "
+                           "semanticSearch(getEmbeddingParameter(0))"));
+
+    // semanticSearch AND propertyDefined
+    verify_query(
+        create_search_spec("semanticSearch(getEmbeddingParameter(0)) "
+                           "AND propertyDefined(\"marker\")"));
+
+    // propertyDefined AND semanticSearch
+    verify_query(
+        create_search_spec("propertyDefined(\"marker\") AND "
+                           "semanticSearch(getEmbeddingParameter(0))"));
+
+    // semanticSearch with uri filters
+    SearchSpecProto spec =
+        create_search_spec("semanticSearch(getEmbeddingParameter(0))");
+    NamespaceDocumentUriGroup* uris = spec.add_document_uri_filters();
+    uris->set_namespace_("ns");
+    uris->add_document_uris("doc1");
+    verify_query(spec);
+  }
+}
+
 }  // namespace
 }  // namespace lib
 }  // namespace icing
