@@ -25,9 +25,6 @@ class FeatureFlags {
   explicit FeatureFlags(bool allow_circular_schema_definitions,
                         bool enable_repeated_field_joins,
                         bool enable_embedding_backup_generation,
-                        bool enable_proto_log_new_header_format,
-                        bool enable_reusable_decompression_buffer,
-                        bool enable_schema_type_id_optimization,
                         bool enable_optimize_improvements,
                         int64_t expired_document_purge_threshold_ms,
                         bool enable_non_existent_qualified_id_join,
@@ -37,10 +34,6 @@ class FeatureFlags {
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_repeated_field_joins_(enable_repeated_field_joins),
         enable_embedding_backup_generation_(enable_embedding_backup_generation),
-        enable_proto_log_new_header_format_(enable_proto_log_new_header_format),
-        enable_reusable_decompression_buffer_(
-            enable_reusable_decompression_buffer),
-        enable_schema_type_id_optimization_(enable_schema_type_id_optimization),
         enable_optimize_improvements_(enable_optimize_improvements),
         expired_document_purge_threshold_ms_(
             expired_document_purge_threshold_ms),
@@ -63,18 +56,6 @@ class FeatureFlags {
     return enable_embedding_backup_generation_;
   }
 
-  bool enable_proto_log_new_header_format() const {
-    return enable_proto_log_new_header_format_;
-  }
-
-  bool enable_reusable_decompression_buffer() const {
-    return enable_reusable_decompression_buffer_;
-  }
-
-  bool enable_schema_type_id_optimization() const {
-    return enable_schema_type_id_optimization_;
-  }
-
   bool enable_optimize_improvements() const {
     return enable_optimize_improvements_;
   }
@@ -91,7 +72,6 @@ class FeatureFlags {
     return enable_skip_set_schema_type_equality_check_;
   }
 
-
   bool enable_schema_definition_deduping() const {
     return enable_schema_definition_deduping_;
   }
@@ -105,26 +85,15 @@ class FeatureFlags {
   // added in the Android U timeline and is not a trunk-stable flag.
   bool allow_circular_schema_definitions_;
 
-
   bool enable_repeated_field_joins_;
 
   // Controls code that runs in backup schema producer to remove embedding
   // properties.
   bool enable_embedding_backup_generation_;
 
-
-
-
   // Whether to enable the new header format (refactor legacy format and
   // introduce unsynced tail checksum) related changes in
   // PortableFileBackedProtoLog.
-  bool enable_proto_log_new_header_format_;
-
-  // Whether PortableFileBackedProtoLog should retain a decompression buffer
-  // that reads can reuse rather than allocating a new one for each read.
-  bool enable_reusable_decompression_buffer_;
-
-  bool enable_schema_type_id_optimization_;
 
   // Whether to enable a few minor improvements to Optimize:
   // 1. Avoid unnecessary Status allocs for deleted/expired docs
@@ -162,7 +131,6 @@ class FeatureFlags {
   // - Therefore, the Icing-side equality check in SetSchema is redundant and
   //   can be skipped if caller is AppSearch.
   bool enable_skip_set_schema_type_equality_check_;
-
 
   // Whether to enable deduping for the schema's type definitions.
   bool enable_schema_definition_deduping_;
