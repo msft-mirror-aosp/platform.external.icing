@@ -176,7 +176,12 @@ libtextclassifier3::Status LiteIndex::Initialize() {
       goto error;
     }
 
-    UpdateChecksumInternal();
+    auto status_or = UpdateChecksumInternal();
+    if (!status_or.ok()) {
+      status = status_or.status();
+      goto error;
+    }
+
   } else {
     header_mmap_.Remap(hit_buffer_fd_.get(), kHeaderFileOffset, header_size());
     header_ = std::make_unique<LiteIndex_HeaderImpl>(
@@ -200,7 +205,7 @@ libtextclassifier3::Status LiteIndex::Initialize() {
       goto error;
     }
     Crc32 expected_crc(header_->lite_index_crc());
-    Crc32 crc = GetChecksumInternal();
+    ICING_ASSIGN_OR_RETURN(Crc32 crc, GetChecksumInternal());
     if (crc != expected_crc) {
       status = absl_ports::DataLossError(IcingStringUtil::StringPrintf(
           "Lite index crc check failed: %u vs %u", crc.Get(),
@@ -235,7 +240,7 @@ libtextclassifier3::Status LiteIndex::Reset() {
   ICING_RETURN_IF_ERROR(lexicon_.Clear());
   hit_buffer_.Clear();
   header_->Reset();
-  UpdateChecksumInternal();
+  ICING_RETURN_IF_ERROR(UpdateChecksumInternal());
 
   ICING_VLOG(2) << "Lite index clear in " << timer.Elapsed() * 1000 << "ms";
   return libtextclassifier3::Status::OK;
@@ -254,25 +259,26 @@ libtextclassifier3::Status LiteIndex::PersistToDisk() {
   absl_ports::unique_lock l(&mutex_);
   ICING_RETURN_IF_ERROR(lexicon_.Sync());
   hit_buffer_.Sync();
-  UpdateChecksumInternal();
+  ICING_RETURN_IF_ERROR(UpdateChecksumInternal());
   header_mmap_.Sync();
 
   return libtextclassifier3::Status::OK;
 }
 
-Crc32 LiteIndex::UpdateChecksum() {
+libtextclassifier3::StatusOr<Crc32> LiteIndex::UpdateChecksum() {
   absl_ports::unique_lock l(&mutex_);
   return UpdateChecksumInternal();
 }
 
-Crc32 LiteIndex::UpdateChecksumInternal() {
+libtextclassifier3::StatusOr<Crc32> LiteIndex::UpdateChecksumInternal() {
   IcingTimer timer;
 
   // Update crcs.
   uint32_t dependent_crcs[2];
   hit_buffer_.UpdateCrc();
   dependent_crcs[0] = hit_buffer_crc_;
-  dependent_crcs[1] = lexicon_.UpdateCrc().Get();
+  ICING_ASSIGN_OR_RETURN(Crc32 lexicon_crc, lexicon_.UpdateCrc());
+  dependent_crcs[1] = lexicon_crc.Get();
 
   // Update the header. The header is mmapped. So we don't need to explicitly
   // write it.
@@ -285,17 +291,18 @@ Crc32 LiteIndex::UpdateChecksumInternal() {
   return all_crc;
 }
 
-Crc32 LiteIndex::GetChecksum() const {
+libtextclassifier3::StatusOr<Crc32> LiteIndex::GetChecksum() const {
   absl_ports::unique_lock l(&mutex_);
   return GetChecksumInternal();
 }
 
-Crc32 LiteIndex::GetChecksumInternal() const {
+libtextclassifier3::StatusOr<Crc32> LiteIndex::GetChecksumInternal() const {
   IcingTimer timer;
 
   uint32_t dependent_crcs[2];
   dependent_crcs[0] = hit_buffer_.GetCrc().Get();
-  dependent_crcs[1] = lexicon_.GetCrc().Get();
+  ICING_ASSIGN_OR_RETURN(Crc32 lexicon_crc, lexicon_.GetCrc());
+  dependent_crcs[1] = lexicon_crc.Get();
 
   Crc32 all_crc(header_->GetHeaderCrc());
   all_crc.Append(std::string_view(reinterpret_cast<const char*>(dependent_crcs),
@@ -571,18 +578,26 @@ std::string LiteIndex::GetDebugInfo(DebugInfoVerbosity::Code verbosity) const {
   std::string res;
   std::string lexicon_info;
   lexicon_.GetDebugInfo(verbosity, &lexicon_info);
-  IcingStringUtil::SStringAppendF(
-      &res, 0,
-      "curr_size: %u\n"
-      "hit_buffer_size: %u\n"
-      "last_added_document_id %u\n"
-      "searchable_end: %u\n"
-      "index_crc: %u\n"
-      "\n"
-      "lite_lexicon_info:\n%s\n",
-      header_->cur_size(), options_.hit_buffer_size,
-      header_->last_added_docid(), header_->searchable_end(),
-      GetChecksumInternal().Get(), lexicon_info.c_str());
+  libtextclassifier3::StatusOr<Crc32> crc_or = GetChecksumInternal();
+  uint32_t index_crc = 0;
+  if (crc_or.ok()) {
+    index_crc = crc_or.ValueOrDie().Get();
+  } else {
+    ICING_LOG(ERROR) << "Failed to get checksum in GetDebugInfo: "
+                     << crc_or.status().error_message();
+  }
+  IcingStringUtil::SStringAppendF(&res, 0,
+                                  "curr_size: %u\n"
+                                  "hit_buffer_size: %u\n"
+                                  "last_added_document_id %u\n"
+                                  "searchable_end: %u\n"
+                                  "index_crc: %u\n"
+                                  "\n"
+                                  "lite_lexicon_info:\n%s\n",
+                                  header_->cur_size(), options_.hit_buffer_size,
+                                  header_->last_added_docid(),
+                                  header_->searchable_end(), index_crc,
+                                  lexicon_info.c_str());
   return res;
 }
 
@@ -654,7 +669,7 @@ libtextclassifier3::Status LiteIndex::SortHitsImpl() {
   header_->set_searchable_end(header_->cur_size());
 
   // Update crc in-line.
-  UpdateChecksumInternal();
+  ICING_RETURN_IF_ERROR(UpdateChecksumInternal());
   return libtextclassifier3::Status::OK;
 }
 
