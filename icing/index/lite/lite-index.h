@@ -343,11 +343,13 @@ class LiteIndex {
 
   // Updates the checksums of all index components, updates the combined
   // checksum and returns it.
-  Crc32 UpdateChecksum() ICING_LOCKS_EXCLUDED(mutex_);
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum()
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Calculates the checksum of the index components and returns the combined
   // checksum.
-  Crc32 GetChecksum() const ICING_LOCKS_EXCLUDED(mutex_);
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const
+      ICING_LOCKS_EXCLUDED(mutex_);
 
  private:
   static IcingDynamicTrie::RuntimeOptions MakeTrieRuntimeOptions();
@@ -382,11 +384,13 @@ class LiteIndex {
 
   // Calculate the checksum of all sub-components of the LiteIndex and set it in
   // the header.
-  Crc32 UpdateChecksumInternal() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksumInternal()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Calculates the checksum of all sub-components of the LiteIndex. Does NOT
   // update the header.
-  Crc32 GetChecksumInternal() const ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  libtextclassifier3::StatusOr<Crc32> GetChecksumInternal() const
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Non-locking implementation for UpdateTermProperties.
   libtextclassifier3::Status UpdateTermPropertiesImpl(uint32_t tvi,

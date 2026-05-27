@@ -15,6 +15,7 @@
 #include "icing/index/embedding-indexing-handler.h"
 
 #include <memory>
+#include <string>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -22,9 +23,11 @@
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/hit/hit.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/platform.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/util/clock.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 #include "icing/util/tokenized-document.h"
 
@@ -65,14 +68,51 @@ libtextclassifier3::Status EmbeddingIndexingHandler::Handle(
   }
   embedding_index_.set_last_added_document_id(document_id);
 
+  const std::string& schema_name =
+      tokenized_document.document_wrapper().document().schema();
   for (const Section<PropertyProto::VectorProto>& vector_section :
        tokenized_document.vector_sections()) {
     BasicHit hit(/*section_id=*/vector_section.metadata.id, document_id);
+    EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+        embedding_indexing_type =
+            vector_section.metadata.embedding_indexing_type;
+    EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
+        vector_section.metadata.quantization_type;
     for (const PropertyProto::VectorProto& vector : vector_section.content) {
-      ICING_RETURN_IF_ERROR(embedding_index_.BufferEmbedding(
-          hit, vector, vector_section.metadata.quantization_type,
-          /*schema_name=*/
-          tokenized_document.document_wrapper().document().schema()));
+      // If quantization is not enabled and the vector has quantized values,
+      // we simply skip indexing it and log a warning to avoid indexing
+      // invalid data, but without failing the whole document ingestion.
+      if (!vector.quantized_values().empty() &&
+          vector_section.metadata.quantization_type !=
+              EmbeddingIndexingConfig::QuantizationType::QUANTIZE_8_BIT) {
+        // The monkey test may intentionally trigger this case, causing
+        // excessive logs. We suppress this warning in test environments to
+        // reduce noise.
+        if (!IsTestEnvironment()) {
+          ICING_LOG(WARNING)
+              << "Property '" << vector_section.metadata.path
+              << "' has 'quantized_values' set but schema quantization_type is "
+                 "not QUANTIZE_8_BIT for key: ("
+              << tokenized_document.document_wrapper().document().namespace_()
+              << ", " << tokenized_document.document_wrapper().document().uri()
+              << ").";
+        }
+        continue;
+      }
+      if (embedding_indexing_type ==
+          EmbeddingIndexingConfig::EmbeddingIndexingType::LINEAR_SEARCH) {
+        ICING_RETURN_IF_ERROR(embedding_index_.BufferEmbedding(
+            hit, vector, quantization_type, schema_name));
+      } else if (embedding_indexing_type ==
+                 EmbeddingIndexingConfig::EmbeddingIndexingType::
+                     APPROXIMATE_NEAREST_NEIGHBOR) {
+        ICING_RETURN_IF_ERROR(embedding_index_.BufferEmbeddingIvf(
+            hit, vector, quantization_type, schema_name));
+      } else {
+        return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
+            "Unsupported embedding indexing type: %d",
+            embedding_indexing_type));
+      }
     }
   }
   ICING_RETURN_IF_ERROR(embedding_index_.CommitBufferToIndex());

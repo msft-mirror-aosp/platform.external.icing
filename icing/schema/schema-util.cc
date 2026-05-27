@@ -103,6 +103,7 @@ bool AreEmbeddingIndexingConfigsEqual(
 bool ArePropertiesEqual(const PropertyConfigProto& old_property,
                         const PropertyConfigProto& new_property) {
   return old_property.property_name() == new_property.property_name() &&
+         old_property.description() == new_property.description() &&
          old_property.data_type() == new_property.data_type() &&
          old_property.schema_type() == new_property.schema_type() &&
          old_property.cardinality() == new_property.cardinality() &&
