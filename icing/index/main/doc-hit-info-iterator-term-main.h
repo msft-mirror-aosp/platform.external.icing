@@ -81,7 +81,8 @@ class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
         /*num_leaf_advance_calls_main_index_in=*/num_advance_calls_,
         /*num_leaf_advance_calls_integer_index_in=*/0,
         /*num_leaf_advance_calls_no_index_in=*/0,
-        /*num_blocks_inspected_in=*/num_blocks_inspected_);
+        /*num_blocks_inspected_in=*/num_blocks_inspected_,
+        /*embedding_stats_in=*/{});
   }
 
   void PopulateMatchedTermsStats(
@@ -150,13 +151,15 @@ class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
 
  private:
   // Remaining number of hits including the current hit.
-  // Returns -1 if cached_doc_hit_infos_idx_ is invalid.
+  // Returns 0 if cached_doc_hit_infos_idx_ is invalid indicating that there are
+  // no hits in cached_doc_hit_infos_.
   int cached_doc_hit_info_count() const {
     if (cached_doc_hit_infos_idx_ == -1 ||
         cached_doc_hit_infos_idx_ >= cached_doc_hit_infos_.size()) {
-      return -1;
+      return 0;
     }
-    return cached_doc_hit_infos_.size() - cached_doc_hit_infos_idx_;
+    return static_cast<int>(cached_doc_hit_infos_.size()) -
+           cached_doc_hit_infos_idx_;
   }
 };
 
