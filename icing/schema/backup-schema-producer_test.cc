@@ -29,6 +29,7 @@
 #include "icing/store/document-filter-data.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 
 namespace icing {
@@ -1253,26 +1254,12 @@ TEST_P(BackupSchemaProducerTest, RedefineDedupedTypesWithEmbeddingProperty) {
 
 INSTANTIATE_TEST_SUITE_P(
     BackupSchemaProducerTest, BackupSchemaProducerTest,
-    testing::Values(FeatureFlags(
-                        /*allow_circular_schema_definitions=*/true,
-                        /*enable_repeated_field_joins=*/true,
-                        /*enable_embedding_backup_generation=*/false,
-                        /*enable_optimize_improvements=*/true,
-                        /*expired_document_purge_threshold_ms=*/0,
-                        /*enable_non_existent_qualified_id_join=*/true,
-                        /*enable_skip_set_schema_type_equality_check=*/true,
-                        /*enable_schema_definition_deduping=*/true,
-                        /*enable_delete_propagation_from=*/true),
-                    FeatureFlags(
-                        /*allow_circular_schema_definitions=*/true,
-                        /*enable_repeated_field_joins=*/true,
-                        /*enable_embedding_backup_generation=*/true,
-                        /*enable_optimize_improvements=*/true,
-                        /*expired_document_purge_threshold_ms=*/0,
-                        /*enable_non_existent_qualified_id_join=*/true,
-                        /*enable_skip_set_schema_type_equality_check=*/true,
-                        /*enable_schema_definition_deduping=*/true,
-                        /*enable_delete_propagation_from=*/true)));
+    testing::Values(FeatureFlagsBuilder(GetTestFeatureFlags())
+                        .set_enable_embedding_backup_generation(false)
+                        .Build(),
+                    FeatureFlagsBuilder(GetTestFeatureFlags())
+                        .set_enable_embedding_backup_generation(true)
+                        .Build()));
 
 }  // namespace
 

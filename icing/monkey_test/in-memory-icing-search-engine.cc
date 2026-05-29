@@ -103,14 +103,18 @@ InMemoryIcingSearchEngine::GetPropertyIndexInfo(
     }
 
     if (prop->data_type() == PropertyConfigProto::DataType::VECTOR) {
-      bool indexable =
-          prop->embedding_indexing_config().embedding_indexing_type() !=
-          EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN;
+      EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+          embedding_indexing_type =
+              prop->embedding_indexing_config().embedding_indexing_type();
+      bool indexable = embedding_indexing_type !=
+                       EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN;
       EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
           prop->embedding_indexing_config().quantization_type();
-      return PropertyIndexInfo{.data_type = prop->data_type(),
-                               .quantization_type = quantization_type,
-                               .indexable = indexable};
+      return PropertyIndexInfo{
+          .data_type = prop->data_type(),
+          .quantization_type = quantization_type,
+          .embedding_indexing_type = embedding_indexing_type,
+          .indexable = indexable};
     }
 
     if (prop->data_type() == PropertyConfigProto::DataType::INT64) {
