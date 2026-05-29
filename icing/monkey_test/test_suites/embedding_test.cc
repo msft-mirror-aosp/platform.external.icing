@@ -1,4 +1,4 @@
-// Copyright (C) 2022 Google LLC
+// Copyright (C) 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@
 namespace icing {
 namespace lib {
 
-void TestGeneralApis(uint32_t seed) {
+void TestEmbeddingApis(uint32_t seed) {
   IcingMonkeyTestRunnerConfiguration config(
       /*seed=*/seed,
       /*num_types=*/30,
@@ -34,31 +34,27 @@ void TestGeneralApis(uint32_t seed) {
       /*num_uris=*/1000,
       /*index_merge_size=*/1024 * 512,
       /*initialize_by_existing_data=*/false);
-  config.possible_num_tokens = {0, 1, 4, 16, 64, 256};
-  config.possible_num_vectors = {0, 1, 4, 8};
+  // Use less term tokens, since the test is embedding focused.
+  config.possible_num_tokens = {0, 1};
+  config.possible_num_vectors = {0, 1, 4, 8, 16, 32};
   config.possible_vector_dimensions = {8, 16, 128, 512, 768};
+  config.possible_num_shards = {1, 16, 32, 64};
   config.monkey_api_schedules = {
       {&IcingMonkeyTestRunner::DoPut, 500},
-      {&IcingMonkeyTestRunner::DoSearch, 200},
-      {&IcingMonkeyTestRunner::DoGet, 50},
-      {&IcingMonkeyTestRunner::DoGetAllNamespaces, 50},
-      {&IcingMonkeyTestRunner::DoDelete, 50},
-      {&IcingMonkeyTestRunner::DoDeleteByNamespace, 50},
-      {&IcingMonkeyTestRunner::DoDeleteBySchemaType, 40},
-      {&IcingMonkeyTestRunner::DoDeleteByQuery, 20},
-      {&IcingMonkeyTestRunner::DoMaintainAnnIndex, 5},
-      {&IcingMonkeyTestRunner::DoOptimize, 4},
-      {&IcingMonkeyTestRunner::DoUpdateSchema, 4},
-      {&IcingMonkeyTestRunner::DoPersistToDisk, 4},
-      {&IcingMonkeyTestRunner::DoGetDebugInfo, 3},
-      {&IcingMonkeyTestRunner::ReloadFromDisk, 20}};
+      {&IcingMonkeyTestRunner::DoSearch, 300},
+      {&IcingMonkeyTestRunner::DoDelete, 150},
+      {&IcingMonkeyTestRunner::DoMaintainAnnIndex, 30},
+      {&IcingMonkeyTestRunner::DoOptimize, 5},
+      {&IcingMonkeyTestRunner::DoUpdateSchema, 5},
+      {&IcingMonkeyTestRunner::DoPersistToDisk, 5},
+      {&IcingMonkeyTestRunner::ReloadFromDisk, 5}};
   uint32_t num_iterations = IsAndroidArm() ? 1000 : 5000;
   IcingMonkeyTestRunner runner(std::move(config));
   ASSERT_NO_FATAL_FAILURE(runner.Initialize());
   ASSERT_NO_FATAL_FAILURE(runner.Run(num_iterations));
 }
 
-FUZZ_TEST(IcingSearchEngineMonkeyTest, TestGeneralApis);
+FUZZ_TEST(IcingSearchEngineMonkeyTest, TestEmbeddingApis);
 
 // To run the monkey test many times locally, do not rely on the fuzz test,
 // since it would generate similar seeds multiple times. Instead, use this
@@ -66,10 +62,10 @@ FUZZ_TEST(IcingSearchEngineMonkeyTest, TestGeneralApis);
 // blaze test -c opt --runs_per_test=1000 \
 //   --test_filter=*LocalMonkeyTest* \
 //   --test_arg=--gunit_also_run_disabled_tests \
-//   //icing/monkey_test/test_suites:general-apis_test
+//   //icing/monkey_test/test_suites:embedding_test
 TEST(DISABLED_IcingSearchEngineMonkeyTest, LocalMonkeyTest) {
   uint32_t seed = std::random_device()();  // NOLINT
-  ASSERT_NO_FATAL_FAILURE(TestGeneralApis(seed));
+  ASSERT_NO_FATAL_FAILURE(TestEmbeddingApis(seed));
 }
 
 }  // namespace lib
