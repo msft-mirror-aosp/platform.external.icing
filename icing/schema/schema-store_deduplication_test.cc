@@ -2174,9 +2174,17 @@ TEST_P(SchemaStoreDeduplicationTest,
                            .SetName("score")
                            .SetDataType(TYPE_DOUBLE)
                            .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("account")
+                           .SetDataType(TYPE_STRING)
+                           .SetCardinality(CARDINALITY_REPEATED))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("account1")
+                           .SetDataType(TYPE_STRING)
+                           .SetCardinality(CARDINALITY_REPEATED))
           .SetDatabase("db1/")
           .SetDescription("email_description")
-          .AddAccountProperty("account1")
+          .AddAccountProperty("account")
           .Build();
   SchemaTypeConfigProto db2_message = SchemaTypeConfigBuilder(db1_message)
                                           .SetType("db2/message")
@@ -2241,7 +2249,7 @@ TEST_P(SchemaStoreDeduplicationTest,
   SchemaTypeConfigProto db1_email_new =
       SchemaTypeConfigBuilder(db1_email)
           .SetDescription("email_description_new")
-          .AddAccountProperty("account2")
+          .AddAccountProperty("account1")
           .Build();
   db1_schema =
       SchemaBuilder().AddType(db1_message_new).AddType(db1_email_new).Build();
@@ -2253,7 +2261,7 @@ TEST_P(SchemaStoreDeduplicationTest,
   SchemaTypeConfigProto db2_email_new =
       SchemaTypeConfigBuilder(db2_email)
           .SetDescription("db2_email_description_new")
-          .AddAccountProperty("account3")
+          .AddAccountProperty("account1")
           .Build();
   db2_schema =
       SchemaBuilder().AddType(db2_message_new).AddType(db2_email_new).Build();
@@ -2278,6 +2286,8 @@ TEST_P(SchemaStoreDeduplicationTest,
         actual_result, schema_store->SetSchema(CreateSetSchemaRequestProto(
                            db2_schema, /*database=*/"db2/",
                            /*ignore_errors_and_delete_documents=*/true)));
+    expected_result.schema_types_incompatible_by_id.insert(3);
+    expected_result.schema_types_incompatible_by_name.insert("db2/email");
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
     EXPECT_GT(actual_result.schema_proto_byte_size, 0);
@@ -2287,6 +2297,10 @@ TEST_P(SchemaStoreDeduplicationTest,
         schema_store->SetSchema(CreateSetSchemaRequestProto(
             full_schema_new, /*database=*/"",
             /*ignore_errors_and_delete_documents=*/true)));
+    expected_result.schema_types_incompatible_by_id.insert(1);
+    expected_result.schema_types_incompatible_by_id.insert(3);
+    expected_result.schema_types_incompatible_by_name.insert("db1/email");
+    expected_result.schema_types_incompatible_by_name.insert("db2/email");
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
     EXPECT_GT(actual_result.schema_proto_byte_size, 0);

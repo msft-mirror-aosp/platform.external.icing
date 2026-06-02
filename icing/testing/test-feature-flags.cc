@@ -30,6 +30,7 @@ FeatureFlags GetTestFeatureFlags() {
       .set_enable_skip_set_schema_type_equality_check(true)
       .set_enable_schema_definition_deduping(true)
       .set_enable_delete_propagation_from(true)
+      .set_enable_account_property_incompatibility_check(true)
       .Build();
 }
 
