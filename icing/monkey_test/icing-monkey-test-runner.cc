@@ -31,6 +31,7 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/icing-search-engine.h"
+#include "icing/join/join-processor.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-abstract-leaf-node.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-abstract-query-node.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-numeric-query-node.h"
@@ -357,18 +358,22 @@ TypePropertyMask GenerateTypePropertyMask(
 }
 
 ResultSpecProto GenerateRandomResultSpecProto(MonkeyTestRandomEngine* random,
-                                              const SchemaProto* schema) {
+                                              const SchemaProto* schema,
+                                              bool is_nested) {
+  // TODO(b/491577935): support nested snippet and projection.
   std::uniform_int_distribution<> dist(0, 4);
   ResultSpecProto result_spec;
   // 1/5 chance of getting one of 1, 4, 16, 64, 256
   int num_per_page = 1 << (2 * dist(*random));
   result_spec.set_num_per_page(num_per_page);
   result_spec.set_num_to_score(std::numeric_limits<int32_t>::max());
-  *result_spec.mutable_snippet_spec() =
-      GenerateRandomSnippetSpecProto(random, result_spec);
+  if (!is_nested) {
+    *result_spec.mutable_snippet_spec() =
+        GenerateRandomSnippetSpecProto(random, result_spec);
+  }
 
   // 1/5 chance of enabling projection.
-  if (dist(*random) == 0) {
+  if (!is_nested && dist(*random) == 0) {
     for (const SchemaTypeConfigProto& type_config : schema->types()) {
       // 25% chance of adding the current type to the projection.
       std::uniform_int_distribution<> dist(0, 3);
@@ -378,17 +383,117 @@ ResultSpecProto GenerateRandomResultSpecProto(MonkeyTestRandomEngine* random,
       }
     }
   }
+  result_spec.set_max_joined_children_per_parent_to_return(
+      std::numeric_limits<int>::max());
   return result_spec;
 }
 
-void SortDocuments(std::vector<DocumentProto>& documents) {
-  std::sort(documents.begin(), documents.end(),
-            [](const DocumentProto& doc1, const DocumentProto& doc2) {
+// A pair of JoinSpecProto and InMemoryIcingSearchEngine::JoinQuerySpec that
+// should be equivalent.
+struct MonkeyJoinSpecPair {
+  JoinSpecProto join_spec;
+  InMemoryIcingSearchEngine::JoinQuerySpec join_query_spec;
+};
+libtextclassifier3::StatusOr<MonkeyJoinSpecPair>
+GenerateRnadomMonkeyJoinSpecPair(
+    MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
+    InMemoryIcingSearchEngine* in_memory_icing,
+    const std::vector<std::string>& candidate_join_properties) {
+  // 1.1: Generate a random MonkeyQueryPair for the child query.
+  ICING_ASSIGN_OR_RETURN(
+      MonkeyQueryPair child_query_pair,
+      GenerateRandomMonkeyQueryPair(random, document_generator));
+
+  // 1.2: Parent join property expression: currently it is always the qualified
+  //      id expression.
+  std::string parent_join_prop_expr(JoinProcessor::kQualifiedIdExpr);
+
+  // 1.3: Child join property expression: randomly pick a join property.
+  std::string child_join_prop_expr = "NonExistentJoinProperty";
+  if (!candidate_join_properties.empty()) {
+    std::uniform_int_distribution<> dist(
+        0, static_cast<int>(candidate_join_properties.size()) - 1);
+    child_join_prop_expr = candidate_join_properties[dist(*random)];
+  }
+
+  // 2. Convert to JoinSpecProto.
+  JoinSpecProto join_spec;
+  *join_spec.mutable_nested_spec()->mutable_search_spec() = std::move(
+      child_query_pair.search_spec);  // Nested search spec is moved from the
+                                      // child query pair's search spec.
+  *join_spec.mutable_nested_spec()->mutable_scoring_spec() =
+      GenerateRandomScoringSpec(random);
+  *join_spec.mutable_nested_spec()->mutable_result_spec() =
+      GenerateRandomResultSpecProto(random, in_memory_icing->GetSchema(),
+                                    /*is_nested=*/true);
+  join_spec.set_parent_property_expression(parent_join_prop_expr);
+  join_spec.set_child_property_expression(child_join_prop_expr);
+
+  // 3. Convert to InMemoryIcingSearchEngine::JoinQuerySpec.
+  InMemoryIcingSearchEngine::JoinQuerySpec join_query_spec = {
+      .prev_join_prop_expr = std::move(parent_join_prop_expr),
+      .curr_join_prop_expr = std::move(child_join_prop_expr),
+      .curr_query_node = std::move(child_query_pair.query_node)};
+
+  return MonkeyJoinSpecPair{.join_spec = std::move(join_spec),
+                            .join_query_spec = std::move(join_query_spec)};
+}
+
+template <typename T>
+void SortResults(std::vector<T>& results) {
+  struct DocumentExtractor {
+    const DocumentProto& operator()(
+        const SearchResultProto::ResultProto& r) const {
+      return r.document();
+    }
+    const DocumentProto& operator()(
+        const SearchResultProto::ResultProto* r) const {
+      return r->document();
+    }
+  } get_document;
+
+  std::sort(results.begin(), results.end(),
+            [&get_document](const T& result1, const T& result2) {
+              const DocumentProto& doc1 = get_document(result1);
+              const DocumentProto& doc2 = get_document(result2);
               if (doc1.namespace_() != doc2.namespace_()) {
                 return doc1.namespace_() < doc2.namespace_();
               }
               return doc1.uri() < doc2.uri();
             });
+}
+
+void CompareSearchResultProto(
+    const SearchResultProto::ResultProto& actual_result,
+    const SearchResultProto::ResultProto& exp_result,
+    bool is_projection_enabled) {
+  if (is_projection_enabled) {
+    ASSERT_THAT(actual_result.document().namespace_(),
+                Eq(exp_result.document().namespace_()));
+    ASSERT_THAT(actual_result.document().uri(),
+                Eq(exp_result.document().uri()));
+  } else {
+    ASSERT_THAT(actual_result.document(), EqualsProto(exp_result.document()));
+  }
+
+  // Compare joined results.
+  ASSERT_THAT(actual_result.joined_results(),
+              SizeIs(exp_result.joined_results().size()));
+  std::vector<const SearchResultProto::ResultProto*> actual_joined_results;
+  std::vector<const SearchResultProto::ResultProto*> exp_joined_results;
+  actual_joined_results.reserve(actual_result.joined_results().size());
+  exp_joined_results.reserve(exp_result.joined_results().size());
+  for (int i = 0; i < actual_result.joined_results().size(); ++i) {
+    actual_joined_results.push_back(&actual_result.joined_results(i));
+    exp_joined_results.push_back(&exp_result.joined_results(i));
+  }
+  SortResults(actual_joined_results);
+  SortResults(exp_joined_results);
+  for (int i = 0; i < actual_joined_results.size(); ++i) {
+    // TODO(b/491577935): add support for nested projection.
+    CompareSearchResultProto(*actual_joined_results[i], *exp_joined_results[i],
+                             /*is_projection_enabled=*/false);
+  }
 }
 
 }  // namespace
@@ -643,18 +748,25 @@ void IcingMonkeyTestRunner::DoDeleteByQuery() {
 }
 
 void IcingMonkeyTestRunner::DoSearch() {
+  InternalSearch(/*is_join_search=*/false);
+}
+
+void IcingMonkeyTestRunner::DoJoinSearch() {
+  InternalSearch(/*is_join_search=*/true);
+}
+
+void IcingMonkeyTestRunner::InternalSearch(bool is_join_search) {
+  // Top level search spec.
   ICING_ASSERT_OK_AND_ASSIGN(
       MonkeyQueryPair query_pair,
       GenerateRandomMonkeyQueryPair(&random_, document_generator_.get()));
-  std::unique_ptr<SearchSpecProto> search_spec =
-      std::make_unique<SearchSpecProto>(query_pair.search_spec);
-  std::unique_ptr<ScoringSpecProto> scoring_spec =
+  auto search_spec = std::make_unique<SearchSpecProto>(query_pair.search_spec);
+  auto scoring_spec =
       std::make_unique<ScoringSpecProto>(GenerateRandomScoringSpec(&random_));
-  std::unique_ptr<ResultSpecProto> result_spec =
+  auto result_spec =
       std::make_unique<ResultSpecProto>(GenerateRandomResultSpecProto(
-          &random_, in_memory_icing_->GetSchema()));
-  const ResultSpecProto::SnippetSpecProto snippet_spec =
-      result_spec->snippet_spec();
+          &random_, in_memory_icing_->GetSchema(), /*is_nested=*/false));
+  ResultSpecProto::SnippetSpecProto snippet_spec = result_spec->snippet_spec();
   bool is_projection_enabled = !result_spec->type_property_masks().empty();
   bool is_embedding_query = !search_spec->embedding_query_vectors().empty();
 
@@ -665,9 +777,60 @@ void IcingMonkeyTestRunner::DoSearch() {
   ICING_VLOG(1) << "scoring_spec:\n" << scoring_spec->DebugString();
   ICING_VLOG(1) << "result_spec:\n" << result_spec->DebugString();
 
+  // Nested queries. The vector will remain empty if is_join_search is false.
+  std::vector<InMemoryIcingSearchEngine::JoinQuerySpec> nested_queries;
+
+  // Currently we only support 1 level of join.
+  // If we support multiple levels of joins, then change num_nested_levels to a
+  // random number greater than 0.
+  int num_nested_levels = is_join_search ? 1 : 0;
+  std::vector<std::string> candidate_join_properties =
+      in_memory_icing_->GetAllJoinProperties();
+  SearchSpecProto* current_search_spec = search_spec.get();
+  for (int i = 0; i < num_nested_levels; ++i) {
+    // Generate a monkey join spec pair and set to the current level of search
+    // spec.
+    ICING_ASSERT_OK_AND_ASSIGN(
+        MonkeyJoinSpecPair monkey_join_query_pair,
+        GenerateRnadomMonkeyJoinSpecPair(&random_, document_generator_.get(),
+                                         in_memory_icing_.get(),
+                                         candidate_join_properties));
+
+    ICING_LOG(INFO)
+        << "Monkey nested searching (level " << i + 1
+        << " with child_property_expression: "
+        << monkey_join_query_pair.join_spec.child_property_expression()
+        << ") by query: "
+        << monkey_join_query_pair.join_spec.nested_spec().search_spec().query()
+        << ", term_match_type: "
+        << monkey_join_query_pair.join_spec.nested_spec()
+               .search_spec()
+               .term_match_type();
+    ICING_VLOG(1) << "search_spec:\n"
+                  << monkey_join_query_pair.join_spec.nested_spec()
+                         .search_spec()
+                         .DebugString();
+    ICING_VLOG(1) << "scoring_spec:\n"
+                  << monkey_join_query_pair.join_spec.nested_spec()
+                         .scoring_spec()
+                         .DebugString();
+    ICING_VLOG(1) << "result_spec:\n"
+                  << monkey_join_query_pair.join_spec.nested_spec()
+                         .result_spec()
+                         .DebugString();
+
+    nested_queries.push_back(std::move(monkey_join_query_pair.join_query_spec));
+
+    *current_search_spec->mutable_join_spec() =
+        std::move(monkey_join_query_pair.join_spec);
+    current_search_spec = current_search_spec->mutable_join_spec()
+                              ->mutable_nested_spec()
+                              ->mutable_search_spec();
+  }
+
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::vector<DocumentProto> exp_documents,
-      in_memory_icing_->Search(query_pair.query_node.get()));
+      std::vector<SearchResultProto::ResultProto> exp_results,
+      in_memory_icing_->Search(query_pair.query_node.get(), nested_queries));
 
   SearchResultProto search_result =
       icing_->Search(*search_spec, *scoring_spec, *result_spec);
@@ -679,14 +842,16 @@ void IcingMonkeyTestRunner::DoSearch() {
   scoring_spec.reset();
   result_spec.reset();
 
-  std::vector<DocumentProto> actual_documents;
+  std::vector<SearchResultProto::ResultProto> actual_results;
   int num_snippeted = 0;
   while (true) {
-    for (const SearchResultProto::ResultProto& doc : search_result.results()) {
-      actual_documents.push_back(doc.document());
-      if (!doc.snippet().entries().empty()) {
+    for (const SearchResultProto::ResultProto& result :
+         search_result.results()) {
+      actual_results.push_back(result);
+      if (!result.snippet().entries().empty()) {
         ++num_snippeted;
-        for (const SnippetProto::EntryProto& entry : doc.snippet().entries()) {
+        for (const SnippetProto::EntryProto& entry :
+             result.snippet().entries()) {
           ASSERT_THAT(entry.snippet_matches(),
                       SizeIs(Le(snippet_spec.num_matches_per_property())));
         }
@@ -701,22 +866,18 @@ void IcingMonkeyTestRunner::DoSearch() {
   if (snippet_spec.num_matches_per_property() > 0 && !is_projection_enabled &&
       !is_embedding_query && !query_pair.is_numeric) {
     ASSERT_THAT(num_snippeted,
-                Eq(std::min<uint32_t>(exp_documents.size(),
+                Eq(std::min<uint32_t>(exp_results.size(),
                                       snippet_spec.num_to_snippet())));
   }
-  SortDocuments(exp_documents);
-  SortDocuments(actual_documents);
-  ASSERT_THAT(actual_documents, SizeIs(exp_documents.size()));
-  for (int i = 0; i < exp_documents.size(); ++i) {
-    if (is_projection_enabled) {
-      ASSERT_THAT(actual_documents[i].namespace_(),
-                  Eq(exp_documents[i].namespace_()));
-      ASSERT_THAT(actual_documents[i].uri(), Eq(exp_documents[i].uri()));
-      continue;
-    }
-    ASSERT_THAT(actual_documents[i], EqualsProto(exp_documents[i]));
+
+  SortResults(exp_results);
+  SortResults(actual_results);
+  ASSERT_THAT(actual_results, SizeIs(exp_results.size()));
+  for (int i = 0; i < actual_results.size(); ++i) {
+    ASSERT_NO_FATAL_FAILURE(CompareSearchResultProto(
+        actual_results[i], exp_results[i], is_projection_enabled));
   }
-  ICING_LOG(INFO) << exp_documents.size() << " documents found by query.";
+  ICING_LOG(INFO) << exp_results.size() << " documents found by query.";
 }
 
 void IcingMonkeyTestRunner::DoGetDebugInfo() {

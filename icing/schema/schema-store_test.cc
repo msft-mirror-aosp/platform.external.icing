@@ -715,9 +715,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithUpdateAccountPropertyDescriptionOk) {
           .SetDatabase("db1/")
           .AddAccountProperty("account1")
           .AddProperty(PropertyConfigBuilder()
-                           .SetName("subject")
+                           .SetName("account1")
                            .SetDataType(TYPE_STRING)
-                           .SetCardinality(CARDINALITY_REQUIRED))
+                           .SetCardinality(CARDINALITY_REPEATED))
           .Build();
 
   SchemaProto schema = SchemaBuilder().AddType(type_config).Build();
@@ -735,10 +735,15 @@ TEST_F(SchemaStoreTest, SetSchemaWithUpdateAccountPropertyDescriptionOk) {
   SchemaTypeConfigProto updated_type_config =
       SchemaTypeConfigBuilder(type_config)
           .AddAccountProperty("account2")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("account2")
+                           .SetDataType(TYPE_STRING)
+                           .SetCardinality(CARDINALITY_REPEATED))
           .Build();
   schema = SchemaBuilder().AddType(updated_type_config).Build();
   result = SchemaStore::SetSchemaResult();
   result.success = true;
+  result.schema_types_changed_fully_compatible_by_name.insert("db1/email");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
