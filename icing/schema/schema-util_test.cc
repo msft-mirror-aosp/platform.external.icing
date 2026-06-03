@@ -26,6 +26,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/test-feature-flags.h"
 
 namespace icing {
 namespace lib {
@@ -4514,16 +4515,11 @@ TEST_P(SchemaUtilTest,
 TEST_P(SchemaUtilTest,
        ValidateJoinablePropertyShouldNotHaveRepeatedCardinality) {
   // We need to explicitly override enable_repeated_field_joins to false.
-  feature_flags_ = std::make_unique<FeatureFlags>(
-      GetParam().allow_circular_schema_definitions(),
-      /*enable_repeated_field_joins=*/false,
-      /*enable_embedding_backup_generation=*/true,
-      /*enable_optimize_improvements=*/true,
-      /*expired_document_purge_threshold_ms=*/0,
-      /*enable_non_existent_qualified_id_join=*/true,
-      /*enable_skip_set_schema_type_equality_check=*/true,
-      /*enable_schema_definition_deduping=*/true,
-      /*enable_delete_propagation_from=*/true);
+  feature_flags_ =
+      std::make_unique<FeatureFlags>(FeatureFlagsBuilder(GetParam())
+                                         .set_enable_repeated_field_joins(false)
+                                         .Build());
+
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -4578,16 +4574,10 @@ TEST_P(SchemaUtilTest,
 
 TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
   // We need to explicitly override enable_repeated_field_joins to true.
-  feature_flags_ = std::make_unique<FeatureFlags>(
-      GetParam().allow_circular_schema_definitions(),
-      /*enable_repeated_field_joins=*/true,
-      /*enable_embedding_backup_generation=*/true,
-      /*enable_optimize_improvements=*/true,
-      /*expired_document_purge_threshold_ms=*/0,
-      /*enable_non_existent_qualified_id_join=*/true,
-      /*enable_skip_set_schema_type_equality_check=*/true,
-      /*enable_schema_definition_deduping=*/true,
-      /*enable_delete_propagation_from=*/true);
+  feature_flags_ =
+      std::make_unique<FeatureFlags>(FeatureFlagsBuilder(GetParam())
+                                         .set_enable_repeated_field_joins(true)
+                                         .Build());
 
   SchemaProto schema =
       SchemaBuilder()
@@ -5907,26 +5897,22 @@ TEST_P(SchemaUtilTest, ValidateScorableType_DisabledForUnsupportedDataTypes) {
 
 INSTANTIATE_TEST_SUITE_P(
     SchemaUtilTest, SchemaUtilTest,
-    testing::Values(FeatureFlags(
-                        /*allow_circular_schema_definitions=*/false,
-                        /*enable_repeated_field_joins=*/true,
-                        /*enable_embedding_backup_generation=*/true,
-                        /*enable_optimize_improvements=*/true,
-                        /*expired_document_purge_threshold_ms=*/0,
-                        /*enable_non_existent_qualified_id_join=*/true,
-                        /*enable_skip_set_schema_type_equality_check=*/true,
-                        /*enable_schema_definition_deduping=*/false,
-                        /*enable_delete_propagation_from=*/true),
-                    FeatureFlags(
-                        /*allow_circular_schema_definitions=*/true,
-                        /*enable_repeated_field_joins=*/true,
-                        /*enable_embedding_backup_generation=*/true,
-                        /*enable_optimize_improvements=*/true,
-                        /*expired_document_purge_threshold_ms=*/0,
-                        /*enable_non_existent_qualified_id_join=*/true,
-                        /*enable_skip_set_schema_type_equality_check=*/true,
-                        /*enable_schema_definition_deduping=*/true,
-                        /*enable_delete_propagation_from=*/true)));
+    testing::Values(FeatureFlagsBuilder(GetTestFeatureFlags())
+                        .set_allow_circular_schema_definitions(false)
+                        .set_enable_schema_definition_deduping(false)
+                        .Build(),
+                    FeatureFlagsBuilder(GetTestFeatureFlags())
+                        .set_allow_circular_schema_definitions(false)
+                        .set_enable_schema_definition_deduping(true)
+                        .Build(),
+                    FeatureFlagsBuilder(GetTestFeatureFlags())
+                        .set_allow_circular_schema_definitions(true)
+                        .set_enable_schema_definition_deduping(false)
+                        .Build(),
+                    FeatureFlagsBuilder(GetTestFeatureFlags())
+                        .set_allow_circular_schema_definitions(true)
+                        .set_enable_schema_definition_deduping(true)
+                        .Build()));
 
 struct IsIndexedPropertyTestParam {
   PropertyConfigProto property_config;

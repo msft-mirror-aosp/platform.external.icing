@@ -60,6 +60,7 @@ class IcingMonkeyTestRunner {
   void DoPersistToDisk();
   void ReloadFromDisk();
   void DoOptimize();
+  void DoMaintainAnnIndex();
 
  private:
   IcingMonkeyTestRunnerConfiguration config_;

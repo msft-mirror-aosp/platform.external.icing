@@ -80,6 +80,12 @@ struct MonkeyTokenizedDocument {
             .vector_values = std::vector<PropertyProto::VectorProto>(
                 property.vector_values().cbegin(),
                 property.vector_values().cend())});
+      } else if (!property.int64_values().empty()) {
+        sections.push_back(MonkeySection{
+            .path = new_path,
+            .integer_values = std::vector<int64_t>(
+                property.int64_values().cbegin(),
+                property.int64_values().cend())});
       } else if (property.document_values_size() > 0) {
         for (const DocumentProto& document_value : property.document_values()) {
           ExtractSections(document_value, new_path, sections);
