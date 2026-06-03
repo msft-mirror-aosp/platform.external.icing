@@ -33,6 +33,7 @@
 #include "icing/icing-search-engine.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-abstract-leaf-node.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-abstract-query-node.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-numeric-query-node.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-semantic-query-node.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-term-query-node.h"
 #include "icing/monkey_test/in-memory-icing-search-engine.h"
@@ -76,6 +77,43 @@ int GetRandomInt(MonkeyTestRandomEngine* random, int min, int max) {
   return dist(*random);
 }
 
+std::string PickRandomPropertyPathForNumericQuery(
+    MonkeyTestRandomEngine* random, const SchemaProto* schema) {
+  // - 60% chance: Valid indexable numeric property.
+  // - 30% chance: Existing property of any type (STRING, VECTOR, non-indexable
+  // INT64).
+  // - 10% chance: Randomly generated property name (likely non-existent).
+
+  std::vector<std::string> indexable_numeric_properties;
+  std::vector<std::string> all_properties;
+
+  if (schema != nullptr) {
+    for (const auto& type : schema->types()) {
+      for (const auto& prop : type.properties()) {
+        if (prop.data_type() == PropertyConfigProto::DataType::INT64 &&
+            prop.has_integer_indexing_config() &&
+            prop.integer_indexing_config().numeric_match_type() ==
+                IntegerIndexingConfig::NumericMatchType::RANGE) {
+          indexable_numeric_properties.push_back(prop.property_name());
+        }
+        all_properties.push_back(prop.property_name());
+      }
+    }
+  }
+
+  int choice = GetRandomInt(random, 1, 100);
+  if (choice <= 60 && !indexable_numeric_properties.empty()) {
+    std::uniform_int_distribution<> prop_dist(
+        0, indexable_numeric_properties.size() - 1);
+    return indexable_numeric_properties[prop_dist(*random)];
+  } else if (choice <= 90 && !all_properties.empty()) {
+    std::uniform_int_distribution<> prop_dist(0, all_properties.size() - 1);
+    return all_properties[prop_dist(*random)];
+  } else {
+    return "RandomProperty" + std::to_string(GetRandomInt(random, 0, 1000000));
+  }
+}
+
 void GetRandomPropertyRestricts(
     MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
     std::unordered_set<std::string>& property_restricts) {
@@ -93,6 +131,7 @@ void GetRandomPropertyRestricts(
 struct MonkeyQueryPair {
   SearchSpecProto search_spec;
   std::unique_ptr<MonkeyAbstractQueryNode> query_node;
+  bool is_numeric = false;
 };
 
 std::unique_ptr<MonkeyTermQueryNode> GenerateRandomTermNode(
@@ -156,9 +195,18 @@ std::unique_ptr<MonkeySemanticQueryNode> GenerateRandomSemanticNode(
 
   *search_spec.add_embedding_query_vectors() = vector;
 
+  // 0 means ANN is not enabled. >0 means ANN is enabled and still includes
+  // the linear search part. The in-memory Icing search engine cannot truly
+  // verify the behavior of the ANN index algorithmically, as IVF-based ANN
+  // is an approximate non-deterministic mapping. As a result, we set a wildly
+  // large nprobe to let ANN degenerate into linear search, granting exact
+  // matching for verification.
+  int nprobe = GetRandomBoolean(random) ? 0 : 100000000;
+  search_spec.set_embedding_query_nprobe(nprobe);
+
   // TODO(b/491571627) - Add support for multiple embedding query vectors.
   auto query_node = std::make_unique<MonkeySemanticQueryNode>(
-      /*vector_index=*/0, low, high, metric_type, std::move(vector),
+      /*vector_index=*/0, low, high, metric_type, nprobe, std::move(vector),
       /*property_restricts=*/std::move(property_restricts),
       /*document_namespaces=*/std::vector<std::string>(),
       /*document_schema_types=*/
@@ -169,11 +217,40 @@ std::unique_ptr<MonkeySemanticQueryNode> GenerateRandomSemanticNode(
   return query_node;
 }
 
-// Vector of functions that generate a random leaf node. Adding a new leaf node
-// generator to this list will enable the generation of that type of leaf node.
+std::unique_ptr<MonkeyAbstractLeafQueryNode> GenerateRandomNumericNode(
+    MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
+    SearchSpecProto& search_spec) {
+  std::string property_path = PickRandomPropertyPathForNumericQuery(
+      random, document_generator->schema());
+
+  //'!=' (kNotEqual) is currently not supported by Icing.
+  std::vector<MonkeyNumericQueryNode::NumericComparator> valid_comparators = {
+      MonkeyNumericQueryNode::NumericComparator::kEqual,
+      MonkeyNumericQueryNode::NumericComparator::kLessThan,
+      MonkeyNumericQueryNode::NumericComparator::kLessThanEqual,
+      MonkeyNumericQueryNode::NumericComparator::kGreaterThan,
+      MonkeyNumericQueryNode::NumericComparator::kGreaterThanEqual,
+  };
+  std::uniform_int_distribution<> comp_dist(0, valid_comparators.size() - 1);
+  MonkeyNumericQueryNode::NumericComparator comparator =
+      valid_comparators[comp_dist(*random)];
+
+  int64_t value = document_generator->GetRandomInt64Value();
+
+  auto query_node = std::make_unique<MonkeyNumericQueryNode>(
+      property_path, comparator, value,
+      /*document_namespaces=*/std::vector<std::string>(),
+      /*document_schema_types=*/
+      std::vector<std::string>(search_spec.schema_type_filters().begin(),
+                               search_spec.schema_type_filters().end()));
+  search_spec.add_enabled_features(std::string(kNumericSearchFeature));
+  return query_node;
+}
+
 std::vector<std::function<std::unique_ptr<MonkeyAbstractLeafQueryNode>(
     MonkeyTestRandomEngine*, MonkeyDocumentGenerator*, SearchSpecProto&)>>
-    leaf_node_generators = {GenerateRandomTermNode, GenerateRandomSemanticNode};
+    leaf_node_generators = {GenerateRandomTermNode, GenerateRandomSemanticNode,
+                            GenerateRandomNumericNode};
 
 // Generates a random query tree with the given depth.
 // As a part of generating the query tree, the some fields in the
@@ -222,8 +299,11 @@ libtextclassifier3::StatusOr<MonkeyQueryPair> GenerateRandomMonkeyQueryPair(
       GenerateRandomQueryTree(random, document_generator, search_spec, depth));
 
   search_spec.set_query(query_node->GenerateQueryString());
+  bool is_numeric =
+      dynamic_cast<MonkeyNumericQueryNode*>(query_node.get()) != nullptr;
   return MonkeyQueryPair{.search_spec = std::move(search_spec),
-                         .query_node = std::move(query_node)};
+                         .query_node = std::move(query_node),
+                         .is_numeric = is_numeric};
 }
 
 ScoringSpecProto GenerateRandomScoringSpec(MonkeyTestRandomEngine* random) {
@@ -258,6 +338,7 @@ ResultSpecProto::SnippetSpecProto GenerateRandomSnippetSpecProto(
   int max_window_utf32_length =
       random_num == 0 ? 0 : (1 << (2 * random_num + 1));
   snippet_spec.set_max_window_utf32_length(max_window_utf32_length);
+  snippet_spec.set_get_embedding_match_info(GetRandomBoolean(random));
   return snippet_spec;
 }
 
@@ -282,6 +363,7 @@ ResultSpecProto GenerateRandomResultSpecProto(MonkeyTestRandomEngine* random,
   // 1/5 chance of getting one of 1, 4, 16, 64, 256
   int num_per_page = 1 << (2 * dist(*random));
   result_spec.set_num_per_page(num_per_page);
+  result_spec.set_num_to_score(std::numeric_limits<int32_t>::max());
   *result_spec.mutable_snippet_spec() =
       GenerateRandomSnippetSpecProto(random, result_spec);
 
@@ -577,7 +659,8 @@ void IcingMonkeyTestRunner::DoSearch() {
   bool is_embedding_query = !search_spec->embedding_query_vectors().empty();
 
   ICING_LOG(INFO) << "Monkey searching by query: " << search_spec->query()
-                  << ", term_match_type: " << search_spec->term_match_type();
+                  << ", term_match_type: " << search_spec->term_match_type()
+                  << ", nprobe: " << search_spec->embedding_query_nprobe();
   ICING_VLOG(1) << "search_spec:\n" << search_spec->DebugString();
   ICING_VLOG(1) << "scoring_spec:\n" << scoring_spec->DebugString();
   ICING_VLOG(1) << "result_spec:\n" << result_spec->DebugString();
@@ -615,13 +698,8 @@ void IcingMonkeyTestRunner::DoSearch() {
     search_result = icing_->GetNextPage(search_result.next_page_token());
     ASSERT_THAT(search_result.status(), ProtoIsOk());
   }
-  // The maximum number of scored documents allowed in Icing is 30000, in which
-  // case we are not able to compare the results with the in-memory Icing.
-  if (exp_documents.size() >= 30000) {
-    return;
-  }
   if (snippet_spec.num_matches_per_property() > 0 && !is_projection_enabled &&
-      !is_embedding_query) {
+      !is_embedding_query && !query_pair.is_numeric) {
     ASSERT_THAT(num_snippeted,
                 Eq(std::min<uint32_t>(exp_documents.size(),
                                       snippet_spec.num_to_snippet())));
@@ -680,16 +758,19 @@ void IcingMonkeyTestRunner::DoOptimize() {
   ASSERT_THAT(icing_->Optimize().status(), ProtoIsOk());
 }
 
-void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
-  bool always_rebuild_index_optimize = GetRandomBoolean(&random_);
-  float optimize_rebuild_index_threshold =
-      always_rebuild_index_optimize ? 0.0 : 0.9;
+void IcingMonkeyTestRunner::DoMaintainAnnIndex() {
+  ICING_LOG(INFO) << "Monkey maintaining ANN index";
+  ASSERT_THAT(
+      icing_->MaintainAnnIndex(config_.maintain_ann_index_options).status(),
+      ProtoIsOk());
+}
 
+void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_index_merge_size(config_.index_merge_size);
   icing_options.set_base_dir(icing_dir_);
-  icing_options.set_optimize_rebuild_index_threshold(
-      optimize_rebuild_index_threshold);
+  // 0.9 is the value always used in AppSearch.
+  icing_options.set_optimize_rebuild_index_threshold(0.9);
   // The method will be called every time when we ReloadFromDisk(), so randomly
   // flip this flag to test document store's compatibility.
   icing_options.set_document_store_namespace_id_fingerprint(
@@ -697,8 +778,9 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   icing_options.set_compression_threshold_bytes(
       GetRandomInt(&random_, /*min=*/0, /*max=*/10000));
 
-  // Randomly choose the number of shards from 1, 2, 4, 8, 16, 32.
-  uint32_t num_shards = 1 << GetRandomInt(&random_, /*min=*/0, /*max=*/5);
+  // Randomly choose the number of shards.
+  uint32_t num_shards = config_.possible_num_shards[GetRandomInt(
+      &random_, /*min=*/0, /*max=*/config_.possible_num_shards.size() - 1)];
   icing_options.set_embedding_index_num_shards(num_shards);
   icing_options.set_enable_skip_set_schema_type_equality_check(
       GetRandomBoolean(&random_));
