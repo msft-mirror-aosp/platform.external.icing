@@ -31,7 +31,8 @@ class FeatureFlags {
                         bool enable_non_existent_qualified_id_join,
                         bool enable_skip_set_schema_type_equality_check,
                         bool enable_schema_definition_deduping,
-                        bool enable_delete_propagation_from)
+                        bool enable_delete_propagation_from,
+                        bool enable_account_property_incompatibility_check)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_repeated_field_joins_(enable_repeated_field_joins),
         enable_embedding_backup_generation_(enable_embedding_backup_generation),
@@ -43,7 +44,9 @@ class FeatureFlags {
         enable_skip_set_schema_type_equality_check_(
             enable_skip_set_schema_type_equality_check),
         enable_schema_definition_deduping_(enable_schema_definition_deduping),
-        enable_delete_propagation_from_(enable_delete_propagation_from) {}
+        enable_delete_propagation_from_(enable_delete_propagation_from),
+        enable_account_property_incompatibility_check_(
+            enable_account_property_incompatibility_check) {}
 
   bool allow_circular_schema_definitions() const {
     return allow_circular_schema_definitions_;
@@ -79,6 +82,10 @@ class FeatureFlags {
 
   bool enable_delete_propagation_from() const {
     return enable_delete_propagation_from_;
+  }
+
+  bool enable_account_property_incompatibility_check() const {
+    return enable_account_property_incompatibility_check_;
   }
 
  private:
@@ -138,6 +145,9 @@ class FeatureFlags {
 
   // Whether to enable delete propagation PROPAGATE_FROM.
   bool enable_delete_propagation_from_ = false;
+
+  // Whether to enable the account property incompatibility check.
+  bool enable_account_property_incompatibility_check_ = false;
 };
 
 class FeatureFlagsBuilder {
@@ -205,6 +215,13 @@ class FeatureFlagsBuilder {
       bool enable_delete_propagation_from) {
     feature_flags_.enable_delete_propagation_from_ =
         enable_delete_propagation_from;
+    return *this;
+  }
+
+  FeatureFlagsBuilder& set_enable_account_property_incompatibility_check(
+      bool enable_account_property_incompatibility_check) {
+    feature_flags_.enable_account_property_incompatibility_check_ =
+        enable_account_property_incompatibility_check;
     return *this;
   }
 
