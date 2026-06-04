@@ -5895,6 +5895,343 @@ TEST_P(SchemaUtilTest, ValidateScorableType_DisabledForUnsupportedDataTypes) {
               StatusIs(libtextclassifier3::StatusCode::OK));
 }
 
+TEST_P(SchemaUtilTest, AccountPropertyDemotingIsCompatible) {
+  // Rule 1: Demoting an existing property from an account property to a regular
+  // property is COMPATIBLE.
+
+  // Configure old schema: "prop1" is both a schema property and an account
+  // property.
+  SchemaTypeConfigProto old_type =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop1")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  old_type.add_account_properties("prop1");
+  SchemaProto old_schema = SchemaBuilder().AddType(old_type).Build();
+
+  // Configure new schema: "prop1" remains as a regular property but is
+  // removed from account_properties.
+  SchemaTypeConfigProto new_type =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop1")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_type).Build();
+
+  feature_flags_ = std::make_unique<FeatureFlags>(
+      FeatureFlagsBuilder(GetParam())
+          .set_enable_account_property_incompatibility_check(true)
+          .Build());
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(schema_delta.schema_types_incompatible, IsEmpty());
+  EXPECT_THAT(schema_delta.schema_types_changed_fully_compatible, IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, AccountPropertyPromotingIsIncompatible) {
+  // Rule 2: Promoting an existing regular property into an account property is
+  // INCOMPATIBLE.
+
+  // Configure old schema: "prop1" is just a regular property.
+  SchemaTypeConfigProto old_type =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop1")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto old_schema = SchemaBuilder().AddType(old_type).Build();
+
+  // Configure new schema: "prop1" is now promoted to be an account property.
+  SchemaTypeConfigProto new_type =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop1")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  new_type.add_account_properties("prop1");
+  SchemaProto new_schema = SchemaBuilder().AddType(new_type).Build();
+
+  feature_flags_ = std::make_unique<FeatureFlags>(
+      FeatureFlagsBuilder(GetParam())
+          .set_enable_account_property_incompatibility_check(true)
+          .Build());
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(schema_delta.schema_types_incompatible,
+              UnorderedElementsAre(kEmailType));
+}
+
+TEST_P(SchemaUtilTest, NewPropertyAsAccountPropertyIsCompatible) {
+  // Rule 3: Introducing a completely new property and defining it as an account
+  // property is COMPATIBLE.
+
+  // Configure old schema: Only has "prop1".
+  SchemaTypeConfigProto old_type =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop1")
+                           .SetDataType(TYPE_STRING)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto old_schema = SchemaBuilder().AddType(old_type).Build();
+
+  // Configure new schema: Introduces "prop2" as an optional property
+  // and marks it as an account property at the same time.
+  SchemaTypeConfigProto new_type =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop1")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop2")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  new_type.add_account_properties("prop2");
+  SchemaProto new_schema = SchemaBuilder().AddType(new_type).Build();
+
+  feature_flags_ = std::make_unique<FeatureFlags>(
+      FeatureFlagsBuilder(GetParam())
+          .set_enable_account_property_incompatibility_check(true)
+          .Build());
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(schema_delta.schema_types_incompatible, IsEmpty());
+  EXPECT_THAT(schema_delta.schema_types_changed_fully_compatible, IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, NestedAccountPropertyPromotingIsIncompatible) {
+  // 1. Build the OLD Schema elegantly using nesting Builders
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Profile").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("id")
+                  .SetDataType(PropertyConfigProto::DataType::STRING)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("User").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("profile")
+                  .SetDataTypeDocument("Profile",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .Build();
+
+  // 2. Build the NEW Schema: "User" now adds "profile.id" into
+  // account_properties
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Profile").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("id")
+                  .SetDataType(PropertyConfigProto::DataType::STRING)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("User")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("profile")
+                               .SetDataTypeDocument(
+                                   "Profile", /*index_nested_properties=*/true)
+                               .SetCardinality(
+                                   PropertyConfigProto::Cardinality::OPTIONAL))
+                       .AddAccountProperty("profile.id"))
+          .Build();
+
+  // 3. Set up prerequisite maps & flags for comparison
+  feature_flags_ = std::make_unique<FeatureFlags>(
+      FeatureFlagsBuilder(GetParam())
+          .set_enable_account_property_incompatibility_check(true)
+          .Build());
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  // 4. Run the compatibility delta computation
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+
+  // 5. Verification: Because "profile.id" already existed as a regular
+  // property, promoting it must cause an INCOMPATIBLE change for the "User"
+  // type.
+  EXPECT_THAT(delta.schema_types_incompatible, testing::Contains("User"));
+}
+
+TEST_P(SchemaUtilTest, NestedAccountPropertyNewAdditionIsCompatible) {
+  // 1. Build the OLD Schema: 'Profile' starts empty without the 'token' field.
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Profile"))
+          .AddType(SchemaTypeConfigBuilder().SetType("User").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("profile")
+                  .SetDataTypeDocument("Profile",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .Build();
+
+  // 2. Build the NEW Schema: Introduce a brand new 'token' property inside
+  // 'Profile', and define "profile.token" as an account property in 'User'.
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Profile").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("token")
+                  .SetDataType(PropertyConfigProto::DataType::STRING)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("User")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("profile")
+                               .SetDataTypeDocument(
+                                   "Profile", /*index_nested_properties=*/true)
+                               .SetCardinality(
+                                   PropertyConfigProto::Cardinality::OPTIONAL))
+                       .AddAccountProperty("profile.token"))
+          .Build();
+
+  // 3. Set up prerequisite maps & flags for comparison using the param builder
+  feature_flags_ = std::make_unique<FeatureFlags>(
+      FeatureFlagsBuilder(GetParam())
+          .set_enable_account_property_incompatibility_check(true)
+          .Build());
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  // 4. Run the compatibility delta computation
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+
+  // 5. Verification: Since "profile.token" did not exist at all in the old
+  // layout, it is classified as a safe "New Property" addition, which must be
+  // fully COMPATIBLE.
+  EXPECT_THAT(delta.schema_types_incompatible, IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, AccountPropertyPathDoesNotExistIsInvalid) {
+  // Build a schema where 'User' nests 'Profile', but 'Profile' only has 'id'.
+  // The account property incorrectly points to 'profile.non_existent_field'.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Profile").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("id")
+                  .SetDataType(PropertyConfigProto::DataType::STRING)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("User").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("profile")
+                  .SetDataTypeDocument("Profile",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .Build();
+
+  // Manually add the invalid nested path since Builder might not have it.
+  for (auto& type : *schema.mutable_types()) {
+    if (type.schema_type() == "User") {
+      type.add_account_properties("profile.non_existent_field");
+    }
+  }
+
+  feature_flags_ =
+      std::make_unique<FeatureFlags>(FeatureFlagsBuilder(GetParam()).Build());
+
+  // Verification: Validate must fail because the nested path doesn't exist.
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_).status(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(SchemaUtilTest, AccountPropertyDrillingIntoPrimitiveIsInvalid) {
+  // Build a schema where 'name' is just a STRING field under 'User'.
+  // The account property illegally tries to treat it as a document:
+  // 'name.first'
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigProto(
+              SchemaTypeConfigBuilder()
+                  .SetType("User")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("name")
+                          .SetDataType(PropertyConfigProto::DataType::STRING)
+                          .SetCardinality(
+                              PropertyConfigProto::Cardinality::OPTIONAL))
+                  .Build()))
+          .Build();
+
+  for (auto& type : *schema.mutable_types()) {
+    if (type.schema_type() == "User") {
+      type.add_account_properties("name.first");
+    }
+  }
+
+  feature_flags_ =
+      std::make_unique<FeatureFlags>(FeatureFlagsBuilder(GetParam()).Build());
+
+  // Verification: Validate must fail because 'name' is a STRING, not a
+  // DOCUMENT.
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_).status(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(SchemaUtilTest, ValidNestedAccountPropertyPathPasses) {
+  // Build a perfectly valid two-level nesting schema: User -> Profile -> id
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Profile").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("id")
+                  .SetDataType(PropertyConfigProto::DataType::STRING)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .AddType(SchemaTypeConfigProto(
+              SchemaTypeConfigBuilder()
+                  .SetType("User")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("profile")
+                          .SetDataTypeDocument("Profile",
+                                               /*index_nested_properties=*/true)
+                          .SetCardinality(
+                              PropertyConfigProto::Cardinality::OPTIONAL))
+                  .Build()))
+          .Build();
+
+  for (auto& type : *schema.mutable_types()) {
+    if (type.schema_type() == "User") {
+      type.add_account_properties("profile.id");  // 100% valid path
+    }
+  }
+
+  feature_flags_ =
+      std::make_unique<FeatureFlags>(FeatureFlagsBuilder(GetParam()).Build());
+
+  // Verification: Validate must pass successfully (return OK) for a correct
+  // path.
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
+}
+
 INSTANTIATE_TEST_SUITE_P(
     SchemaUtilTest, SchemaUtilTest,
     testing::Values(FeatureFlagsBuilder(GetTestFeatureFlags())

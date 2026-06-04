@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -57,6 +58,15 @@ struct MonkeyTokenizedDocument {
                     tokenized_document.sections);
 
     return tokenized_document;
+  }
+
+  const MonkeySection* GetSectionByPath(std::string_view path) const {
+    for (const MonkeySection& section : sections) {
+      if (section.path == path) {
+        return &section;
+      }
+    }
+    return nullptr;
   }
 
  private:
