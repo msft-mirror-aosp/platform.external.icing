@@ -35,21 +35,21 @@
 #ifndef ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 #define ICING_LEGACY_INDEX_ICING_DYNAMIC_TRIE_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <ostream>
 #include <string>
-#include <unordered_map>
+#include <string_view>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/legacy/core/icing-compat.h"
 #include "icing/legacy/core/icing-packed-pod.h"
 #include "icing/legacy/index/icing-filesystem.h"
-#include "icing/legacy/index/icing-mmapper.h"
 #include "icing/legacy/index/icing-storage.h"
 #include "icing/legacy/index/proto/icing-dynamic-trie-header.pb.h"
-#include "icing/util/i18n-utils.h"
+#include "icing/util/crc32.h"
 #include "unicode/utf8.h"
 
 namespace icing {
@@ -265,10 +265,10 @@ class IcingDynamicTrie : public IIcingStorage {
   // Returns true if successfully created all files or files already
   // exist. Does not do a complete sanity check for when files seem to
   // exist. Cleans up files if creation fails midstream.
-  bool CreateIfNotExist(const Options &options);
+  libtextclassifier3::Status CreateIfNotExist(const Options& options);
 
   bool UpgradeTo(int new_version) override { return true; }
-  bool Init() override;
+  libtextclassifier3::Status Init() override;
   void Close() override;
   bool Remove() override;
   uint64_t GetDiskUsage() const override;
@@ -280,7 +280,9 @@ class IcingDynamicTrie : public IIcingStorage {
   // REQUIRED: For all functions below is_initialized() == true.
 
   // Number of keys in trie.
-  uint32_t size() const;
+  libtextclassifier3::StatusOr<uint32_t> size() const;
+
+  libtextclassifier3::StatusOr<bool> empty() const;
 
   // Collecting stats.
   void CollectStats(Stats *stats) const;
@@ -293,26 +295,23 @@ class IcingDynamicTrie : public IIcingStorage {
                 std::vector<std::string> *keys) const;
 
   // Empty out the trie without closing or removing.
-  void Clear();
+  libtextclassifier3::Status Clear();
 
-  // Clears the suffix and value at the given index. Returns true on success.
-  bool ClearSuffixAndValue(uint32_t suffix_value_index);
+  // Clears the suffix and value at the given index. Returns OK on success.
+  libtextclassifier3::Status ClearSuffixAndValue(uint32_t suffix_value_index);
 
   // Resets the next at the given index so that it points to no node.
-  // Returns true on success.
-  bool ResetNext(uint32_t next_index);
+  // Returns OK on success.
+  libtextclassifier3::Status ResetNext(uint32_t next_index);
 
-  // Sorts the next array of the node. Returns true on success.
-  bool SortNextArray(const Node *node);
+  // Sorts the next array of the node. Returns OK on success.
+  libtextclassifier3::Status SortNextArray(const Node *node);
 
   // Sync to disk.
-  bool Sync() override;
+  libtextclassifier3::Status Sync() override;
 
   // Tell kernel we will access the memory shortly.
-  void Warm() const;
-
-  // Potentially about to get nuked.
-  void OnSleep() override;
+  libtextclassifier3::Status Warm() const;
 
   // Insert value at key. If key already exists and replace == true,
   // replaces old value with value. We take a copy of value.
@@ -327,27 +326,29 @@ class IcingDynamicTrie : public IIcingStorage {
   //   OK on success
   //   RESOURCE_EXHAUSTED if no disk space is available
   //   INTERNAL_ERROR if there are inconsistencies in the dynamic trie.
-  libtextclassifier3::Status Insert(const char *key, const void *value) {
+  libtextclassifier3::Status Insert(std::string_view key, const void *value) {
     return Insert(key, value, nullptr, true, nullptr);
   }
-  libtextclassifier3::Status Insert(const char *key, const void *value,
+  libtextclassifier3::Status Insert(std::string_view key, const void *value,
                                     uint32_t *value_index, bool replace) {
     return Insert(key, value, value_index, replace, nullptr);
   }
-  libtextclassifier3::Status Insert(const char *key, const void *value,
+  libtextclassifier3::Status Insert(std::string_view key, const void *value,
                                     uint32_t *value_index, bool replace,
                                     bool *pnew_key);
 
   // Get a value returned by Insert value_index. This points to the
   // value in the trie. The pointer is immutable and always valid
   // while the trie is alive.
-  const void *GetValueAtIndex(uint32_t value_index) const;
+  libtextclassifier3::StatusOr<const void*> GetValueAtIndex(
+      uint32_t value_index) const;
 
   // Set a value returned by Insert value_index. We take a copy of
   // value.
   //
   // REQUIRES: value a buffer of size value_size()
-  void SetValueAtIndex(uint32_t value_index, const void *value);
+  libtextclassifier3::Status SetValueAtIndex(uint32_t value_index,
+                                             const void *value);
 
   // Returns true if key is found and sets value. If value_index is
   // not NULL, returns value_index (see Insert discussion above).
@@ -355,10 +356,10 @@ class IcingDynamicTrie : public IIcingStorage {
   // value_index is modified.
   //
   // REQUIRES: value a buffer of size value_size()
-  bool Find(const char *key, void *value) const {
+  bool Find(std::string_view key, void *value) const {
     return Find(key, value, nullptr);
   }
-  bool Find(const char *key, void *value, uint32_t *value_index) const;
+  bool Find(std::string_view key, void *value, uint32_t *value_index) const;
 
   // Find the input key and all keys that are a variant of the input
   // key according to a variant map. Currently supports
@@ -383,18 +384,21 @@ class IcingDynamicTrie : public IIcingStorage {
   // Return prefix of any new branches created if key were inserted. If utf8 is
   // true, does not cut key mid-utf8. Returns kNoBranchFound if no branches
   // would be created.
-  int FindNewBranchingPrefixLength(const char *key, bool utf8) const;
+  libtextclassifier3::StatusOr<int> FindNewBranchingPrefixLength(
+      std::string_view key, bool utf8) const;
 
   // Find all prefixes of key where the trie branches. Excludes the key
   // itself. If utf8 is true, does not cut key mid-utf8.
-  std::vector<int> FindBranchingPrefixLengths(const char *key, bool utf8) const;
+  libtextclassifier3::StatusOr<std::vector<int>> FindBranchingPrefixLengths(
+      std::string_view key, bool utf8) const;
 
   // Check if key is a branching term.
   //
   // key is a branching term, if and only if there exists terms s1 and s2 in the
   // trie such that key is the maximum common prefix of s1 and s2, but s1 and s2
   // are not prefixes of each other.
-  bool IsBranchingTerm(const char *key) const;
+  libtextclassifier3::StatusOr<bool> IsBranchingTerm(
+      std::string_view key) const;
 
   void GetDebugInfo(int verbosity, std::string *out) const override;
 
@@ -407,7 +411,12 @@ class IcingDynamicTrie : public IIcingStorage {
   // If in kMapSharedWithCrc mode, update crcs and return the master
   // crc, else return kNoCrc. This crc includes both the trie files
   // and property bitmaps.
-  uint32_t UpdateCrc();
+  libtextclassifier3::StatusOr<Crc32> UpdateCrc() override;
+
+  // If in kMapSharedWithCrc mode, calculates crcs and return the master
+  // crc, else return kNoCrc. This crc includes both the trie files
+  // and property bitmaps. Does NOT update any stored crcs.
+  libtextclassifier3::StatusOr<Crc32> GetCrc() const;
 
   // Store dynamic properties for each value.  When a property is added to
   // a value, the deleted flag is cleared for it (if it was previously set).
@@ -424,8 +433,8 @@ class IcingDynamicTrie : public IIcingStorage {
   bool ClearDeleted(uint32_t value_index);
 
   // Deletes the entry associated with the key. Data can not be recovered after
-  // the deletion. Returns true on success.
-  bool Delete(std::string_view key);
+  // the deletion. Returns OK on success.
+  libtextclassifier3::Status Delete(std::string_view key);
 
   // Clear a specific property id from all values.  For each value that has this
   // property cleared, also check to see if it was the only property set;  if
@@ -509,15 +518,15 @@ class IcingDynamicTrie : public IIcingStorage {
   //                    iterator pattern in our codebase.
   class Iterator {
    public:
-    Iterator(const IcingDynamicTrie &trie, const char *prefix,
+    Iterator(const IcingDynamicTrie &trie, std::string prefix,
              bool reverse = false);
     void Reset();
     bool Advance();
 
-    // If !IsValid(), GetKey() will return NULL and GetValue() will
-    // return 0.
+    // If !IsValid(), GetKey() will return a std::string_view object with
+    // data() == nullptr and size() == 0, and GetValue() will return nullptr.
     bool IsValid() const;
-    const char *GetKey() const;
+    std::string_view GetKey() const;
     // This points directly to the underlying data and is valid while
     // the trie is alive. We keep ownership of the pointer.
     const void *GetValue() const;
@@ -604,28 +613,42 @@ class IcingDynamicTrie : public IIcingStorage {
   friend class IcingDynamicTrieTest_TrieShouldRespectLimits_Test;
   friend class IcingDynamicTrieTest_SyncErrorRecovery_Test;
   friend class IcingDynamicTrieTest_BitmapsClosedWhenInitFails_Test;
-  void GetHeader(IcingDynamicTrieHeader *hdr) const;
-  void SetHeader(const IcingDynamicTrieHeader &new_hdr);
+  libtextclassifier3::Status GetHeader(IcingDynamicTrieHeader* hdr) const;
+  libtextclassifier3::Status SetHeader(const IcingDynamicTrieHeader& new_hdr);
 
   static const uint32_t kInvalidSuffixIndex;
 
   // Stats helpers.
-  void CollectStatsRecursive(const Node &node, Stats *stats,
+  //
+  // REQUIRES: node is valid.
+  //   - Since we only invalidate Next to remove the edge from the trie and Node
+  //     is not invalidated after deletion, the caller should ensure that it
+  //     traverses correctly to a valid node according to the trie structure.
+  //     Calling this function with an invalid node is undefined behavior since
+  //     it could traverse into a deleted subtree, or invalid memory addresses.
+  //   - This also means storage_->empty() should be checked before calling this
+  //     function with the root node.
+  // Note: Refactored from recursive to iterative to prevent stack overflow
+  // on deep tries.
+  void CollectStatsIterative(const Node& node, Stats* stats,
                              uint32_t depth = 0) const;
 
   // Helpers for Find and Insert.
-  const Next *GetNextByChar(const Node *node, uint8_t key_char) const;
+  libtextclassifier3::StatusOr<const Next*> GetNextByChar(
+      const Node* node, uint8_t key_char) const;
   const Next *LowerBound(const Next *start, const Next *end, uint8_t key_char,
                          uint32_t node_index = 0) const;
   // Returns the number of valid nexts in the array.
   int GetValidNextsSize(const IcingDynamicTrie::Next *next_array_start,
                         int next_array_length) const;
-  void FindBestNode(const char *key, uint32_t *best_node_index, int *key_offset,
-                    bool prefix, bool utf8 = false) const;
+  libtextclassifier3::Status FindBestNode(std::string_view key,
+                                          uint32_t* best_node_index,
+                                          int* key_offset, bool prefix,
+                                          bool utf8 = false) const;
 
   // For value properties.  This truncates the data by clearing it, but leaving
   // the storage intact.
-  bool InitPropertyBitmaps();
+  libtextclassifier3::Status InitPropertyBitmaps();
 
   // Returns a pointer to a bitmap that is successfully opened.
   static std::unique_ptr<IcingFlashBitmap> OpenAndInitBitmap(

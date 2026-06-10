@@ -14,13 +14,21 @@
 
 #include "icing/schema/backup-schema-producer.h"
 
+#include <algorithm>
+#include <cstddef>
+#include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/property-util.h"
+#include "icing/schema/schema-util.h"
+#include "icing/schema/section-manager.h"
 #include "icing/schema/section.h"
 #include "icing/util/status-macros.h"
 
@@ -53,22 +61,58 @@ std::unordered_map<std::string_view, int> CreateIndexedIdCountMap(
   return property_indexed_id_count_map;
 }
 
+bool PropertyHasInvalidIndexingType(const PropertyConfigProto& property) {
+  return property.string_indexing_config().tokenizer_type() ==
+         StringIndexingConfig::TokenizerType::RFC822;
+}
+
+bool PropertyHasInvalidDataType(const PropertyConfigProto& property,
+                                const FeatureFlags& feature_flags) {
+  if (feature_flags.enable_embedding_backup_generation()) {
+    return property.data_type() == PropertyConfigProto::DataType::VECTOR;
+  }
+  return false;
+}
+
 // Returns the indices (within schema.types()) of all types that are rollback
 // incompatible (old code cannot handle these types if they are unmodified).
 //
 // Currently, this means types that:
 //   1. Use RFC822 tokenization for any properties
 //   2. Use more than 16 indexed properties
+//   3. Have been deduped to avoid redefining existing property definitions
 libtextclassifier3::StatusOr<std::vector<int>>
-GetRollbackIncompatibleTypeIndices(const SchemaProto& schema,
-                                   const SectionManager& type_manager) {
+GetRollbackIncompatibleTypeIndices(
+    const SchemaProto& schema, const SectionManager& type_manager,
+    const SchemaUtil::TypeConfigInfoCache& type_config_info_cache,
+    const FeatureFlags& feature_flags) {
   std::vector<int> invalid_type_indices;
   for (int i = 0; i < schema.types_size(); ++i) {
-    const SchemaTypeConfigProto& type = schema.types(i);
+    std::string_view type_name = schema.types(i).schema_type();
+
+    // Check if the type has been deduped. This should never cause an error -
+    // every type should have an entry in the type_config_info_cache.
+    ICING_ASSIGN_OR_RETURN(
+        bool is_deduped,
+        type_config_info_cache.IsSchemaTypeConfigDeduped(type_name));
+    if (is_deduped) {
+      invalid_type_indices.push_back(i);
+      continue;
+    }
+
+    // This should never cause an error.
+    ICING_ASSIGN_OR_RETURN(
+        SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder,
+        type_config_info_cache.GetFullSchemaTypeConfigHolder(type_name));
+    // At this point, we know that the type is not deduped, so we can safely
+    // get the base type config.
+    const SchemaTypeConfigProto& type = type_config_holder.base_type_config();
+
+    // Check if the type has any invalid properties.
     bool rollback_incompatible = false;
     for (const PropertyConfigProto& property : type.properties()) {
-      if (property.string_indexing_config().tokenizer_type() ==
-          StringIndexingConfig::TokenizerType::RFC822) {
+      if (PropertyHasInvalidIndexingType(property) ||
+          (PropertyHasInvalidDataType(property, feature_flags))) {
         rollback_incompatible = true;
         break;
       }
@@ -78,6 +122,7 @@ GetRollbackIncompatibleTypeIndices(const SchemaProto& schema,
       continue;
     }
 
+    // Check if the type has more than 16 indexed properties.
     ICING_ASSIGN_OR_RETURN(const std::vector<SectionMetadata>* metadata_list,
                            type_manager.GetMetadataList(type.schema_type()));
     if (metadata_list->size() > kOldTotalNumSections) {
@@ -87,16 +132,73 @@ GetRollbackIncompatibleTypeIndices(const SchemaProto& schema,
   return invalid_type_indices;
 }
 
+// Simulates the effects of marking property_name as unindexed. To do this, it:
+// 1. Decrements num_indexed_sections by the number of indexed ids consumed by
+//    property_name (and any sub-properties, if applicable).
+// 2. Removes property_name from property_indexed_id_count_map.
+void RemovePropertyIndexedIdCount(
+    std::string_view property_name, int& num_indexed_sections,
+    std::unordered_map<std::string_view, int>& property_indexed_id_count_map) {
+  auto indexed_count_itr = property_indexed_id_count_map.find(property_name);
+  if (indexed_count_itr != property_indexed_id_count_map.end()) {
+    num_indexed_sections -= indexed_count_itr->second;
+    property_indexed_id_count_map.erase(indexed_count_itr);
+  }
+}
+
+// Checks type for any properties that have invalid indexing types. Those
+// properties are marked as unindexed. num_indexed_sections and
+// property_indexed_id_count_map are updated to reflect this change.
+void HandleInvalidIndexingTypeProperties(
+    SchemaTypeConfigProto* type, int& num_indexed_sections,
+    std::unordered_map<std::string_view, int>& property_indexed_id_count_map) {
+  for (PropertyConfigProto& property : *type->mutable_properties()) {
+    // If the property uses the RFC tokenizer, then we need to set it to NONE
+    // and set match type UNKNOWN.
+    if (PropertyHasInvalidIndexingType(property)) {
+      property.clear_string_indexing_config();
+      RemovePropertyIndexedIdCount(property.property_name(),
+                                   num_indexed_sections,
+                                   property_indexed_id_count_map);
+    }
+  }
+}
+
+// Checks type for any properties that have invalid data types. Those properties
+// are removed entirely. num_indexed_sections and
+// property_indexed_id_count_map are updated to reflect this change.
+void RemoveInvalidDataTypeProperties(
+    SchemaTypeConfigProto* type, int& num_indexed_sections,
+    std::unordered_map<std::string_view, int>& property_indexed_id_count_map,
+    const FeatureFlags& feature_flags) {
+  auto itr = std::remove_if(
+      type->mutable_properties()->begin(), type->mutable_properties()->end(),
+      [&feature_flags](const PropertyConfigProto& property) {
+        return PropertyHasInvalidDataType(property, feature_flags);
+      });
+  // std::remove_if will simply move all of the matching elements to the end of
+  // the list and return an iterator to that first matching element. So we can
+  // iterate from that point to update the indexed id count and then erase the
+  // matching elements.
+  for (auto i = itr; i != type->mutable_properties()->end(); ++i) {
+    RemovePropertyIndexedIdCount(i->property_name(), num_indexed_sections,
+                                 property_indexed_id_count_map);
+  }
+  type->mutable_properties()->erase(itr, type->mutable_properties()->end());
+}
+
 }  // namespace
 
-/* static */ libtextclassifier3::StatusOr<BackupSchemaProducer>
-BackupSchemaProducer::Create(const SchemaProto& schema,
-                             const SectionManager& type_manager) {
+libtextclassifier3::StatusOr<BackupSchemaProducer::BackupSchemaResult>
+BackupSchemaProducer::Produce(
+    const SchemaProto& schema, const SectionManager& type_manager,
+    const SchemaUtil::TypeConfigInfoCache& type_config_info_cache) {
   ICING_ASSIGN_OR_RETURN(
       std::vector<int> invalid_type_indices,
-      GetRollbackIncompatibleTypeIndices(schema, type_manager));
+      GetRollbackIncompatibleTypeIndices(
+          schema, type_manager, type_config_info_cache, feature_flags_));
   if (invalid_type_indices.empty()) {
-    return BackupSchemaProducer();
+    return BackupSchemaResult();
   }
 
   SchemaProto backup_schema(schema);
@@ -104,31 +206,49 @@ BackupSchemaProducer::Create(const SchemaProto& schema,
   for (int i : invalid_type_indices) {
     SchemaTypeConfigProto* type = backup_schema.mutable_types(i);
 
+    // 1. If the type has been deduped, reassign the type to the full type
+    // config.
+    // This should never cause an error - every type should have an entry in
+    // the type_config_info_cache.
+    ICING_ASSIGN_OR_RETURN(
+        bool is_deduped,
+        type_config_info_cache.IsSchemaTypeConfigDeduped(type->schema_type()));
+    if (is_deduped) {
+      ICING_ASSIGN_OR_RETURN(
+          SchemaUtil::TypeConfigInfoCache::TypeConfigHolder
+              full_type_config_holder,
+          type_config_info_cache.GetFullSchemaTypeConfigHolder(
+              type->schema_type()));
+      *type = full_type_config_holder.ToSchemaTypeConfigProto();
+    }
+
+    // 2. Retrieve metadata on the set of indexed properties and (if necessary)
+    // populate the variables needed to track the indexed property counts.
+    //
     // This should never cause an error - every type should have an entry in the
     // type_manager.
     ICING_ASSIGN_OR_RETURN(const std::vector<SectionMetadata>* metadata_list,
                            type_manager.GetMetadataList(type->schema_type()));
-    int num_indexed_sections = metadata_list->size();
+    int num_indexed_sections = static_cast<int>(metadata_list->size());
     std::unordered_map<std::string_view, int> property_indexed_id_count_map;
     if (num_indexed_sections > kOldTotalNumSections) {
       property_indexed_id_count_map = CreateIndexedIdCountMap(metadata_list);
     }
 
-    // Step 1. Switch all properties with RFC tokenizer as unindexed.
-    for (PropertyConfigProto& property : *type->mutable_properties()) {
-      // If the property uses the RFC tokenizer, then we need to set it to NONE
-      // and set match type UNKNOWN.
-      if (property.string_indexing_config().tokenizer_type() ==
-          StringIndexingConfig::TokenizerType::RFC822) {
-        property.clear_string_indexing_config();
-        --num_indexed_sections;
-        property_indexed_id_count_map.erase(property.property_name());
-      }
+    // 3. Remove any properties that are invalid for the backup schema.
+    if (feature_flags_.enable_embedding_backup_generation()) {
+      RemoveInvalidDataTypeProperties(type, num_indexed_sections,
+                                      property_indexed_id_count_map,
+                                      feature_flags_);
     }
 
-    // Step 2. If there are any types that exceed the old indexed property
-    // limit, then mark indexed properties as unindexed until we're back under
-    // the limit.
+    // 4. Mark any properties with an invalid indexing type as unindexed.
+    HandleInvalidIndexingTypeProperties(type, num_indexed_sections,
+                                        property_indexed_id_count_map);
+
+    // 5. If there are any types that exceed the old indexed property limit,
+    // then mark indexed properties as unindexed until we're back under the
+    // limit.
     if (num_indexed_sections <= kOldTotalNumSections) {
       continue;
     }
@@ -157,7 +277,7 @@ BackupSchemaProducer::Create(const SchemaProto& schema,
       }
     }
   }
-  return BackupSchemaProducer(std::move(backup_schema));
+  return BackupSchemaResult(std::move(backup_schema));
 }
 
 }  // namespace lib

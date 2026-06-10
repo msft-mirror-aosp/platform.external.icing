@@ -15,9 +15,12 @@
 #ifndef ICING_PORTABLE_PLATFORM_H_
 #define ICING_PORTABLE_PLATFORM_H_
 
+#include <cstdlib>
+
 #include "unicode/uconfig.h"  // IWYU pragma: keep
 // clang-format: do not reorder the above include.
 
+#include "icing/expand/stemming/stemmer-factory.h"
 #include "unicode/uvernum.h"
 
 namespace icing {
@@ -43,9 +46,28 @@ inline bool IsIcuTokenization() {
   return !IsReverseJniTokenization() && !IsCfStringTokenization();
 }
 
-inline int GetIcuTokenizationVersion() {
-  return IsIcuTokenization() ? U_ICU_VERSION_MAJOR_NUM : 0;
+// Returns true if the code is running in a test environment.
+// We check the TEST_TMPDIR environment variable, which is typically set for all
+// tests.
+inline bool IsTestEnvironment() {
+  return std::getenv("TEST_TMPDIR") != nullptr;
 }
+
+// ICU and Reverse JNI tokenization are enabled.
+inline bool IsIcuWithReverseTokenization() {
+  return IsReverseJniTokenization() && !IsCfStringTokenization();
+}
+
+inline int GetIcuTokenizationVersion() {
+  return (IsIcuTokenization() || IsIcuWithReverseTokenization())
+             ? U_ICU_VERSION_MAJOR_NUM
+             : 0;
+}
+// Indicates whether stemming is enabled.
+//
+// This is false if stemmer_factory is compiled with the none-stemmer
+// implementation and true for the snowball-stemmer implementation.
+inline bool IsStemmingEnabled() { return stemmer_factory::IsStemmingEnabled(); }
 
 // Whether we're running on android_x86
 inline bool IsAndroidX86() {
@@ -74,7 +96,7 @@ inline bool IsIosPlatform() {
 // TODO(b/259129263): verify the flag works for different platforms.
 #if defined(__arm__) || defined(__i386__)
 #define ICING_ARCH_BIT_32
-#elif defined(__aarch64__) || defined(__x86_64__)
+#elif defined(__aarch64__) || defined(__x86_64__) || defined(__arm64__)
 #define ICING_ARCH_BIT_64
 #else
 #define ICING_ARCH_BIT_UNKNOWN

@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -26,6 +27,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator-or.h"
@@ -65,10 +67,9 @@ libtextclassifier3::StatusOr<LiteIndex::Options> CreateLiteIndexOptions(
         "Requested hit buffer size %d is too large.",
         options.index_merge_size));
   }
-  return LiteIndex::Options(
-      options.base_dir + "/idx/lite.", options.index_merge_size,
-      options.lite_index_sort_at_indexing, options.lite_index_sort_size,
-      options.include_property_existence_metadata_hits);
+  return LiteIndex::Options(options.base_dir + "/idx/lite.",
+                            options.index_merge_size,
+                            options.lite_index_sort_size);
 }
 
 std::string MakeMainIndexFilepath(const std::string& base_dir) {
@@ -148,9 +149,11 @@ std::vector<TermMetadata> MergeAndRankTermMetadatas(
 
 libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
     const Options& options, const Filesystem* filesystem,
-    const IcingFilesystem* icing_filesystem) {
+    const IcingFilesystem* icing_filesystem,
+    const FeatureFlags* feature_flags) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(icing_filesystem);
+  ICING_RETURN_ERROR_IF_NULL(feature_flags);
 
   ICING_ASSIGN_OR_RETURN(LiteIndex::Options lite_index_options,
                          CreateLiteIndexOptions(options));
@@ -166,18 +169,17 @@ libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
       LiteIndex::Create(lite_index_options, icing_filesystem));
   // Sort the lite index if we've enabled sorting the HitBuffer at indexing
   // time, and there's an unsorted tail exceeding the threshold.
-  if (options.lite_index_sort_at_indexing &&
-      lite_index->HasUnsortedHitsExceedingSortThreshold()) {
+  if (lite_index->HasUnsortedHitsExceedingSortThreshold()) {
     lite_index->SortHits();
   }
 
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<MainIndex> main_index,
       MainIndex::Create(MakeMainIndexFilepath(options.base_dir), filesystem,
-                        icing_filesystem));
-  return std::unique_ptr<Index>(new Index(options, std::move(term_id_codec),
-                                          std::move(lite_index),
-                                          std::move(main_index), filesystem));
+                        icing_filesystem, feature_flags));
+  return std::unique_ptr<Index>(
+      new Index(options, std::move(term_id_codec), std::move(lite_index),
+                std::move(main_index), filesystem, feature_flags));
 }
 
 /* static */ libtextclassifier3::StatusOr<int> Index::ReadFlashIndexMagic(
@@ -197,7 +199,7 @@ libtextclassifier3::Status Index::TruncateTo(DocumentId document_id) {
   if (main_index_->last_added_document_id() != kInvalidDocumentId &&
       main_index_->last_added_document_id() > document_id) {
     ICING_VLOG(1) << "Clipping to " << document_id
-                  << ". Throwing out lite index which is at "
+                  << ". Throwing out main index which is at "
                   << main_index_->last_added_document_id();
     ICING_RETURN_IF_ERROR(main_index_->Reset());
   }
@@ -243,8 +245,7 @@ Index::FindLiteTermsByPrefix(
     SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
     const SuggestionResultChecker* suggestion_result_checker) {
   // Finds all the terms that start with the given prefix in the lexicon.
-  IcingDynamicTrie::Iterator term_iterator(lite_index_->lexicon(),
-                                           prefix.c_str());
+  IcingDynamicTrie::Iterator term_iterator(lite_index_->lexicon(), prefix);
 
   std::vector<TermMetadata> term_metadata_list;
   while (term_iterator.IsValid()) {
@@ -260,7 +261,7 @@ Index::FindLiteTermsByPrefix(
     if (hit_score > 0) {
       // There is at least one document in the given namespace has this term.
       term_metadata_list.push_back(
-          TermMetadata(term_iterator.GetKey(), hit_score));
+          TermMetadata(std::string(term_iterator.GetKey()), hit_score));
     }
 
     term_iterator.Advance();
@@ -279,7 +280,6 @@ Index::FindTermsByPrefix(
     return term_metadata_list;
   }
   // Get results from the LiteIndex.
-  // TODO(b/250648165) support score term by prefix_hit in lite_index.
   ICING_ASSIGN_OR_RETURN(
       std::vector<TermMetadata> lite_term_metadata_list,
       FindLiteTermsByPrefix(prefix, rank_by, suggestion_result_checker));
@@ -311,7 +311,8 @@ libtextclassifier3::Status Index::Optimize(
                                new_last_added_document_id);
 }
 
-libtextclassifier3::Status Index::Editor::BufferTerm(const char* term) {
+libtextclassifier3::Status Index::Editor::BufferTerm(
+    std::string_view term, TermMatchType::Code match_type) {
   // Step 1: See if this term is already in the lexicon
   uint32_t tvi;
   auto tvi_or = lite_index_->GetTermId(term);
@@ -319,10 +320,19 @@ libtextclassifier3::Status Index::Editor::BufferTerm(const char* term) {
   // Step 2: Update the lexicon, either add the term or update its properties
   if (tvi_or.ok()) {
     tvi = tvi_or.ValueOrDie();
-    if (seen_tokens_.find(tvi) != seen_tokens_.end()) {
-      ICING_VLOG(1) << "Updating term frequency for term " << term;
-      if (seen_tokens_[tvi] != Hit::kMaxTermFrequency) {
-        ++seen_tokens_[tvi];
+    auto itr = seen_tokens_.find(tvi);
+    if (itr != seen_tokens_.end()) {
+      HitDetails& hit_details = itr->second;
+      if (hit_details.match_type == TermMatchType::EXACT_ONLY &&
+          match_type == TermMatchType::PREFIX) {
+        // If the same term is added multiple times, but with different match
+        // types, we will always update the match type to PREFIX.
+        ICING_VLOG(1) << "Updating term match type for term " << term;
+        hit_details.match_type = TermMatchType::PREFIX;
+      }
+      if (hit_details.term_frequency != Hit::kMaxTermFrequency) {
+        ICING_VLOG(1) << "Updating term frequency for term " << term;
+        ++hit_details.term_frequency;
       }
       return libtextclassifier3::Status::OK;
     }
@@ -330,22 +340,24 @@ libtextclassifier3::Status Index::Editor::BufferTerm(const char* term) {
                   << " is already present in lexicon. Updating.";
     // Already in the lexicon. Just update the properties.
     ICING_RETURN_IF_ERROR(lite_index_->UpdateTermProperties(
-        tvi, term_match_type_ == TermMatchType::PREFIX, namespace_id_));
+        tvi, match_type == TermMatchType::PREFIX, namespace_id_));
   } else {
     ICING_VLOG(1) << "Term " << term << " is not in lexicon. Inserting.";
     // Haven't seen this term before. Add it to the lexicon.
     ICING_ASSIGN_OR_RETURN(
-        tvi, lite_index_->InsertTerm(term, term_match_type_, namespace_id_));
+        tvi, lite_index_->InsertTerm(term, match_type, namespace_id_));
   }
   // Token seen for the first time in the current document.
-  seen_tokens_[tvi] = 1;
+  seen_tokens_[tvi] = {match_type, /*term_frequency=*/1};
   return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::Status Index::Editor::IndexAllBufferedTerms() {
   for (auto itr = seen_tokens_.begin(); itr != seen_tokens_.end(); itr++) {
-    Hit hit(section_id_, document_id_, /*term_frequency=*/itr->second,
-            term_match_type_ == TermMatchType::PREFIX);
+    Hit hit(section_id_, document_id_, itr->second.term_frequency,
+            /*is_in_prefix_section=*/itr->second.match_type ==
+                TermMatchType::PREFIX,
+            /*is_prefix_hit=*/false, /*is_stemmed_hit=*/false);
     ICING_ASSIGN_OR_RETURN(
         uint32_t term_id, term_id_codec_->EncodeTvi(itr->first, TviType::LITE));
     ICING_RETURN_IF_ERROR(lite_index_->AddHit(term_id, hit));

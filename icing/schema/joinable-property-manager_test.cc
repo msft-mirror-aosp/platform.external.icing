@@ -31,6 +31,7 @@
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-type-manager.h"
 #include "icing/schema/schema-util.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
 #include "icing/testing/common-matchers.h"
@@ -72,7 +73,8 @@ PropertyConfigProto CreateSenderQualifiedIdPropertyConfig() {
   return PropertyConfigBuilder()
       .SetName(kPropertySenderQualifiedId)
       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID, /*propagate_delete=*/true)
+      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                   DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
       .SetCardinality(CARDINALITY_OPTIONAL)
       .Build();
 }
@@ -81,7 +83,8 @@ PropertyConfigProto CreateReceiverQualifiedIdPropertyConfig() {
   return PropertyConfigBuilder()
       .SetName(kPropertyReceiverQualifiedId)
       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID, /*propagate_delete=*/true)
+      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                   DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
       .SetCardinality(CARDINALITY_OPTIONAL)
       .Build();
 }
@@ -90,7 +93,8 @@ PropertyConfigProto CreateGroupQualifiedIdPropertyConfig() {
   return PropertyConfigBuilder()
       .SetName(kPropertyGroupQualifiedId)
       .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
-      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID, /*propagate_delete=*/false)
+      .SetJoinable(JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                   DELETE_PROPAGATION_TYPE_NONE)
       .SetCardinality(CARDINALITY_OPTIONAL)
       .Build();
 }
@@ -141,11 +145,16 @@ SchemaTypeConfigProto CreateConversationTypeConfig() {
 
 class JoinablePropertyManagerTest : public ::testing::Test {
  protected:
+  JoinablePropertyManagerTest()
+      : type_config_info_cache_(/*enable_schema_definition_deduping=*/true) {}
+
   void SetUp() override {
     test_dir_ = GetTestTempDir() + "/icing";
 
-    type_config_map_.emplace(kTypeEmail, CreateEmailTypeConfig());
-    type_config_map_.emplace(kTypeConversation, CreateConversationTypeConfig());
+    ICING_ASSERT_OK(
+        type_config_info_cache_.AddTypeConfig(CreateEmailTypeConfig()));
+    ICING_ASSERT_OK(
+        type_config_info_cache_.AddTypeConfig(CreateConversationTypeConfig()));
 
     email_document_ =
         DocumentBuilder()
@@ -189,7 +198,7 @@ class JoinablePropertyManagerTest : public ::testing::Test {
 
   Filesystem filesystem_;
   std::string test_dir_;
-  SchemaUtil::TypeConfigMap type_config_map_;
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache_;
   std::unique_ptr<KeyMapper<SchemaTypeId>> schema_type_mapper_;
 
   DocumentProto email_document_;
@@ -201,7 +210,8 @@ TEST_F(JoinablePropertyManagerTest, ExtractJoinableProperties) {
   // JoinablePropertyManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Extracts all joinable properties from 'Email' document
   ICING_ASSERT_OK_AND_ASSIGN(JoinablePropertyGroup joinable_property_group,
@@ -233,7 +243,8 @@ TEST_F(JoinablePropertyManagerTest, ExtractJoinablePropertiesNested) {
   // JoinablePropertyManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Extracts all joinable properties from 'Conversation' document
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -275,7 +286,8 @@ TEST_F(JoinablePropertyManagerTest,
   // JoinablePropertyManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Create an email document without receiverQualifiedId.
   DocumentProto another_email_document =
@@ -311,7 +323,8 @@ TEST_F(JoinablePropertyManagerTest, GetJoinablePropertyMetadata) {
   // JoinablePropertyManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Email (joinable property id -> joinable property path):
   //   0 -> receiverQualifiedId
@@ -364,8 +377,9 @@ TEST_F(JoinablePropertyManagerTest,
   // JoinablePropertyManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
-  ASSERT_THAT(type_config_map_, SizeIs(2));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
+  ASSERT_THAT(type_config_info_cache_, SizeIs(2));
 
   EXPECT_THAT(schema_type_manager->joinable_property_manager()
                   .GetJoinablePropertyMetadata(/*schema_type_id=*/-1,
@@ -383,7 +397,8 @@ TEST_F(JoinablePropertyManagerTest,
   // JoinablePropertyManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Email (joinable property id -> joinable property path):
   //   0 -> receiverQualifiedId
@@ -416,7 +431,8 @@ TEST_F(JoinablePropertyManagerTest, GetJoinablePropertyMetadataByPath) {
   // JoinablePropertyManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Email (joinable property id -> joinable property path):
   //   0 -> receiverQualifiedId
@@ -469,8 +485,9 @@ TEST_F(JoinablePropertyManagerTest,
   // JoinablePropertyManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
-  ASSERT_THAT(type_config_map_, SizeIs(2));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
+  ASSERT_THAT(type_config_info_cache_, SizeIs(2));
 
   EXPECT_THAT(schema_type_manager->joinable_property_manager()
                   .GetJoinablePropertyMetadata(/*schema_type_id=*/-1,
@@ -487,7 +504,8 @@ TEST_F(JoinablePropertyManagerTest, GetJoinablePropertyMetadataByPathNotExist) {
   // JoinablePropertyManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   EXPECT_THAT(
       schema_type_manager->joinable_property_manager()
@@ -506,7 +524,8 @@ TEST_F(JoinablePropertyManagerTest, GetMetadataListInvalidSchemaTypeName) {
   // JoinablePropertyManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   EXPECT_THAT(schema_type_manager->joinable_property_manager().GetMetadataList(
                   "NonExistingSchemaTypeName"),

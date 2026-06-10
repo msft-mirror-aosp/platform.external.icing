@@ -18,6 +18,7 @@
 #include "gtest/gtest.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -343,27 +344,27 @@ TEST_F(UsageStoreTest, PersistToDisk) {
   EXPECT_THAT(usage_store->PersistToDisk(), IsOk());
 }
 
-TEST_F(UsageStoreTest, ComputeChecksum) {
+TEST_F(UsageStoreTest, UpdateChecksum) {
   ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<UsageStore> usage_store,
                              UsageStore::Create(&filesystem_, test_dir_));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum1, usage_store->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum1, usage_store->UpdateChecksum());
 
   // Create usage scores with some random numbers.
   UsageStore::UsageScores scores = CreateUsageScores(
       /*type1_timestamp=*/7, /*type2_timestamp=*/9, /*type3_timestamp=*/1,
       /*type1_count=*/3, /*type2_count=*/4, /*type3_count=*/9);
   ICING_ASSERT_OK(usage_store->SetUsageScores(/*document_id=*/1, scores));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum2, usage_store->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum2, usage_store->UpdateChecksum());
 
   ICING_ASSERT_OK(usage_store->SetUsageScores(/*document_id=*/2, scores));
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum3, usage_store->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum3, usage_store->UpdateChecksum());
 
   EXPECT_THAT(checksum1, Not(Eq(checksum2)));
   EXPECT_THAT(checksum1, Not(Eq(checksum3)));
   EXPECT_THAT(checksum2, Not(Eq(checksum3)));
 
   // Without changing the store, checksum should be the same.
-  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum4, usage_store->ComputeChecksum());
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 checksum4, usage_store->UpdateChecksum());
   EXPECT_THAT(checksum3, Eq(checksum4));
 }
 

@@ -28,6 +28,14 @@
 
 #define ICING_RETURN_IF_ERROR(expr) TC3_RETURN_IF_ERROR(expr)
 
+#define ICING_RETURN_EXPRESSION_IF_ERROR(expr, error_expression)        \
+  if (::libtextclassifier3::StatusAdapter adapter{expr}) {              \
+  } else {                                                              \
+    ::libtextclassifier3::Status _(std::move(adapter).status());        \
+    (void)_; /* error_expression is allowed to not use this variable */ \
+    return (error_expression);                                          \
+  }
+
 #define ICING_ASSIGN_OR_RETURN(...)                            \
   TC_STATUS_MACROS_IMPL_GET_VARIADIC_(                         \
       (__VA_ARGS__, TC_STATUS_MACROS_IMPL_ASSIGN_OR_RETURN_3_, \

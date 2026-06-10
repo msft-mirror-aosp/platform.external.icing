@@ -71,36 +71,39 @@
 #include <cerrno>
 #include <cinttypes>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <ostream>
+#include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/legacy/core/icing-packed-pod.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/core/icing-timer.h"
 #include "icing/legacy/index/icing-array-storage.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-flash-bitmap.h"
 #include "icing/legacy/index/icing-mmapper.h"
+#include "icing/legacy/index/icing-storage.h"
 #include "icing/legacy/index/proto/icing-dynamic-trie-header.pb.h"
+#include "icing/util/crc32.h"
 #include "icing/util/i18n-utils.h"
 #include "icing/util/logging.h"
 #include "icing/util/math-util.h"
 #include "icing/util/status-macros.h"
-
-using std::inplace_merge;
-using std::lower_bound;
-using std::max;
-using std::mismatch;
-using std::pair;
-using std::sort;
-using std::vector;
+#include "unicode/utf8.h"
+#include "unicode/utypes.h"
 
 namespace icing {
 namespace lib {
 
 namespace {
+
 constexpr uint32_t kInvalidNodeIndex = (1U << 24) - 1;
 constexpr uint32_t kInvalidNextIndex = ~0U;
 
@@ -108,6 +111,17 @@ void ResetMutableNext(IcingDynamicTrie::Next &mutable_next) {
   mutable_next.set_val(0xff);
   mutable_next.set_node_index(kInvalidNodeIndex);
 }
+
+// Helper function to check that there is no termination character '\0' in the
+// key.
+bool IsKeyValid(std::string_view key) {
+  return key.find('\0') == std::string_view::npos;  // NOLINT
+}
+
+char GetCharOrNull(std::string_view s, int pos) {
+  return (pos < s.size()) ? s[pos] : '\0';
+}
+
 }  // namespace
 
 // Based on the bit field widths.
@@ -200,24 +214,26 @@ class IcingDynamicTrie::CandidateSet {
                                     matched_span, matched_span_len));
   }
 
-  void Pop(Candidate *candidate) {
+  libtextclassifier3::Status Pop(Candidate* candidate) {
     *candidate = candidates_.back();
     if (cur_prefix_.size() < candidate->matched_prefix_len) {
-      ICING_LOG(FATAL)
-          << "Length of current prefix is smaller than length of matched "
-             "prefer, there're inconsistencies in dynamic trie.";
+      return absl_ports::InternalError(
+          "Length of current prefix is smaller than length of matched "
+          "prefer, there're inconsistencies in dynamic trie.");
     }
 
     cur_prefix_.resize(candidate->matched_prefix_len);
     cur_prefix_.append(candidate->matched_span);
     candidates_.pop_back();
+    return libtextclassifier3::Status::OK;
   }
 
   bool empty() const { return candidates_.empty(); }
 
-  void Release(vector<OriginalMatch> *ret) {
+  libtextclassifier3::Status Release(std::vector<OriginalMatch>* ret) {
     if (!empty()) {
-      ICING_LOG(FATAL) << "Candidate set not empty before releasing matches";
+      return absl_ports::InternalError(
+          "Candidate set not empty before releasing matches");
     }
 
     ret->swap(matches_);
@@ -225,15 +241,16 @@ class IcingDynamicTrie::CandidateSet {
     cur_prefix_.clear();
     candidates_.clear();
     matches_.clear();
+    return libtextclassifier3::Status::OK;
   }
 
  private:
   const bool prefix_;
 
   std::string cur_prefix_;
-  vector<Candidate> candidates_;
+  std::vector<Candidate> candidates_;
 
-  vector<IcingDynamicTrie::OriginalMatch> matches_;
+  std::vector<IcingDynamicTrie::OriginalMatch> matches_;
 };
 
 // Options.
@@ -253,11 +270,11 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
 
   bool is_initialized() const { return hdr_mmapper_.is_valid(); }
 
-  bool CreateIfNotExist(const Options &options);
+  libtextclassifier3::Status CreateIfNotExist(const Options& options);
   bool Init();
   static bool Remove(const std::string &file_basename,
                      const IcingFilesystem &filesystem);
-  bool Sync();
+  libtextclassifier3::Status Sync();
   uint64_t GetDiskUsage() const;
 
   // Returns the size of the elements held in the trie. This excludes the size
@@ -266,7 +283,7 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
 
   void Warm();
 
-  void Clear();
+  libtextclassifier3::Status Clear();
 
   bool empty() const { return hdr().num_nodes() == 0; }
 
@@ -275,7 +292,14 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
   const Node *GetNode(uint32_t idx) const {
     return &array_storage_[NODE].array_cast<Node>()[idx];
   }
+
+  // Returns the number of elements in the node array.
+  uint32_t GetNodeArraySize() const { return array_storage_[NODE].num_elts(); }
+
+  // REQUIRES: !empty(). Otherwise node 0 could contain invalid data
+  //   (next_index, is_leaf, log2_num_children).
   const Node *GetRootNode() const { return GetNode(0); }
+
   const Next *GetNext(uint32_t idx, int child) const {
     return &array_storage_[NEXT].array_cast<Next>()[idx + child];
   }
@@ -295,12 +319,17 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
   // returns a writable element or array within and sets
   // dirty_pages_[array_type] as a side effect, assuming the mutable
   // area will get written to.
-  Node *GetMutableNode(uint32_t idx);
-  Next *GetMutableNextArray(uint32_t idx, uint32_t len);
-  char *GetMutableSuffix(uint32_t idx, uint32_t len);
+  libtextclassifier3::StatusOr<Node *> GetMutableNode(uint32_t idx);
+  libtextclassifier3::StatusOr<Next *> GetMutableNextArray(uint32_t idx,
+                                                           uint32_t len);
+  libtextclassifier3::StatusOr<char *> GetMutableSuffix(uint32_t idx,
+                                                        uint32_t len);
 
   // Update crcs based on current contents. Returns all_crc or kNoCrc.
-  uint32_t UpdateCrc();
+  libtextclassifier3::StatusOr<Crc32> UpdateCrc();
+
+  // Calculates the current crc and returns it.
+  Crc32 GetCrc() const;
 
   // Allocators.
   uint32_t nodes_left() const;
@@ -308,13 +337,14 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
   uint32_t suffixes_left() const;
 
   // REQUIRES: nodes_left() > 0.
-  Node *AllocNode();
+  libtextclassifier3::StatusOr<Node *> AllocNode();
   // REQUIRES: nexts_left() >= kMaxNextArraySize.
   libtextclassifier3::StatusOr<Next *> AllocNextArray(int size);
-  void FreeNextArray(Next *next, int log2_size);
+  libtextclassifier3::Status FreeNextArray(Next* next, int log2_size);
   // REQUIRES: suffixes_left() >= strlen(suffix) + 1 + value_size()
-  uint32_t MakeSuffix(const char *suffix, const void *value,
-                      uint32_t *value_index);
+  libtextclassifier3::StatusOr<uint32_t> MakeSuffix(std::string_view suffix,
+                                                    const void *value,
+                                                    uint32_t *value_index);
 
   const IcingDynamicTrieHeader &hdr() const { return hdr_.hdr; }
 
@@ -324,9 +354,11 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
 
   void inc_num_keys() { hdr_.hdr.set_num_keys(hdr_.hdr.num_keys() + 1); }
 
+  void dec_num_keys() { hdr_.hdr.set_num_keys(hdr_.hdr.num_keys() - 1); }
+
  private:
-  friend void IcingDynamicTrie::SetHeader(
-      const IcingDynamicTrieHeader &new_hdr);
+  friend libtextclassifier3::Status IcingDynamicTrie::SetHeader(
+      const IcingDynamicTrieHeader& new_hdr);
 
   enum ArrayType { NODE, NEXT, SUFFIX, NUM_ARRAY_TYPES };
 
@@ -334,18 +366,33 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
   // filename is the header and the rest correspond to ArrayType enum
   // values.
   static void GetFilenames(const std::string &file_basename,
-                           vector<std::string> *filenames);
+                           std::vector<std::string> *filenames);
   static std::string GetHeaderFilename(const std::string &file_basename);
 
-  uint32_t GetHeaderCrc() const;
+  // TODO(b/353398502) Improve the handling of the header to avoid this weird
+  // pattern with both an mmapped header and an in-memory header.
+  // Calculates the crc of the header as it is represented in the
+  // header_mmapper_.
+  Crc32 GetWrittenHeaderCrc() const;
 
-  uint32_t GetAllCrc() const;
+  // Calculates the crc of the hdr_.
+  //
+  // This value will deviate from GetWrittenHeaderCrc() if the header is
+  // modified after initialization or the last call to WriteHeader().
+  //
+  // NOTE: This function will need to serialize hdr_ to calculate the crc.
+  // Therefore, if given the choice, prefer to use GetWrittenHeaderCrc().
+  Crc32 GetHeaderCrc() const;
 
-  uint32_t UpdateCrcInternal(bool write_hdr);
+  // Returns the crc of the cached crcs.
+  Crc32 GetCachedCrc() const;
+
+  libtextclassifier3::StatusOr<Crc32> UpdateCrcInternal(bool write_hdr);
 
   // Initializes hdr_ with options and writes the resulting header to disk.
-  bool CreateNewHeader(IcingScopedFd sfd, const Options &options);
-  bool WriteHeader();
+  libtextclassifier3::Status CreateNewHeader(IcingScopedFd sfd,
+                                             const Options& options);
+  libtextclassifier3::Status WriteHeader();
 
   // Header block. On-disk header block format is as follows:
   //
@@ -383,11 +430,13 @@ class IcingDynamicTrie::IcingDynamicTrieStorage {
     uint32_t header_crc;
     uint32_t array_crcs[NUM_ARRAY_TYPES];
   };
-  Crcs *crcs_;
+  Crcs *cached_crcs_;
 
   static uint32_t serialized_header_max() {
     return IcingMMapper::system_page_size() - sizeof(Crcs);
   }
+
+  static Crc32 GetAllCrcs(const Crcs &crcs);
 
   RuntimeOptions runtime_options_;
 
@@ -405,7 +454,7 @@ IcingDynamicTrie::IcingDynamicTrieStorage::IcingDynamicTrieStorage(
     const IcingFilesystem *filesystem)
     : file_basename_(file_basename),
       hdr_mmapper_(false, MAP_SHARED),
-      crcs_(nullptr),
+      cached_crcs_(nullptr),
       runtime_options_(runtime_options),
       array_storage_(NUM_ARRAY_TYPES, IcingArrayStorage(*filesystem)),
       filesystem_(filesystem) {}
@@ -419,7 +468,7 @@ IcingDynamicTrie::IcingDynamicTrieStorage::~IcingDynamicTrieStorage() {
 }
 
 void IcingDynamicTrie::IcingDynamicTrieStorage::GetFilenames(
-    const std::string &file_basename, vector<std::string> *filenames) {
+    const std::string &file_basename, std::vector<std::string> *filenames) {
   const char *kArrayFilenameSuffixes[NUM_ARRAY_TYPES] = {
       ".n",
       ".x",
@@ -445,7 +494,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Init() {
       runtime_options_.storage_policy == RuntimeOptions::kMapSharedWithCrc;
 
   // Open files.
-  vector<std::string> filenames;
+  std::vector<std::string> filenames;
   GetFilenames(file_basename_, &filenames);
   for (size_t i = 0; i < filenames.size(); i++) {
     uint64_t file_size = filesystem_->GetFileSize(filenames[i].c_str());
@@ -479,17 +528,19 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Init() {
   }
 
   // Point crcs_ to correct region.
-  crcs_ = reinterpret_cast<Crcs *>(hdr_mmapper_.address() +
-                                   serialized_header_max());
-  if (crcs_->header_crc == kNoCrc) {
+  cached_crcs_ = reinterpret_cast<Crcs *>(hdr_mmapper_.address() +
+                                          serialized_header_max());
+  // Header hasn't been initialized yet. So we should check what's actually
+  // written to checksum the header.
+  if (cached_crcs_->header_crc == kNoCrc) {
     // Create crcs.
-    crcs_->header_crc = GetHeaderCrc();
+    cached_crcs_->header_crc = GetWrittenHeaderCrc().Get();
 
     // Do the same for the arrays.
     init_crcs = true;
   } else {
     // Verify crc.
-    if (crcs_->header_crc != GetHeaderCrc()) {
+    if (cached_crcs_->header_crc != GetWrittenHeaderCrc().Get()) {
       ICING_LOG(ERROR) << "Trie header crc failed";
       goto failed;
     }
@@ -499,41 +550,42 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Init() {
   if (!hdr_.Init(hdr_mmapper_.address(),
                  IcingMMapper::system_page_size() - sizeof(Crcs)) ||
       !hdr_.Verify()) {
-    ICING_LOG(ERROR) << "Trie reading header failed";
+    ICING_LOG(ERROR) << "Trie reading header failed. Path: " << file_basename_;
     goto failed;
   }
 
   // We have the header set up. Now read in the arrays.
   if (!array_storage_[NODE].Init(array_fds_[NODE].get(), 0, map_shared,
                                  sizeof(Node), hdr_.hdr.num_nodes(),
-                                 hdr_.hdr.max_nodes(), &crcs_->array_crcs[NODE],
-                                 init_crcs)) {
+                                 hdr_.hdr.max_nodes(),
+                                 &cached_crcs_->array_crcs[NODE], init_crcs)) {
     ICING_LOG(ERROR) << "Trie mmap node failed";
     goto failed;
   }
 
   if (!array_storage_[NEXT].Init(array_fds_[NEXT].get(), 0, map_shared,
                                  sizeof(Next), hdr_.hdr.num_nexts(),
-                                 hdr_.hdr.max_nexts(), &crcs_->array_crcs[NEXT],
-                                 init_crcs)) {
+                                 hdr_.hdr.max_nexts(),
+                                 &cached_crcs_->array_crcs[NEXT], init_crcs)) {
     ICING_LOG(ERROR) << "Trie mmap next failed";
     goto failed;
   }
 
-  if (!array_storage_[SUFFIX].Init(array_fds_[SUFFIX].get(), 0, map_shared,
-                                   sizeof(char), hdr_.hdr.suffixes_size(),
-                                   hdr_.hdr.max_suffixes_size(),
-                                   &crcs_->array_crcs[SUFFIX], init_crcs)) {
+  if (!array_storage_[SUFFIX].Init(
+          array_fds_[SUFFIX].get(), 0, map_shared, sizeof(char),
+          hdr_.hdr.suffixes_size(), hdr_.hdr.max_suffixes_size(),
+          &cached_crcs_->array_crcs[SUFFIX], init_crcs)) {
     ICING_LOG(ERROR) << "Trie mmap suffix failed";
     goto failed;
   }
 
-  // Overall crc.
+  // All of the cached crcs are now up to date. Either calculate+set the all crc
+  // or calculate+check the all crc.
   if (init_crcs) {
-    crcs_->all_crc = GetAllCrc();
+    cached_crcs_->all_crc = GetCachedCrc().Get();
   } else {
     // Verify crc.
-    if (crcs_->all_crc != GetAllCrc()) {
+    if (cached_crcs_->all_crc != GetCachedCrc().Get()) {
       ICING_LOG(ERROR) << "Trie all crc failed";
       goto failed;
     }
@@ -542,7 +594,7 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Init() {
   return true;
 
 failed:
-  crcs_ = nullptr;
+  cached_crcs_ = nullptr;
   hdr_mmapper_.Unmap();
   hdr_.Invalidate();
   for (int i = 0; i < NUM_ARRAY_TYPES; i++) {
@@ -553,20 +605,21 @@ failed:
   return false;
 }
 
-bool IcingDynamicTrie::IcingDynamicTrieStorage::CreateIfNotExist(
-    const Options &options) {
-  vector<std::string> filenames;
+libtextclassifier3::Status
+IcingDynamicTrie::IcingDynamicTrieStorage::CreateIfNotExist(
+    const Options& options) {
+  std::vector<std::string> filenames;
   GetFilenames(file_basename_, &filenames);
 
   // Check already exists. Just header file check is enough.
   if (filesystem_->FileExists(filenames[0].c_str())) {
-    return true;
+    return libtextclassifier3::Status::OK;
   }
 
   // Ensure the storage directory exists
   std::string storage_dir = filesystem_->GetDirname(filenames[0].c_str());
   if (!filesystem_->CreateDirectoryRecursively(storage_dir.c_str())) {
-    return false;
+    return absl_ports::InternalError("Failed to create trie storage directory");
   }
 
   // Create files.
@@ -574,48 +627,58 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::CreateIfNotExist(
     IcingScopedFd sfd(filesystem_->OpenForWrite(filenames[i].c_str()));
     if (!sfd.is_valid()) {
       Remove(file_basename_, *filesystem_);
-      return false;
+      return absl_ports::InternalError(
+          "Failed to open/create trie storage file: " + filenames[i]);
     }
 
     if (i == 0) {
-      if (!CreateNewHeader(std::move(sfd), options)) {
-        ICING_LOG(ERROR) << "Serialize trie header failed";
+      libtextclassifier3::Status status =
+          CreateNewHeader(std::move(sfd), options);
+      if (!status.ok()) {
         Remove(file_basename_, *filesystem_);
-        return false;
+        return status;
       }
     } else {
       // Crcs are automatically kNoCrc so they will be initialized
       // upon first call to Init.
       if (!filesystem_->Truncate(*sfd, 0)) {
         Remove(file_basename_, *filesystem_);
-        return false;
+        return absl_ports::InternalError(
+            "Failed to truncate trie storage file: " + filenames[i]);
       }
     }
   }
-  return true;
+  return libtextclassifier3::Status::OK;
 }
 
-bool IcingDynamicTrie::IcingDynamicTrieStorage::CreateNewHeader(
-    IcingScopedFd sfd, const Options &options) {
+libtextclassifier3::Status
+IcingDynamicTrie::IcingDynamicTrieStorage::CreateNewHeader(
+    IcingScopedFd sfd, const Options& options) {
   ICING_VLOG(1) << "Creating header with write+sync";
   hdr_.Init(options);
   auto buf = std::make_unique<uint8_t[]>(IcingMMapper::system_page_size());
   // serialized_header_max must be less than system_page_size so we don't
   // overflow buf when serializing the header.
   if (serialized_header_max() > IcingMMapper::system_page_size()) {
-    ICING_LOG(FATAL) << "serialized_header_max exceeds system page size";
+    return absl_ports::InternalError(
+        "serialized_header_max exceeds system page size");
   }
 
-  return hdr_.SerializeToArray(buf.get(), serialized_header_max()) &&
-         filesystem_->Write(sfd.get(), buf.get(),
-                            IcingMMapper::system_page_size()) &&
-         filesystem_->DataSync(sfd.get());
+  if (!hdr_.SerializeToArray(buf.get(), serialized_header_max()) ||
+      !filesystem_->Write(sfd.get(), buf.get(),
+                          IcingMMapper::system_page_size()) ||
+      !filesystem_->DataSync(sfd.get())) {
+    return absl_ports::InternalError(
+        "Failed to serialize "
+        "or write trie header");
+  }
+  return libtextclassifier3::Status::OK;
 }
 
 bool IcingDynamicTrie::IcingDynamicTrieStorage::Remove(
     const std::string &file_basename, const IcingFilesystem &filesystem) {
   bool success = true;
-  vector<std::string> files;
+  std::vector<std::string> files;
   GetFilenames(file_basename, &files);
   for (size_t i = 0; i < files.size(); i++) {
     if (!filesystem.DeleteFile(files[i].c_str())) {
@@ -631,9 +694,9 @@ void IcingDynamicTrie::IcingDynamicTrieStorage::Warm() {
   }
 }
 
-void IcingDynamicTrie::IcingDynamicTrieStorage::Clear() {
+libtextclassifier3::Status IcingDynamicTrie::IcingDynamicTrieStorage::Clear() {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::InternalError("DynamicTrie not initialized");
   }
 
   // Clear header.
@@ -649,47 +712,39 @@ void IcingDynamicTrie::IcingDynamicTrieStorage::Clear() {
   for (int i = 0; i < NUM_ARRAY_TYPES; i++) {
     array_storage_[i].Clear();
   }
-
-  // Copy to persistence.
-  WriteHeader();
+  return WriteHeader();
 }
 
-bool IcingDynamicTrie::IcingDynamicTrieStorage::Sync() {
+libtextclassifier3::Status IcingDynamicTrie::IcingDynamicTrieStorage::Sync() {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::InternalError("DynamicTrie not initialized");
   }
 
   uint32_t total_flushed = 0;
-  bool success = true;
 
   // Sync all array types.
   for (int i = 0; i < NUM_ARRAY_TYPES; i++) {
     total_flushed += array_storage_[i].Sync();
     if (!filesystem_->DataSync(array_fds_[i].get())) {
-      ICING_LOG(ERROR) << "Unable to sync data for flushing";
-      success = false;
+      return absl_ports::InternalError("Failed to sync data");
     }
   }
 
-  if (!WriteHeader()) {
-    ICING_LOG(ERROR) << "Flushing trie header failed: " << strerror(errno);
-    success = false;
-  }
+  ICING_RETURN_IF_ERROR(WriteHeader());
 
   // Need to update CRCs before we sync the header mmap.
-  UpdateCrcInternal(false);
+  ICING_RETURN_IF_ERROR(UpdateCrcInternal(false));
 
   // Sync header.
   if (!hdr_mmapper_.Sync()) {
-    ICING_LOG(ERROR) << "Unable to sync trie header for flushing";
-    success = false;
+    return absl_ports::InternalError("Unable to sync trie header for flushing");
   }
 
   if (total_flushed > 0) {
     ICING_VLOG(1) << "Flushing " << total_flushed << " pages of trie";
   }
 
-  return success;
+  return libtextclassifier3::Status::OK;
 }
 
 uint64_t IcingDynamicTrie::IcingDynamicTrieStorage::GetDiskUsage() const {
@@ -720,9 +775,10 @@ uint64_t IcingDynamicTrie::IcingDynamicTrieStorage::GetElementsFileSize()
   return total;
 }
 
-IcingDynamicTrie::Node *IcingDynamicTrie::IcingDynamicTrieStorage::AllocNode() {
+libtextclassifier3::StatusOr<IcingDynamicTrie::Node *>
+IcingDynamicTrie::IcingDynamicTrieStorage::AllocNode() {
   if (nodes_left() == 0) {
-    ICING_LOG(FATAL) << "No allocated nodes left";
+    return absl_ports::ResourceExhaustedError("No allocated nodes left");
   }
 
   hdr_.hdr.set_num_nodes(hdr_.hdr.num_nodes() + 1);
@@ -737,7 +793,7 @@ IcingDynamicTrie::IcingDynamicTrieStorage::AllocNextArray(int size) {
   }
 
   if (nexts_left() < static_cast<uint32_t>(kMaxNextArraySize)) {
-    ICING_LOG(FATAL) << "'next' buffer not enough";
+    return absl_ports::ResourceExhaustedError("'next' buffer not enough");
   }
 
   // Compute ceil(log2(size)).
@@ -749,15 +805,17 @@ IcingDynamicTrie::IcingDynamicTrieStorage::AllocNextArray(int size) {
   // Look in free list.
   Next *ret;
   if (hdr_.hdr.free_lists(log2_size) != kInvalidNextIndex) {
-    ret = GetMutableNextArray(hdr_.hdr.free_lists(log2_size), aligned_size);
+    ICING_ASSIGN_OR_RETURN(
+        ret, GetMutableNextArray(hdr_.hdr.free_lists(log2_size), aligned_size));
     uint32_t next_link = ret->next_index();
     if (next_link != kInvalidNextIndex && next_link >= hdr_.hdr.max_nexts()) {
-      ICING_LOG(FATAL) << "'next' index is out of range";
+      return absl_ports::InternalError("'next' index is out of range");
     }
     hdr_.hdr.set_free_lists(log2_size, next_link);
   } else {
     // Allocate a new one.
-    ret = GetMutableNextArray(hdr_.hdr.num_nexts(), aligned_size);
+    ICING_ASSIGN_OR_RETURN(
+        ret, GetMutableNextArray(hdr_.hdr.num_nexts(), aligned_size));
     hdr_.hdr.set_num_nexts(hdr_.hdr.num_nexts() + aligned_size);
   }
 
@@ -768,86 +826,133 @@ IcingDynamicTrie::IcingDynamicTrieStorage::AllocNextArray(int size) {
   return ret;
 }
 
-void IcingDynamicTrie::IcingDynamicTrieStorage::FreeNextArray(Next *next,
-                                                              int log2_size) {
+libtextclassifier3::Status
+IcingDynamicTrie::IcingDynamicTrieStorage::FreeNextArray(Next* next,
+                                                         int log2_size) {
   if (GetNextArrayIndex(next) + (1 << log2_size) > hdr_.hdr.max_nexts()) {
-    ICING_LOG(FATAL) << "'next' array is out of range";
+    return absl_ports::InternalError("'next' array is out of range");
   }
 
   // Put it in free list.
   next->set_next_index(hdr_.hdr.free_lists(log2_size));
   hdr_.hdr.set_free_lists(log2_size, GetNextArrayIndex(next));
+  return libtextclassifier3::Status::OK;
 }
 
-uint32_t IcingDynamicTrie::IcingDynamicTrieStorage::MakeSuffix(
-    const char *suffix, const void *value, uint32_t *value_index) {
-  int suffix_len = strlen(suffix);
-  if (suffixes_left() < suffix_len + 1 + value_size()) {
-    ICING_LOG(FATAL) << "'suffix' buffer not enough";
+libtextclassifier3::StatusOr<uint32_t>
+IcingDynamicTrie::IcingDynamicTrieStorage::MakeSuffix(std::string_view suffix,
+                                                      const void *value,
+                                                      uint32_t *value_index) {
+  if (suffixes_left() < suffix.size() + 1 + value_size()) {
+    return absl_ports::ResourceExhaustedError("'suffix' buffer not enough");
   }
 
-  char *start =
-      GetMutableSuffix(hdr_.hdr.suffixes_size(), suffix_len + 1 + value_size());
-  memcpy(start, suffix, suffix_len + 1);
-  memcpy(start + suffix_len + 1, value, value_size());
-  if (value_index) *value_index = GetSuffixIndex(start + suffix_len + 1);
-  hdr_.hdr.set_suffixes_size(hdr_.hdr.suffixes_size() + suffix_len + 1 +
+  ICING_ASSIGN_OR_RETURN(char *start,
+                         GetMutableSuffix(hdr_.hdr.suffixes_size(),
+                                          suffix.size() + 1 + value_size()));
+  // Copy suffix.
+  memcpy(start, suffix.data(), suffix.size());
+  // Set a '\0' after suffix.
+  memset(start + suffix.size(), /*value=*/0, /*num=*/1);
+  // Copy value.
+  memcpy(start + suffix.size() + 1, value, value_size());
+  if (value_index) *value_index = GetSuffixIndex(start + suffix.size() + 1);
+  hdr_.hdr.set_suffixes_size(hdr_.hdr.suffixes_size() + suffix.size() + 1 +
                              value_size());
 
   return GetSuffixIndex(start);
 }
 
-uint32_t IcingDynamicTrie::IcingDynamicTrieStorage::GetHeaderCrc() const {
-  return IcingStringUtil::UpdateCrc32(
-      0, reinterpret_cast<const char *>(hdr_mmapper_.address()),
-      serialized_header_max());
+Crc32 IcingDynamicTrie::IcingDynamicTrieStorage::GetWrittenHeaderCrc() const {
+  std::string_view data(reinterpret_cast<const char *>(hdr_mmapper_.address()),
+                        serialized_header_max());
+  return Crc32(data);
 }
 
-uint32_t IcingDynamicTrie::IcingDynamicTrieStorage::GetAllCrc() const {
+Crc32 IcingDynamicTrie::IcingDynamicTrieStorage::GetHeaderCrc() const {
+  // Create a buffer that is the same as the mmapped header.
+  auto hdr_data = std::make_unique<uint8_t[]>(serialized_header_max());
+  std::memcpy(hdr_data.get(), hdr_mmapper_.address(), serialized_header_max());
+
+  // Serialize the in-memory header to the buffer and then checksum it.
+  hdr_.SerializeToArray(hdr_data.get(), serialized_header_max());
+  std::string_view data(reinterpret_cast<const char *>(hdr_data.get()),
+                        serialized_header_max());
+  return Crc32(data);
+}
+
+Crc32 IcingDynamicTrie::IcingDynamicTrieStorage::GetCachedCrc() const {
+  return GetAllCrcs(*cached_crcs_);
+}
+
+/*static*/ Crc32 IcingDynamicTrie::IcingDynamicTrieStorage::GetAllCrcs(
+    const IcingDynamicTrie::IcingDynamicTrieStorage::Crcs &crcs) {
   // Append array crcs to header crc.
-  return IcingStringUtil::UpdateCrc32(
-      crcs_->header_crc, reinterpret_cast<const char *>(crcs_->array_crcs),
-      sizeof(crcs_->array_crcs));
+  Crc32 crc(crcs.header_crc);
+  std::string_view data(reinterpret_cast<const char *>(crcs.array_crcs),
+                        sizeof(cached_crcs_->array_crcs));
+  crc.Append(data);
+  return crc;
 }
 
-uint32_t IcingDynamicTrie::IcingDynamicTrieStorage::UpdateCrc() {
+Crc32 IcingDynamicTrie::IcingDynamicTrieStorage::GetCrc() const {
+  // crcs_ holds cached values. We want the crcs that represent the content *as
+  // it exists now*.
+  Crcs crcs;
+  crcs.header_crc = GetHeaderCrc().Get();
+  for (int i = 0; i < NUM_ARRAY_TYPES; i++) {
+    crcs.array_crcs[i] = array_storage_[i].GetCrc().Get();
+  }
+  return GetAllCrcs(crcs);
+}
+
+libtextclassifier3::StatusOr<Crc32>
+IcingDynamicTrie::IcingDynamicTrieStorage::UpdateCrc() {
   return UpdateCrcInternal(true);
 }
 
-uint32_t IcingDynamicTrie::IcingDynamicTrieStorage::UpdateCrcInternal(
-    bool write_hdr) {
-  if (write_hdr && !WriteHeader()) {
-    ICING_LOG(ERROR) << "Flushing trie header failed: " << strerror(errno);
+libtextclassifier3::StatusOr<Crc32>
+IcingDynamicTrie::IcingDynamicTrieStorage::UpdateCrcInternal(bool write_hdr) {
+  if (write_hdr) {
+    ICING_RETURN_IF_ERROR(WriteHeader());
   }
 
-  crcs_->header_crc = GetHeaderCrc();
-
+  // Since we just wrote the header, GetHeaderCrc() and GetWrittenHeaderCrc()
+  // are equivalent. We call GetWrittenHeaderCrc() because it avoids serializing
+  // the header to recalculate the crc.
+  cached_crcs_->header_crc = GetWrittenHeaderCrc().Get();
   for (int i = 0; i < NUM_ARRAY_TYPES; i++) {
     array_storage_[i].UpdateCrc();
   }
 
-  crcs_->all_crc = GetAllCrc();
-
-  return crcs_->all_crc;
+  // All of the cached crcs are now up to date.
+  Crc32 all_crc = GetAllCrcs(*cached_crcs_);
+  cached_crcs_->all_crc = all_crc.Get();
+  return all_crc;
 }
 
-bool IcingDynamicTrie::IcingDynamicTrieStorage::WriteHeader() {
-  return hdr_.SerializeToArray(hdr_mmapper_.address(), serialized_header_max());
+libtextclassifier3::Status
+IcingDynamicTrie::IcingDynamicTrieStorage::WriteHeader() {
+  if (!hdr_.SerializeToArray(hdr_mmapper_.address(), serialized_header_max())) {
+    return absl_ports::InternalError("Failed to serialize header");
+  }
+  return libtextclassifier3::Status::OK;
 }
 
-IcingDynamicTrie::Node *
+libtextclassifier3::StatusOr<IcingDynamicTrie::Node *>
 IcingDynamicTrie::IcingDynamicTrieStorage::GetMutableNode(uint32_t idx) {
   return array_storage_[NODE].GetMutableMem<Node>(idx, 1);
 }
 
-IcingDynamicTrie::Next *
+libtextclassifier3::StatusOr<IcingDynamicTrie::Next *>
 IcingDynamicTrie::IcingDynamicTrieStorage::GetMutableNextArray(uint32_t idx,
                                                                uint32_t len) {
   return array_storage_[NEXT].GetMutableMem<Next>(idx, len);
 }
 
-char *IcingDynamicTrie::IcingDynamicTrieStorage::GetMutableSuffix(
-    uint32_t idx, uint32_t len) {
+libtextclassifier3::StatusOr<char *>
+IcingDynamicTrie::IcingDynamicTrieStorage::GetMutableSuffix(uint32_t idx,
+                                                            uint32_t len) {
   return array_storage_[SUFFIX].GetMutableMem<char>(idx, len);
 }
 
@@ -885,7 +990,8 @@ bool IcingDynamicTrie::IcingDynamicTrieStorage::Header::Init(
   uint32_t magic;
   memcpy(&magic, buf, sizeof(magic));
   if (magic != kMagic) {
-    ICING_LOG(ERROR) << "Trie header magic mismatch";
+    ICING_LOG(ERROR) << "Invalid header magic for IcingDynamicTrie. Expected: "
+                     << kMagic << ", actual: " << magic;
     return false;
   }
   uint32_t len;
@@ -965,11 +1071,11 @@ class IcingDynamicTrie::Dumper {
   explicit Dumper(const IcingDynamicTrie &trie)
       : all_props_(trie), del_prop_(trie), storage_(trie.storage_.get()) {}
 
-  void Dump(std::ostream *pretty_print, vector<std::string> *keys) const {
+  void Dump(std::ostream *pretty_print, std::vector<std::string> *keys) const {
     if (storage_->empty()) {
       *pretty_print << "(empty)\n";
     } else {
-      DumpNodeRecursive("", *storage_->GetRootNode(), 0, pretty_print, keys);
+      DumpNodeIterative("", *storage_->GetRootNode(), 0, pretty_print, keys);
     }
   }
 
@@ -1005,38 +1111,80 @@ class IcingDynamicTrie::Dumper {
   //   level - how many levels deep we are in the trie
   //   ret - the stream to pretty print to
   //   keys - the keys encountered are appended to this
-  void DumpNodeRecursive(const std::string &prefix, const Node &node, int level,
-                         std::ostream *ret, vector<std::string> *keys) const {
-    if (node.is_leaf()) {
-      // Dump suffix and value.
-      for (int i = 0; i < level; i++) {
-        *ret << ' ';
-      }
-      const char *suffix = storage_->GetSuffix(node.next_index());
-      *ret << suffix;
-      *ret << ' ';
-      *ret << SuffixToValueAsString(suffix);
-      *ret << '\n';
-      keys->push_back(prefix + suffix);
-    } else {
-      // Go through each child (next) node. Print char and recursively
-      // print trie underneath.
-      for (uint32_t i = 0; i < (1U << node.log2_num_children()); i++) {
-        const Next &next = *storage_->GetNext(node.next_index(), i);
-        if (next.node_index() == kInvalidNodeIndex) break;
-        for (int j = 0; j < level; j++) {
+  //
+  // REQUIRES: node is valid.
+  //   - Since we only invalidate Next to remove the edge from the trie and Node
+  //     is not invalidated after deletion, the caller should ensure that it
+  //     traverses correctly to a valid node according to the trie structure.
+  //     Calling this function with an invalid node is undefined behavior since
+  //     it could traverse into a deleted subtree, or invalid memory addresses.
+  //   - This also means storage_->empty() should be checked before calling this
+  //     function with the root node.
+  // Note: Refactored from recursive to iterative to prevent stack overflow
+  // on deep tries.
+  void DumpNodeIterative(const std::string& prefix, const Node& node, int level,
+                         std::ostream* ret,
+                         std::vector<std::string>* keys) const {
+    // This function should be called only if the node is valid. The first call
+    // is always from the root node, so it means the trie should not be empty at
+    // this moment. Otherwise (root) node could contain invalid next_index(),
+    // is_leaf(), and log2_num_children().
+    struct StackFrame {
+      uint32_t node_index;
+      int level;
+      std::string prefix;
+      int val;  // character to print, or -1 for none
+    };
+    std::vector<StackFrame> stack;
+    stack.push_back({storage_->GetNodeIndex(&node), level, prefix, -1});
+
+    while (!stack.empty()) {
+      StackFrame frame = stack.back();
+      stack.pop_back();
+
+      if (frame.val != -1) {
+        for (int j = 0; j < frame.level - 1; j++) {
           *ret << ' ';
         }
-        std::string new_prefix = prefix;
-        if (next.val()) {
-          *ret << static_cast<char>(next.val());
-          new_prefix += next.val();
+        if (frame.val) {
+          *ret << static_cast<char>(frame.val);
         } else {
           *ret << "null";
         }
         *ret << '\n';
-        DumpNodeRecursive(new_prefix, *storage_->GetNode(next.node_index()),
-                          level + 1, ret, keys);
+      }
+
+      const Node& cur_node = *storage_->GetNode(frame.node_index);
+
+      if (cur_node.is_leaf()) {
+        // Dump suffix and value.
+        for (int i = 0; i < frame.level; i++) {
+          *ret << ' ';
+        }
+        const char* suffix = storage_->GetSuffix(cur_node.next_index());
+        *ret << suffix;
+        *ret << ' ';
+        *ret << SuffixToValueAsString(suffix);
+        *ret << '\n';
+        keys->push_back(frame.prefix + suffix);
+      } else {
+        // Find count of valid children.
+        uint32_t count = 0;
+        for (; count < (1U << cur_node.log2_num_children()); count++) {
+          const Next& next = *storage_->GetNext(cur_node.next_index(), count);
+          if (next.node_index() == kInvalidNodeIndex) break;
+        }
+
+        // Push children in reverse order.
+        for (int i = static_cast<int>(count) - 1; i >= 0; i--) {
+          const Next& next = *storage_->GetNext(cur_node.next_index(), i);
+          std::string new_prefix = frame.prefix;
+          if (next.val() != 0u) {
+            new_prefix += next.val();
+          }
+          stack.push_back(
+              {next.node_index(), frame.level + 1, new_prefix, next.val()});
+        }
       }
     }
   }
@@ -1062,30 +1210,34 @@ IcingDynamicTrie::IcingDynamicTrie(const std::string &filename_base,
 
 IcingDynamicTrie::~IcingDynamicTrie() { Close(); }
 
-bool IcingDynamicTrie::Init() {
-  if (is_initialized_) return true;
-
+libtextclassifier3::Status IcingDynamicTrie::Init() {
+  if (is_initialized_) return libtextclassifier3::Status::OK;
   if (storage_ != nullptr) {
-    ICING_LOG(FATAL) << "Storage is not null before initialization";
+    return absl_ports::InternalError("Storage already initialized");
   }
 
   storage_ = std::make_unique<IcingDynamicTrieStorage>(
       filename_base_, runtime_options_, filesystem_);
-  if (!storage_->Init() || !InitPropertyBitmaps()) {
+  if (!storage_->Init()) {
     storage_.reset();
-    return false;
+    return absl_ports::InternalError("Failed to initialize storage");
+  }
+  libtextclassifier3::Status status = InitPropertyBitmaps();
+  if (!status.ok()) {
+    storage_.reset();
+    return status;
   }
   is_initialized_ = true;
-  return true;
+  return libtextclassifier3::Status::OK;
 }
 
-bool IcingDynamicTrie::CreateIfNotExist(const Options &options) {
+libtextclassifier3::Status IcingDynamicTrie::CreateIfNotExist(
+    const Options& options) {
   // Initialized means exists.
-  if (is_initialized_) return true;
+  if (is_initialized_) return libtextclassifier3::Status::OK;
 
   if (!options.is_valid()) {
-    ICING_LOG(ERROR) << "Trie options invalid";
-    return false;
+    return absl_ports::InvalidArgumentError("Trie options invalid");
   }
 
   auto storage = std::make_unique<IcingDynamicTrieStorage>(
@@ -1096,7 +1248,11 @@ bool IcingDynamicTrie::CreateIfNotExist(const Options &options) {
 void IcingDynamicTrie::Close() {
   if (!is_initialized_) return;
 
-  UpdateCrc();
+  auto status_or = UpdateCrc();
+  if (!status_or.ok()) {
+    ICING_LOG(ERROR) << "Failed to update CRC during close: "
+                     << status_or.status().error_message();
+  }
 
   storage_.reset();
   property_bitmaps_.clear();
@@ -1117,7 +1273,7 @@ bool IcingDynamicTrie::Remove() {
   }
 
   // Also remove property bitmaps.
-  vector<std::string> files;
+  std::vector<std::string> files;
   if (!filesystem_->GetMatchingFiles((property_bitmaps_prefix_ + "*").c_str(),
                                      &files)) {
     return false;
@@ -1132,31 +1288,48 @@ bool IcingDynamicTrie::Remove() {
   return success;
 }
 
-bool IcingDynamicTrie::Sync() {
+libtextclassifier3::Status IcingDynamicTrie::Sync() {
   if (!is_initialized_) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::InternalError("DynamicTrie not initialized");
   }
 
   bool success = true;
   IcingTimer timer;
 
   // Sync property bitmaps.
-  for (size_t i = 0; i < property_bitmaps_.size(); i++) {
-    if (property_bitmaps_[i]) {
-      if (!property_bitmaps_[i]->Sync()) success = false;
+  for (auto& bitmap : property_bitmaps_) {
+    if (bitmap != nullptr) {
+      if (!bitmap->Sync()) {
+        ICING_LOG(ERROR) << "Failed to sync property bitmap";
+        success = false;
+      }
     }
   }
-  if (!deleted_bitmap_->Sync()) success = false;
+
+  if (!deleted_bitmap_->Sync()) {
+    ICING_LOG(ERROR) << "Failed to sync deleted bitmap";
+    success = false;
+  }
 
   // Sync storage.
-  if (!storage_->Sync()) success = false;
+  libtextclassifier3::Status status = storage_->Sync();
+  if (!status.ok()) {
+    ICING_LOG(ERROR) << "Failed to sync storage: " << status.error_message();
+    success = false;
+  }
 
-  Warm();
+  libtextclassifier3::Status warm_status = Warm();
+  if (!warm_status.ok()) {
+    ICING_LOG(ERROR) << "Failed to warm dynamic trie: "
+                     << warm_status.error_message();
+    success = false;
+  }
 
-  ICING_VLOG(1) << "Syncing dynamic trie " << filename_base_.c_str()
-      << " took " << timer.Elapsed() * 1000 << "ms";
+  ICING_VLOG(1) << "Syncing dynamic trie " << filename_base_.c_str() << " took "
+                << timer.Elapsed() * 1000 << "ms";
 
-  return success;
+  return success ? libtextclassifier3::Status::OK
+                 : absl_ports::InternalError("Failed to sync dynamic trie");
 }
 
 uint64_t IcingDynamicTrie::GetDiskUsage() const {
@@ -1210,14 +1383,17 @@ std::unique_ptr<IcingFlashBitmap> IcingDynamicTrie::OpenAndInitBitmap(
   return bitmap;
 }
 
-bool IcingDynamicTrie::InitPropertyBitmaps() {
+libtextclassifier3::Status IcingDynamicTrie::InitPropertyBitmaps() {
   // Only called on init.
   if (!property_bitmaps_.empty()) {
-    ICING_LOG(FATAL) << "Property bitmaps not empty before initialization";
+    return absl_ports::InternalError(
+        "Property bitmaps not empty "
+        "before initialization");
   }
 
   if (deleted_bitmap_ != nullptr) {
-    ICING_LOG(FATAL) << "Deleted bitmap not null before initialization";
+    return absl_ports::InternalError(
+        "Deleted bitmap not null before initialization");
   }
 
   // Truncate property bitmap files at current value index. Last value
@@ -1231,10 +1407,11 @@ bool IcingDynamicTrie::InitPropertyBitmaps() {
           : 0;
 
   // Discover property bitmaps by scanning the dir.
-  vector<std::string> files;
+  std::vector<std::string> files;
   if (!filesystem_->GetMatchingFiles((property_bitmaps_prefix_ + "*").c_str(),
                                      &files)) {
-    ICING_LOG(ERROR) << "Could not get files at prefix " << property_bitmaps_prefix_;
+    ICING_LOG(ERROR) << "Could not get files at prefix "
+                     << property_bitmaps_prefix_;
     goto failed;
   }
   for (size_t i = 0; i < files.size(); i++) {
@@ -1276,76 +1453,94 @@ bool IcingDynamicTrie::InitPropertyBitmaps() {
   }
   deleted_bitmap_->Truncate(truncate_idx);
 
-  return true;
+  return libtextclassifier3::Status::OK;
 
 failed:
   property_bitmaps_.clear();
   deleted_bitmap_.reset();
-  return false;
+  return absl_ports::InternalError("Failed to init property bitmaps");
 }
 
-void IcingDynamicTrie::Warm() const {
+libtextclassifier3::Status IcingDynamicTrie::Warm() const {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::InternalError("DynamicTrie not initialized");
   }
-
-  return storage_->Warm();
+  storage_->Warm();
+  return libtextclassifier3::Status::OK;
 }
 
-void IcingDynamicTrie::OnSleep() {
+libtextclassifier3::StatusOr<uint32_t> IcingDynamicTrie::size() const {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
-  }
-
-  // Update crcs so we can verify when we come back.
-  UpdateCrc();
-}
-
-uint32_t IcingDynamicTrie::size() const {
-  if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::FailedPreconditionError("DynamicTrie not initialized");
   }
   return storage_->hdr().num_keys();
 }
 
-void IcingDynamicTrie::CollectStatsRecursive(const Node &node, Stats *stats,
+libtextclassifier3::StatusOr<bool> IcingDynamicTrie::empty() const {
+  if (!is_initialized()) {
+    return absl_ports::FailedPreconditionError("DynamicTrie not initialized");
+  }
+  return storage_->empty();
+}
+
+void IcingDynamicTrie::CollectStatsIterative(const Node& node, Stats* stats,
                                              uint32_t depth) const {
-  if (node.is_leaf()) {
-    stats->num_leaves++;
-    stats->sum_depth += depth;
-    stats->max_depth = max(stats->max_depth, depth);
-    const char *suffix = storage_->GetSuffix(node.next_index());
-    stats->suffixes_used += strlen(suffix) + 1 + value_size();
-    if (!suffix[0]) {
-      stats->null_suffixes++;
-    }
-  } else {
-    stats->num_intermediates++;
-    uint32_t i = 0;
-    for (; i < (1U << node.log2_num_children()); i++) {
-      const Next &next = *storage_->GetNext(node.next_index(), i);
-      if (next.node_index() == kInvalidNodeIndex) break;
-      CollectStatsRecursive(*storage_->GetNode(next.node_index()), stats,
-                            depth + 1);
-    }
+  // This function should be called only if the node is valid. The first call is
+  // always from the root node, so it means the trie should not be empty at this
+  // moment. Otherwise (root) node could contain invalid next_index(),
+  // is_leaf(), and log2_num_children().
+  struct StackFrame {
+    uint32_t node_index;
+    uint32_t depth;
+  };
+  std::vector<StackFrame> stack;
+  stack.push_back({storage_->GetNodeIndex(&node), depth});
 
-    // At least one valid node in each next array
-    if (i == 0) {
-      ICING_LOG(FATAL) << "No valid node in 'next' array";
-    }
-    stats->sum_children += i;
-    stats->max_children = max(stats->max_children, i);
+  while (!stack.empty()) {
+    StackFrame frame = stack.back();
+    stack.pop_back();
 
-    stats->child_counts[i - 1]++;
-    stats->wasted[node.log2_num_children()] +=
-        (1 << node.log2_num_children()) - i;
-    stats->total_wasted += (1 << node.log2_num_children()) - i;
+    const Node& cur_node = *storage_->GetNode(frame.node_index);
+    uint32_t cur_depth = frame.depth;
+
+    if (cur_node.is_leaf()) {
+      stats->num_leaves++;
+      stats->sum_depth += cur_depth;
+      stats->max_depth = std::max(stats->max_depth, cur_depth);
+      const char* suffix = storage_->GetSuffix(cur_node.next_index());
+      stats->suffixes_used += strlen(suffix) + 1 + value_size();
+      if (!suffix[0]) {
+        stats->null_suffixes++;
+      }
+    } else {
+      stats->num_intermediates++;
+      uint32_t i = 0;
+      for (; i < (1U << cur_node.log2_num_children()); i++) {
+        const Next& next = *storage_->GetNext(cur_node.next_index(), i);
+        if (next.node_index() == kInvalidNodeIndex) break;
+        stack.push_back({next.node_index(), cur_depth + 1});
+      }
+
+      // At least one valid node in each next array
+      if (i == 0) {
+        ICING_LOG(ERROR) << "No valid node in 'next' array";
+        continue;
+      }
+      stats->sum_children += i;
+      stats->max_children = std::max(stats->max_children, i);
+
+      stats->child_counts[i - 1]++;
+      stats->wasted[cur_node.log2_num_children()] +=
+          (1 << cur_node.log2_num_children()) - i;
+      stats->total_wasted += (1 << cur_node.log2_num_children()) - i;
+    }
   }
 }
 
 void IcingDynamicTrie::CollectStats(Stats *stats) const {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    ICING_LOG(ERROR) << "DynamicTrie not initialized";
+    return;
   }
 
   memset(stats, 0, sizeof(*stats));
@@ -1360,7 +1555,7 @@ void IcingDynamicTrie::CollectStats(Stats *stats) const {
 
   // Stats collected from traversing the trie.
   if (!storage_->empty()) {
-    CollectStatsRecursive(*storage_->GetRootNode(), stats);
+    CollectStatsIterative(*storage_->GetRootNode(), stats);
   }
 
   // Free-list stats.
@@ -1444,21 +1639,23 @@ std::string IcingDynamicTrie::Stats::DumpStats(int verbosity) const {
 }
 
 void IcingDynamicTrie::DumpTrie(std::ostream *pretty_print,
-                                vector<std::string> *keys) const {
+                                std::vector<std::string> *keys) const {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    ICING_LOG(ERROR) << "DynamicTrie not initialized";
+    return;
   }
 
   Dumper dumper(*this);
   dumper.Dump(pretty_print, keys);
 }
 
-void IcingDynamicTrie::Clear() {
+libtextclassifier3::Status IcingDynamicTrie::Clear() {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::InternalError("DynamicTrie not initialized");
   }
 
-  storage_->Clear();
+  ICING_RETURN_IF_ERROR(storage_->Clear());
+
   for (auto &bitmap : property_bitmaps_) {
     if (bitmap) {
       bitmap->Delete();
@@ -1466,134 +1663,142 @@ void IcingDynamicTrie::Clear() {
     }
   }
   deleted_bitmap_->Truncate(0);
+
+  return libtextclassifier3::Status::OK;
 }
 
-bool IcingDynamicTrie::ClearSuffixAndValue(uint32_t suffix_value_index) {
+libtextclassifier3::Status IcingDynamicTrie::ClearSuffixAndValue(
+    uint32_t suffix_value_index) {
   // The size 1 below is for a '\0' between the suffix and the value.
   size_t suffix_and_value_length =
       strlen(this->storage_->GetSuffix(suffix_value_index)) + 1 +
       this->value_size();
-  char *mutable_suffix_and_value = this->storage_->GetMutableSuffix(
-      suffix_value_index, suffix_and_value_length);
-
-  if (mutable_suffix_and_value == nullptr) {
-    return false;
-  }
+  ICING_ASSIGN_OR_RETURN(char *mutable_suffix_and_value,
+                         this->storage_->GetMutableSuffix(
+                             suffix_value_index, suffix_and_value_length));
 
   memset(mutable_suffix_and_value, 0, suffix_and_value_length);
-  return true;
+  return libtextclassifier3::Status::OK;
 }
 
-bool IcingDynamicTrie::ResetNext(uint32_t next_index) {
-  Next *mutable_next =
-      this->storage_->GetMutableNextArray(next_index, /*len=*/1);
+libtextclassifier3::Status IcingDynamicTrie::ResetNext(uint32_t next_index) {
+  ICING_ASSIGN_OR_RETURN(
+      Next * mutable_next,
+      this->storage_->GetMutableNextArray(next_index, /*len=*/1));
 
-  if (mutable_next == nullptr) {
-    return false;
-  }
   ResetMutableNext(*mutable_next);
-  return true;
+  return libtextclassifier3::Status::OK;
 }
 
-bool IcingDynamicTrie::SortNextArray(const Node *node) {
+libtextclassifier3::Status IcingDynamicTrie::SortNextArray(const Node *node) {
   if (node == nullptr) {
     // Nothing to sort, return success directly.
-    return true;
+    return libtextclassifier3::Status::OK;
   }
 
   uint32_t next_array_buffer_size = 1u << node->log2_num_children();
-  Next *next_array_start = this->storage_->GetMutableNextArray(
-      node->next_index(), next_array_buffer_size);
-
-  if (next_array_start == nullptr) {
-    return false;
-  }
+  ICING_ASSIGN_OR_RETURN(Next * next_array_start,
+                         this->storage_->GetMutableNextArray(
+                             node->next_index(), next_array_buffer_size));
 
   std::sort(next_array_start, next_array_start + next_array_buffer_size);
-  return true;
+  return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IcingDynamicTrie::Insert(const char *key,
+libtextclassifier3::Status IcingDynamicTrie::Insert(std::string_view key,
                                                     const void *value,
                                                     uint32_t *value_index,
                                                     bool replace,
                                                     bool *pnew_key) {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::FailedPreconditionError("DynamicTrie not initialized");
   }
 
   if (pnew_key) *pnew_key = false;
+
+  if (!IsKeyValid(key)) {
+    return absl_ports::InvalidArgumentError(
+        "Key cannot contain a null character '\\0'");
+  }
 
   // Find out ahead of time whether things will fit. A conservative
   // check based on allocations made below.
   //
   // IMPORTANT: This needs to be updated if the alloc patterns below
   // change.
-  size_t key_len = strlen(key);
-  if (!(storage_->nodes_left() >= 2 + key_len + 1 &&
-        storage_->nexts_left() >= 2 + key_len + 1 + kMaxNextArraySize &&
-        storage_->suffixes_left() >= key_len + 1 + value_size())) {
+  if (!(storage_->nodes_left() >= 2 + key.size() + 1 &&
+        storage_->nexts_left() >= 2 + key.size() + 1 + kMaxNextArraySize &&
+        storage_->suffixes_left() >= key.size() + 1 + value_size())) {
     return absl_ports::ResourceExhaustedError("No more space left");
   }
 
   uint32_t best_node_index;
   int key_offset;
-  FindBestNode(key, &best_node_index, &key_offset, false);
+  libtextclassifier3::Status status =
+      FindBestNode(key, &best_node_index, &key_offset, false);
 
   // A negative key_offset indicates that storage_ is empty
-  if (key_offset < 0) {
+  if (key_offset < 0 || !status.ok()) {
     // First key.
     if (!storage_->empty()) {
-      ICING_LOG(FATAL) << "Key offset is negative but storage is not empty, "
-                          "there're inconsistencies in dynamic trie.";
+      return absl_ports::InternalError(
+          "Key offset is negative but storage is not empty, "
+          "there're inconsistencies in dynamic trie.");
     }
-    Node *node = storage_->AllocNode();
-    node->set_next_index(storage_->MakeSuffix(key, value, value_index));
+    ICING_ASSIGN_OR_RETURN(Node * node, storage_->AllocNode());
+    ICING_ASSIGN_OR_RETURN(uint32_t next_index,
+                           storage_->MakeSuffix(key, value, value_index));
+    node->set_next_index(next_index);
     node->set_is_leaf(true);
     node->set_log2_num_children(0);
   } else if (storage_->GetNode(best_node_index)->is_leaf()) {
     // Prefix in the trie. Split at leaf.
-    Node *split_node = storage_->GetMutableNode(best_node_index);
+    ICING_ASSIGN_OR_RETURN(Node * split_node,
+                           storage_->GetMutableNode(best_node_index));
     const char *prev_suffix = storage_->GetSuffix(split_node->next_index());
 
-    // Find the common prefix length.
-    const char *prev_suffix_cur = prev_suffix;
-    const char *key_cur = key + key_offset;
-    while (*prev_suffix_cur && *prev_suffix_cur == *key_cur) {
-      prev_suffix_cur++;
-      key_cur++;
+    // Find the common prefix length starting from prev_suffix[0] and
+    // key[key_offset].
+    // - prev_suffix terminates with '\0'.
+    // - key is a std::string_view object, so it may not be null-terminated.
+    // - key doesn't contain '\0' because it's checked in IsKeyValid() above.
+    int common_prefix_len = 0;
+    while (key_offset + common_prefix_len < key.size() &&
+           prev_suffix[common_prefix_len] ==
+               key[key_offset + common_prefix_len]) {
+      ++common_prefix_len;
     }
 
-    // Equal strings?
-    if (*prev_suffix_cur == 0 && *key_cur == 0) {
-      // Update value if replace == true and return.
+    // Equal strings
+    bool strings_equal = prev_suffix[common_prefix_len] == '\0' &&
+                         key_offset + common_prefix_len >= key.size();
+    if (strings_equal) {
       if (value_index) {
-        *value_index = storage_->GetSuffixIndex(prev_suffix_cur + 1);
+        *value_index =
+            storage_->GetSuffixIndex(prev_suffix + common_prefix_len + 1);
       }
+      // Update value if replace == true and return.
       if (replace) {
-        char *mutable_prev_suffix_cur = storage_->GetMutableSuffix(
-            storage_->GetSuffixIndex(prev_suffix_cur + 1), value_size());
+        ICING_ASSIGN_OR_RETURN(
+            char *mutable_prev_suffix_cur,
+            storage_->GetMutableSuffix(
+                storage_->GetSuffixIndex(prev_suffix + common_prefix_len + 1),
+                value_size()));
         memcpy(mutable_prev_suffix_cur, value, value_size());
       }
       return libtextclassifier3::Status::OK;
     }
 
-    if (*prev_suffix_cur == *key_cur) {
-      ICING_LOG(FATAL) << "The suffix cursor and key cursor should diverge "
-                          "after finding the common prefix.";
-    }
-
     // Create single-branch children for the common prefix
     // length. After the loop, split_node points to the node that
     // will have more than 1 char.
-    int common_len = prev_suffix_cur - prev_suffix;
-    for (int i = 0; i < common_len; i++) {
+    for (int i = 0; i < common_prefix_len; i++) {
       // Create a single-branch child node.
       ICING_ASSIGN_OR_RETURN(Next * split_next, storage_->AllocNextArray(1));
       split_node->set_next_index(storage_->GetNextArrayIndex(split_next));
       split_node->set_is_leaf(false);
       split_node->set_log2_num_children(0);
-      Node *child_node = storage_->AllocNode();
+      ICING_ASSIGN_OR_RETURN(Node * child_node, storage_->AllocNode());
       split_next[0].set_val(*(prev_suffix + i));
       split_next[0].set_node_index(storage_->GetNodeIndex(child_node));
 
@@ -1605,29 +1810,36 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(const char *key,
     split_node->set_next_index(storage_->GetNextArrayIndex(split_next));
     split_node->set_is_leaf(false);
     split_node->set_log2_num_children(1);
-    Node *prev_suffix_node = storage_->AllocNode();
-    Node *key_node = storage_->AllocNode();
-    split_next[0].set_val(*(prev_suffix + common_len));
+    ICING_ASSIGN_OR_RETURN(Node * prev_suffix_node, storage_->AllocNode());
+    ICING_ASSIGN_OR_RETURN(Node * key_node, storage_->AllocNode());
+    split_next[0].set_val(*(prev_suffix + common_prefix_len));
     split_next[0].set_node_index(storage_->GetNodeIndex(prev_suffix_node));
-    if (*(prev_suffix + common_len)) {
+    if (*(prev_suffix + common_prefix_len)) {
       uint32_t next_index =
-          storage_->GetSuffixIndex(prev_suffix + common_len) + 1;
+          storage_->GetSuffixIndex(prev_suffix + common_prefix_len) + 1;
       prev_suffix_node->set_next_index(next_index);
     } else {
-      uint32_t next_index = storage_->GetSuffixIndex(prev_suffix + common_len);
+      uint32_t next_index =
+          storage_->GetSuffixIndex(prev_suffix + common_prefix_len);
       prev_suffix_node->set_next_index(next_index);
     }
+
+    char next_val = GetCharOrNull(key, key_offset + common_prefix_len);
     prev_suffix_node->set_is_leaf(true);
     prev_suffix_node->set_log2_num_children(0);
-    split_next[1].set_val(*(key + key_offset + common_len));
+    split_next[1].set_val(next_val);
     split_next[1].set_node_index(storage_->GetNodeIndex(key_node));
-    if (*(key + key_offset + common_len)) {
-      uint32_t next_index = storage_->MakeSuffix(
-          key + key_offset + common_len + 1, value, value_index);
+    if (next_val != '\0') {
+      ICING_ASSIGN_OR_RETURN(
+          uint32_t next_index,
+          storage_->MakeSuffix(key.substr(key_offset + common_prefix_len + 1),
+                               value, value_index));
       key_node->set_next_index(next_index);
     } else {
-      uint32_t next_index = storage_->MakeSuffix(key + key_offset + common_len,
-                                                 value, value_index);
+      ICING_ASSIGN_OR_RETURN(
+          uint32_t next_index,
+          storage_->MakeSuffix(key.substr(key_offset + common_prefix_len),
+                               value, value_index));
       key_node->set_next_index(next_index);
     }
     key_node->set_is_leaf(true);
@@ -1639,14 +1851,16 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(const char *key,
     const Node *best_node = storage_->GetNode(best_node_index);
 
     // Add our value as a node + suffix.
-    Node *new_leaf_node = storage_->AllocNode();
-    if (*(key + key_offset)) {
-      uint32_t next_index =
-          storage_->MakeSuffix(key + key_offset + 1, value, value_index);
+    ICING_ASSIGN_OR_RETURN(Node * new_leaf_node, storage_->AllocNode());
+    if (key_offset < key.size()) {
+      ICING_ASSIGN_OR_RETURN(
+          uint32_t next_index,
+          storage_->MakeSuffix(key.substr(key_offset + 1), value, value_index));
       new_leaf_node->set_next_index(next_index);
     } else {
-      uint32_t next_index =
-          storage_->MakeSuffix(key + key_offset, value, value_index);
+      ICING_ASSIGN_OR_RETURN(
+          uint32_t next_index,
+          storage_->MakeSuffix(key.substr(key_offset), value, value_index));
       new_leaf_node->set_next_index(next_index);
     }
     new_leaf_node->set_is_leaf(true);
@@ -1654,8 +1868,9 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(const char *key,
 
     // Figure out the real length of the existing next array.
     uint32_t next_array_buffer_size = 1u << best_node->log2_num_children();
-    Next *cur_next = storage_->GetMutableNextArray(best_node->next_index(),
-                                                   next_array_buffer_size);
+    ICING_ASSIGN_OR_RETURN(
+        Next * cur_next, storage_->GetMutableNextArray(best_node->next_index(),
+                                                       next_array_buffer_size));
     int next_len = GetValidNextsSize(cur_next, next_array_buffer_size);
     Next *new_next = cur_next;
     if (next_len == (next_array_buffer_size)) {
@@ -1665,16 +1880,17 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(const char *key,
     }
 
     // Write a link to our new leaf node and sort.
-    new_next[next_len].set_val(*(key + key_offset));
+    new_next[next_len].set_val(GetCharOrNull(key, key_offset));
     new_next[next_len].set_node_index(storage_->GetNodeIndex(new_leaf_node));
-    inplace_merge(new_next, new_next + next_len, new_next + next_len + 1);
+    std::inplace_merge(new_next, new_next + next_len, new_next + next_len + 1);
     next_len++;
 
     // If this was new, update the parent node and free the old next
     // array.
     if (new_next != cur_next) {
-      Node *mutable_best_node =
-          storage_->GetMutableNode(storage_->GetNodeIndex(best_node));
+      ICING_ASSIGN_OR_RETURN(
+          Node * mutable_best_node,
+          storage_->GetMutableNode(storage_->GetNodeIndex(best_node)));
       mutable_best_node->set_next_index(storage_->GetNextArrayIndex(new_next));
       mutable_best_node->set_is_leaf(false);
       uint8_t log2_num_children = mutable_best_node->log2_num_children();
@@ -1687,8 +1903,8 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(const char *key,
 
       mutable_best_node->set_log2_num_children(log2_num_children + 1);
 
-      storage_->FreeNextArray(cur_next,
-                              mutable_best_node->log2_num_children() - 1);
+      ICING_RETURN_IF_ERROR(storage_->FreeNextArray(
+          cur_next, mutable_best_node->log2_num_children() - 1));
     }
   }
 
@@ -1699,61 +1915,79 @@ libtextclassifier3::Status IcingDynamicTrie::Insert(const char *key,
   return libtextclassifier3::Status::OK;
 }
 
-const void *IcingDynamicTrie::GetValueAtIndex(uint32_t value_index) const {
+libtextclassifier3::StatusOr<const void*> IcingDynamicTrie::GetValueAtIndex(
+    uint32_t value_index) const {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    ICING_LOG(ERROR) << "DynamicTrie not initialized";
+    return absl_ports::FailedPreconditionError("DynamicTrie not initialized");
   }
 
   return static_cast<const void *>(storage_->GetSuffix(value_index));
 }
 
-void IcingDynamicTrie::SetValueAtIndex(uint32_t value_index,
-                                       const void *value) {
+libtextclassifier3::Status IcingDynamicTrie::SetValueAtIndex(
+    uint32_t value_index, const void* value) {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::FailedPreconditionError("DynamicTrie not initialized");
   }
 
   if (value_index > storage_->hdr().max_suffixes_size() - value_size()) {
-    ICING_LOG(FATAL) << "Value index is out of range";
+    return absl_ports::OutOfRangeError("Value index is out of range");
   }
 
-  memcpy(storage_->GetMutableSuffix(value_index, value_size()), value,
-         value_size());
+  ICING_ASSIGN_OR_RETURN(char *mutable_suffix,
+                         storage_->GetMutableSuffix(value_index, value_size()));
+  memcpy(mutable_suffix, value, value_size());
+
+  return libtextclassifier3::Status::OK;
 }
 
-bool IcingDynamicTrie::Find(const char *key, void *value,
+bool IcingDynamicTrie::Find(std::string_view key, void *value,
                             uint32_t *value_index) const {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    ICING_LOG(ERROR) << "DynamicTrie not initialized";
+    return false;
+  }
+
+  if (!IsKeyValid(key)) {
+    return false;
   }
 
   uint32_t best_node_index;
   int key_offset;
-  FindBestNode(key, &best_node_index, &key_offset, false);
+  libtextclassifier3::Status status =
+      FindBestNode(key, &best_node_index, &key_offset, false);
 
-  const Node *best_node = storage_->GetNode(best_node_index);
-  if (key_offset >= 0 && best_node->is_leaf() &&
-      !strcmp(key + key_offset, storage_->GetSuffix(best_node->next_index()))) {
-    uint32_t vidx = best_node->next_index() +
-                    strlen(storage_->GetSuffix(best_node->next_index())) + 1;
-    if (value_index) *value_index = vidx;
-    if (value) memcpy(value, storage_->GetSuffix(vidx), value_size());
-    return true;
-  } else {
+  if (key_offset < 0 || !status.ok()) {
     return false;
   }
+
+  const Node *best_node = storage_->GetNode(best_node_index);
+  if (!best_node->is_leaf()) {
+    return false;
+  }
+
+  std::string_view suffix(storage_->GetSuffix(best_node->next_index()));
+  if (key.substr(key_offset) != suffix) {
+    return false;
+  }
+
+  uint32_t vidx = best_node->next_index() + suffix.size() + 1;
+  if (value_index) *value_index = vidx;
+  if (value) memcpy(value, storage_->GetSuffix(vidx), value_size());
+  return true;
 }
 
 IcingDynamicTrie::Iterator::Iterator(const IcingDynamicTrie &trie,
-                                     const char *prefix, bool reverse)
-    : cur_key_(prefix),
+                                     std::string prefix, bool reverse)
+    : cur_key_(std::move(prefix)),
       cur_suffix_(nullptr),
       cur_suffix_len_(0),
       single_leaf_match_(false),
       reverse_(reverse),
       trie_(trie) {
   if (!trie.is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    ICING_LOG(ERROR) << "DynamicTrie not initialized";
   }
 
   Reset();
@@ -1792,11 +2026,31 @@ void IcingDynamicTrie::Iterator::BranchToLeaf(uint32_t node_index,
 }
 
 void IcingDynamicTrie::Iterator::Reset() {
+  if (!trie_.is_initialized()) {
+    cur_suffix_ = nullptr;
+    cur_suffix_len_ = 0;
+    single_leaf_match_ = false;
+    branch_stack_.clear();
+    return;
+  }
+
+  if (!IsKeyValid(cur_key_)) {
+    // Set invalid and return.
+    cur_suffix_ = nullptr;
+    cur_suffix_len_ = 0;
+    return;
+  }
+
   size_t strip_len = branch_stack_.size() + cur_suffix_len_;
 
   if (cur_key_.size() < strip_len) {
-    ICING_LOG(FATAL) << "Key size < visited trie depth + remaining suffix "
+    ICING_LOG(ERROR) << "Key size < visited trie depth + remaining suffix "
                         "size, there're inconsistencies in dynamic trie";
+    cur_suffix_ = nullptr;
+    cur_suffix_len_ = 0;
+    single_leaf_match_ = false;
+    branch_stack_.clear();
+    return;
   }
 
   // Trim back cur_key_ to original prefix.
@@ -1812,7 +2066,8 @@ void IcingDynamicTrie::Iterator::Reset() {
   // Find node matching prefix.
   uint32_t node_index;
   int key_offset;
-  trie_.FindBestNode(cur_key_.c_str(), &node_index, &key_offset, true);
+  libtextclassifier3::Status status =
+      trie_.FindBestNode(cur_key_, &node_index, &key_offset, true);
 
   // Two cases/states:
   //
@@ -1823,9 +2078,13 @@ void IcingDynamicTrie::Iterator::Reset() {
   //   prefix. Check that suffix matches the prefix. Then we set
   //   single_leaf_match_ = true and apply different logic for
   //   Advance.
-  if (key_offset < 0) {
-    // A negative key_offset indicates that trie_.storage_ is empty
-    ICING_LOG(FATAL) << "Trie storage is empty";
+  if (key_offset < 0 || !status.ok()) {
+    ICING_LOG(ERROR) << "FindBestNode failed: " << status.error_message();
+    cur_suffix_ = nullptr;
+    cur_suffix_len_ = 0;
+    single_leaf_match_ = false;
+    branch_stack_.clear();
+    return;
   }
 
   const Node *best_node = trie_.storage_->GetNode(node_index);
@@ -1847,6 +2106,7 @@ void IcingDynamicTrie::Iterator::Reset() {
 }
 
 bool IcingDynamicTrie::Iterator::Advance() {
+  if (!trie_.is_initialized()) return false;
   if (!IsValid()) return false;
   if (single_leaf_match_) {
     // If we only have an exact match, the Advance logic does not
@@ -1857,8 +2117,12 @@ bool IcingDynamicTrie::Iterator::Advance() {
   }
 
   if (cur_key_.size() < (branch_stack_.size() + cur_suffix_len_)) {
-    ICING_LOG(FATAL) << "Key size < visited trie depth + remaining suffix "
+    ICING_LOG(ERROR) << "Key size < visited trie depth + remaining suffix "
                         "size, there're inconsistencies in dynamic trie";
+    cur_suffix_ = nullptr;
+    cur_suffix_len_ = 0;
+    branch_stack_.clear();
+    return false;
   }
 
   // Move up from the current leaf.
@@ -1901,10 +2165,10 @@ bool IcingDynamicTrie::Iterator::IsValid() const {
   return cur_suffix_ != nullptr;
 }
 
-const char *IcingDynamicTrie::Iterator::GetKey() const {
+std::string_view IcingDynamicTrie::Iterator::GetKey() const {
   // cur_key_ can have a NULL in it so cur_key_ can be wrong but
   // cur_key_.c_str() is always right.
-  return IsValid() ? cur_key_.c_str() : nullptr;
+  return IsValid() ? cur_key_.c_str() : std::string_view();
 }
 
 const void *IcingDynamicTrie::Iterator::GetValue() const {
@@ -1921,12 +2185,16 @@ uint32_t IcingDynamicTrie::Iterator::GetValueIndex() const {
 
 void IcingDynamicTrie::Utf8Iterator::LeftBranchToUtf8End() {
   if (cur_len_ <= 0) {
-    ICING_LOG(FATAL) << "Invalid UTF-8 character length";
+    ICING_LOG(ERROR) << "Invalid UTF-8 character length";
+    cur_len_ = 0;
+    return;
   }
 
   if (branch_end_ - branch_stack_ != cur_len_) {
-    ICING_LOG(FATAL) << "Depth from first visited node to last visited node "
+    ICING_LOG(ERROR) << "Depth from first visited node to last visited node "
                         "doesn't match the current UTF-8 character length";
+    cur_len_ = 0;
+    return;
   }
 
   // Use branch at top of stack to determine where to follow.
@@ -2062,8 +2330,8 @@ bool IcingDynamicTrie::Utf8Iterator::Branch::IsFinished() {
 
 bool IcingDynamicTrie::Utf8Iterator::IsValid() const { return cur_len_ > 0; }
 
-const IcingDynamicTrie::Next *IcingDynamicTrie::GetNextByChar(
-    const Node *node, uint8_t key_char) const {
+libtextclassifier3::StatusOr<const IcingDynamicTrie::Next*>
+IcingDynamicTrie::GetNextByChar(const Node* node, uint8_t key_char) const {
   const Next *next_start = storage_->GetNext(node->next_index(), 0);
   const Next *next_end = next_start + (1 << node->log2_num_children());
 
@@ -2071,6 +2339,11 @@ const IcingDynamicTrie::Next *IcingDynamicTrie::GetNextByChar(
   if (found >= next_end || found->val() != key_char ||
       found->node_index() == kInvalidNodeIndex) {
     return nullptr;
+  }
+
+  if (found->node_index() >= storage_->GetNodeArraySize()) {
+    return absl_ports::InternalError(
+        "Node index is out of bounds. The index may be corrupted.");
   }
 
   return found;
@@ -2098,7 +2371,7 @@ const IcingDynamicTrie::Next *IcingDynamicTrie::LowerBound(
   Next key_next(key_char, node_index);
   if (end - start >= kBinarySearchCutoff) {
     // Binary search.
-    return lower_bound(start, end, key_next);
+    return std::lower_bound(start, end, key_next);
   } else {
     // Linear search.
     const Next *found;
@@ -2112,9 +2385,9 @@ const IcingDynamicTrie::Next *IcingDynamicTrie::LowerBound(
   }
 }
 
-void IcingDynamicTrie::FindBestNode(const char *key, uint32_t *best_node_index,
-                                    int *key_offset, bool prefix,
-                                    bool utf8) const {
+libtextclassifier3::Status IcingDynamicTrie::FindBestNode(
+    std::string_view key, uint32_t* best_node_index, int* key_offset,
+    bool prefix, bool utf8) const {
   // Find the best node such that:
   //
   // - If key is NOT in the trie, key[0..key_offset) is a prefix to
@@ -2130,15 +2403,17 @@ void IcingDynamicTrie::FindBestNode(const char *key, uint32_t *best_node_index,
   if (storage_->empty()) {
     *best_node_index = 0;
     *key_offset = -1;
-    return;
+    return absl_ports::InternalError("Trie is empty.");
   }
 
   const Node *cur_node = storage_->GetRootNode();
-  const char *cur_key = key;
+  int cur_key_idx = 0;
+  int utf8_key_idx = 0;
   const Node *utf8_node = cur_node;
-  const char *utf8_key = cur_key;
   while (!cur_node->is_leaf()) {
-    const Next *found = GetNextByChar(cur_node, *cur_key);
+    char cur_char = GetCharOrNull(key, cur_key_idx);
+    ICING_ASSIGN_OR_RETURN(const Next* found,
+                           GetNextByChar(cur_node, cur_char));
     if (!found) break;
 
     if (prefix && found->val() == 0) {
@@ -2148,61 +2423,90 @@ void IcingDynamicTrie::FindBestNode(const char *key, uint32_t *best_node_index,
     cur_node = storage_->GetNode(found->node_index());
 
     // End of key.
-    if (*cur_key == 0) {
+    if (cur_key_idx >= key.size()) {
       break;
     }
-    cur_key++;
 
-    if (utf8 && i18n_utils::IsLeadUtf8Byte(*cur_key)) {
+    ++cur_key_idx;
+    cur_char = GetCharOrNull(key, cur_key_idx);
+
+    if (utf8 && i18n_utils::IsLeadUtf8Byte(cur_char)) {
       utf8_node = cur_node;
-      utf8_key = cur_key;
+      utf8_key_idx = cur_key_idx;
     }
   }
 
   if (utf8) {
     // Rewind.
     cur_node = utf8_node;
-    cur_key = utf8_key;
+    cur_key_idx = utf8_key_idx;
   }
 
   *best_node_index = storage_->GetNodeIndex(cur_node);
-  *key_offset = reinterpret_cast<const char *>(cur_key) - key;
+  *key_offset = cur_key_idx;
+
+  return libtextclassifier3::Status::OK;
 }
 
-int IcingDynamicTrie::FindNewBranchingPrefixLength(const char *key,
-                                                   bool utf8) const {
+libtextclassifier3::StatusOr<int>
+IcingDynamicTrie::FindNewBranchingPrefixLength(std::string_view key,
+                                               bool utf8) const {
+  if (!IsKeyValid(key)) {
+    return kNoBranchFound;
+  }
+
   if (storage_->empty()) {
     return kNoBranchFound;
   }
 
   uint32_t best_node_index;
   int key_offset;
-  FindBestNode(key, &best_node_index, &key_offset, /*prefix=*/true, utf8);
+  ICING_RETURN_IF_ERROR(
+      FindBestNode(key, &best_node_index, &key_offset, /*prefix=*/true, utf8));
+  if (key_offset < 0) {
+    return kNoBranchFound;
+  }
+
   const Node *cur_node = storage_->GetNode(best_node_index);
-  const char *cur_key = key + key_offset;
   if (cur_node->is_leaf()) {
     // Prefix in the trie. Split at leaf.
     const char *prev_suffix = storage_->GetSuffix(cur_node->next_index());
-    while (*prev_suffix != '\0' && *prev_suffix == *cur_key) {
-      prev_suffix++;
-      cur_key++;
+    int additional_branch_prefix_len = 0;
+    // Find the additional prefix length starting from prev_suffix[0] and
+    // key[key_offset].
+    // - prev_suffix terminates with '\0'.
+    // - key is a std::string_view object, so it may not be null-terminated.
+    // - key doesn't contain '\0' because it's checked in IsKeyValid() above.
+    while (key_offset + additional_branch_prefix_len < key.size() &&
+           prev_suffix[additional_branch_prefix_len] ==
+               key[key_offset + additional_branch_prefix_len]) {
+      ++additional_branch_prefix_len;
     }
 
-    // Equal strings? No branching.
-    if (*prev_suffix == '\0' && *cur_key == '\0') {
+    // Equal strings. No branching.
+    bool strings_equal =
+        prev_suffix[additional_branch_prefix_len] == '\0' &&
+        key_offset + additional_branch_prefix_len >= key.size();
+    if (strings_equal) {
       return kNoBranchFound;
+    }
+
+    // The remaining key (after key_offset) is a prefix of the suffix, so the
+    // branching prefix length is key length.
+    if (key_offset + additional_branch_prefix_len >= key.size()) {
+      return key.size();
     }
 
     if (utf8) {
       // Rewind to utf8 boundary.
-      size_t offset = i18n_utils::SafeTruncateUtf8Length(key, cur_key - key);
-      cur_key = key + offset;
+      return i18n_utils::SafeTruncateUtf8Length(
+          key.data(), key_offset + additional_branch_prefix_len);
     }
 
-    return cur_key - key;
+    return key_offset + additional_branch_prefix_len;
   } else if (cur_node->log2_num_children() == 0) {
     // Intermediate node going from no branching to branching.
-    return cur_key - key;
+    return key_offset;
   }
 
   // If we've reached this point, then we're already at a branch point. So there
@@ -2210,23 +2514,28 @@ int IcingDynamicTrie::FindNewBranchingPrefixLength(const char *key,
   return kNoBranchFound;
 }
 
-std::vector<int> IcingDynamicTrie::FindBranchingPrefixLengths(const char *key,
-                                                              bool utf8) const {
+libtextclassifier3::StatusOr<std::vector<int>>
+IcingDynamicTrie::FindBranchingPrefixLengths(std::string_view key,
+                                             bool utf8) const {
   std::vector<int> prefix_lengths;
+
+  if (!IsKeyValid(key)) {
+    return prefix_lengths;
+  }
 
   if (storage_->empty()) {
     return prefix_lengths;
   }
 
   const Node *cur_node = storage_->GetRootNode();
-  const char *cur_key = key;
-  while (*cur_key && !cur_node->is_leaf()) {
+  int idx = 0;
+  while (idx < key.size() && !cur_node->is_leaf()) {
     // Branching prefix?
     if (cur_node->log2_num_children() > 0) {
-      int len = cur_key - key;
+      int len = idx;
       if (utf8) {
         // Do not cut mid-utf8. Walk up to utf8 boundary.
-        len = i18n_utils::SafeTruncateUtf8Length(key, len);
+        len = i18n_utils::SafeTruncateUtf8Length(key.data(), len);
         if (prefix_lengths.empty() || len != prefix_lengths.back()) {
           prefix_lengths.push_back(len);
         }
@@ -2236,20 +2545,26 @@ std::vector<int> IcingDynamicTrie::FindBranchingPrefixLengths(const char *key,
     }
 
     // Move to next.
-    const Next *found = GetNextByChar(cur_node, *cur_key);
+    ICING_ASSIGN_OR_RETURN(const Next* found,
+                           GetNextByChar(cur_node, key[idx]));
     if (found == nullptr) {
       break;
     }
     cur_node = storage_->GetNode(found->node_index());
 
-    ++cur_key;
+    ++idx;
   }
   return prefix_lengths;
 }
 
-bool IcingDynamicTrie::IsBranchingTerm(const char *key) const {
+libtextclassifier3::StatusOr<bool> IcingDynamicTrie::IsBranchingTerm(
+    std::string_view key) const {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::InternalError("DynamicTrie not initialized");
+  }
+
+  if (!IsKeyValid(key)) {
+    return false;
   }
 
   if (storage_->empty()) {
@@ -2258,7 +2573,12 @@ bool IcingDynamicTrie::IsBranchingTerm(const char *key) const {
 
   uint32_t best_node_index;
   int key_offset;
-  FindBestNode(key, &best_node_index, &key_offset, /*prefix=*/true);
+  ICING_RETURN_IF_ERROR(
+      FindBestNode(key, &best_node_index, &key_offset, /*prefix=*/true));
+  if (key_offset < 0) {
+    return false;
+  }
+
   const Node *cur_node = storage_->GetNode(best_node_index);
 
   if (cur_node->is_leaf()) {
@@ -2266,14 +2586,15 @@ bool IcingDynamicTrie::IsBranchingTerm(const char *key) const {
   }
 
   // There is no intermediate node for key in the trie.
-  if (key[key_offset] != '\0') {
+  if (key_offset < key.size()) {
     return false;
   }
 
   // Found key as an intermediate node, but key is not a valid term stored in
   // the trie. In this case, we need at least two children for key to be a
   // branching term.
-  if (GetNextByChar(cur_node, '\0') == nullptr) {
+  ICING_ASSIGN_OR_RETURN(const Next* next, GetNextByChar(cur_node, '\0'));
+  if (next == nullptr) {
     return cur_node->log2_num_children() >= 1;
   }
 
@@ -2288,10 +2609,11 @@ void IcingDynamicTrie::GetDebugInfo(int verbosity, std::string *out) const {
   out->append(stats.DumpStats(verbosity));
 
   // Property files.
-  vector<std::string> files;
+  std::vector<std::string> files;
   if (!filesystem_->GetMatchingFiles((property_bitmaps_prefix_ + "*").c_str(),
                                      &files)) {
-    ICING_LOG(ERROR) << "Could not get files at prefix " << property_bitmaps_prefix_;
+    ICING_LOG(ERROR) << "Could not get files at prefix "
+                     << property_bitmaps_prefix_;
     return;
   }
   for (size_t i = 0; i < files.size(); i++) {
@@ -2311,12 +2633,13 @@ double IcingDynamicTrie::min_free_fraction() const {
     ICING_LOG(FATAL) << "DynamicTrie not initialized";
   }
 
-  return 1.0 - max(max(static_cast<double>(storage_->hdr().num_nodes()) /
-                           storage_->hdr().max_nodes(),
-                       static_cast<double>(storage_->hdr().num_nexts()) /
-                           storage_->hdr().max_nexts()),
-                   static_cast<double>(storage_->hdr().suffixes_size()) /
-                       storage_->hdr().max_suffixes_size());
+  return 1.0 -
+         std::max(std::max(static_cast<double>(storage_->hdr().num_nodes()) /
+                               storage_->hdr().max_nodes(),
+                           static_cast<double>(storage_->hdr().num_nexts()) /
+                               storage_->hdr().max_nexts()),
+                  static_cast<double>(storage_->hdr().suffixes_size()) /
+                      storage_->hdr().max_suffixes_size());
 }
 
 uint32_t IcingDynamicTrie::value_size() const {
@@ -2327,39 +2650,72 @@ uint32_t IcingDynamicTrie::max_value_index() const {
   return storage_->hdr().max_suffixes_size();
 }
 
-uint32_t IcingDynamicTrie::UpdateCrc() {
+libtextclassifier3::StatusOr<Crc32> IcingDynamicTrie::UpdateCrc() {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::FailedPreconditionError("DynamicTrie not initialized");
   }
 
   if (runtime_options_.storage_policy != RuntimeOptions::kMapSharedWithCrc) {
-    return kNoCrc;
+    return Crc32();
   }
 
   // Combine storage crc with property bitmap crcs.
-  uint32_t crc = storage_->UpdateCrc();
+  ICING_ASSIGN_OR_RETURN(Crc32 crc, storage_->UpdateCrc());
 
   // Update crcs on bitmaps.
   for (size_t i = 0; i < property_bitmaps_.size(); ++i) {
     if (property_bitmaps_[i]) {
       // Combine property id with the bitmap crc.
-      uint64_t this_crc = property_bitmaps_[i]->UpdateCrc();
-      this_crc = (this_crc << 32) | i;
-      crc = IcingStringUtil::UpdateCrc32(
-          crc, reinterpret_cast<const char *>(&this_crc), sizeof(this_crc));
+      uint64_t property_crc = property_bitmaps_[i]->UpdateCrc().Get();
+      property_crc = (property_crc << 32) | i;
+      std::string_view property_crc_str(
+          reinterpret_cast<const char *>(&property_crc), sizeof(property_crc));
+      crc.Append(property_crc_str);
     }
   }
-  uint32_t this_crc = deleted_bitmap_->UpdateCrc();
-  crc = IcingStringUtil::UpdateCrc32(
-      crc, reinterpret_cast<const char *>(&this_crc), sizeof(this_crc));
+  uint32_t deleted_crc = deleted_bitmap_->UpdateCrc().Get();
+  std::string_view deleted_crc_str(reinterpret_cast<const char *>(&deleted_crc),
+                                   sizeof(deleted_crc));
+  crc.Append(deleted_crc_str);
+  return crc;
+}
 
+libtextclassifier3::StatusOr<Crc32> IcingDynamicTrie::GetCrc() const {
+  if (!is_initialized()) {
+    ICING_LOG(ERROR) << "Cannot get CRC for uninitialized DynamicTrie.";
+    return absl_ports::FailedPreconditionError("DynamicTrie not initialized");
+  }
+
+  if (runtime_options_.storage_policy != RuntimeOptions::kMapSharedWithCrc) {
+    return Crc32();
+  }
+
+  // Combine storage crc with property bitmap crcs.
+  Crc32 crc = storage_->GetCrc();
+
+  // Update crcs on bitmaps.
+  for (size_t i = 0; i < property_bitmaps_.size(); ++i) {
+    if (property_bitmaps_[i]) {
+      // Combine property id with the bitmap crc.
+      uint64_t property_crc = property_bitmaps_[i]->GetCrc().Get();
+      property_crc = (property_crc << 32) | i;
+      std::string_view property_crc_str(
+          reinterpret_cast<const char *>(&property_crc), sizeof(property_crc));
+      crc.Append(property_crc_str);
+    }
+  }
+  uint32_t deleted_crc = deleted_bitmap_->UpdateCrc().Get();
+  std::string_view deleted_crc_str(reinterpret_cast<const char *>(&deleted_crc),
+                                   sizeof(deleted_crc));
+  crc.Append(deleted_crc_str);
   return crc;
 }
 
 IcingFlashBitmap *IcingDynamicTrie::OpenOrCreatePropertyBitmap(
     uint32_t property_id) {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    ICING_LOG(ERROR) << "DynamicTrie not initialized";
+    return nullptr;
   }
 
   if (property_id > kMaxPropertyId) {
@@ -2419,15 +2775,31 @@ bool IcingDynamicTrie::ClearDeleted(uint32_t value_index) {
 // 2. Remove the suffix and the value.
 // 3. Reset the nexts that point to the nodes to be removed.
 // 4. Sort any next array if needed.
-bool IcingDynamicTrie::Delete(const std::string_view key) {
+// 5. Reset the trie state if the trie is empty after deletion.
+//    - This is essential for storage_->empty(), which is a critical check for
+//      all trie APIs before accessing the root node via
+//      storage_->GetRootNode().
+//    - When the trie is empty, it is possible that the root node (i.e.
+//      Node(0)):
+//      - Contains an invalid next_index(), and accessing it will cause a crash
+//        or fetch incorrect data.
+//      - Points to a valid next array but the next elements in the array
+//        contain kInvalidNodeIndex. Accessing the next node via the next
+//        element will cause a crash or fetch incorrect data.
+//    - So we must reset the trie state to make sure storage_->empty() works
+//      correctly and prevents trie APIs from accessing the root node.
+libtextclassifier3::Status IcingDynamicTrie::Delete(std::string_view key) {
   if (!is_initialized()) {
-    ICING_LOG(ERROR) << "DynamicTrie not initialized";
-    return false;
+    return absl_ports::FailedPreconditionError("DynamicTrie not initialized");
+  }
+
+  if (!IsKeyValid(key)) {
+    return absl_ports::InvalidArgumentError("Invalid key");
   }
 
   if (storage_->empty()) {
     // Nothing to delete.
-    return true;
+    return libtextclassifier3::Status::OK;
   }
 
   // Tries to find the key in the trie, starting from the root.
@@ -2451,7 +2823,7 @@ bool IcingDynamicTrie::Delete(const std::string_view key) {
       // Leaf node, now check the suffix.
       if (key.substr(i) != storage_->GetSuffix(current_node->next_index())) {
         // Key does not exist in the trie, nothing to delete.
-        return true;
+        return libtextclassifier3::Status::OK;
       }
       // Otherwise, key is found.
       break;
@@ -2462,27 +2834,29 @@ bool IcingDynamicTrie::Delete(const std::string_view key) {
     if (i == key.length()) {
       // When we're at the end of the key, the next char is the termination char
       // '\0'.
-      next = GetNextByChar(current_node, '\0');
+      ICING_ASSIGN_OR_RETURN(next, GetNextByChar(current_node, '\0'));
     } else {
-      next = GetNextByChar(current_node, key[i]);
+      ICING_ASSIGN_OR_RETURN(next, GetNextByChar(current_node, key[i]));
     }
 
     if (next == nullptr) {
       // Key does not exist in the trie, nothing to delete.
-      return true;
+      return libtextclassifier3::Status::OK;
     }
 
     // Checks the real size of next array.
     uint32_t next_array_buffer_size = 1u << current_node->log2_num_children();
-    Next *next_array_start = storage_->GetMutableNextArray(
-        current_node->next_index(), next_array_buffer_size);
+    ICING_ASSIGN_OR_RETURN(
+        Next * next_array_start,
+        storage_->GetMutableNextArray(current_node->next_index(),
+                                      next_array_buffer_size));
     int valid_next_array_size =
         GetValidNextsSize(next_array_start, next_array_buffer_size);
     if (valid_next_array_size == 0) {
       // Key does not exist in the trie, nothing to delete.
       // This shouldn't happen, but we put a sanity check here in case something
       // is wrong.
-      return true;
+      return libtextclassifier3::Status::OK;
     } else if (valid_next_array_size == 1) {
       // Single-child branch will be deleted.
       nexts_to_reset.push_back(storage_->GetNextArrayIndex(next));
@@ -2499,39 +2873,57 @@ bool IcingDynamicTrie::Delete(const std::string_view key) {
   }
   // Now we've found the key in the trie.
 
-  ClearSuffixAndValue(current_node->next_index());
+  ICING_RETURN_IF_ERROR(ClearSuffixAndValue(current_node->next_index()));
 
   // Resets nexts to remove key information.
   for (uint32_t next_index : nexts_to_reset) {
-    ResetNext(next_index);
+    ICING_RETURN_IF_ERROR(ResetNext(next_index));
   }
 
   if (last_multichild_node != nullptr) {
-    SortNextArray(last_multichild_node);
+    ICING_RETURN_IF_ERROR(SortNextArray(last_multichild_node));
     uint32_t next_array_buffer_size =
         1u << last_multichild_node->log2_num_children();
-    Next *next_array_start = this->storage_->GetMutableNextArray(
-        last_multichild_node->next_index(), next_array_buffer_size);
+    ICING_ASSIGN_OR_RETURN(
+        Next * next_array_start,
+        this->storage_->GetMutableNextArray(last_multichild_node->next_index(),
+                                            next_array_buffer_size));
     uint32_t num_children =
         GetValidNextsSize(next_array_start, next_array_buffer_size);
     // Shrink the next array if we can.
     if (num_children == next_array_buffer_size / 2) {
-      Node *mutable_node = storage_->GetMutableNode(
-          storage_->GetNodeIndex(last_multichild_node));
+      ICING_ASSIGN_OR_RETURN(Node * mutable_node,
+                             storage_->GetMutableNode(
+                                 storage_->GetNodeIndex(last_multichild_node)));
       mutable_node->set_log2_num_children(mutable_node->log2_num_children() -
                                           1);
       // Add the unused second half of the next array to the free list.
-      storage_->FreeNextArray(next_array_start + next_array_buffer_size / 2,
-                              mutable_node->log2_num_children());
+      ICING_RETURN_IF_ERROR(
+          storage_->FreeNextArray(next_array_start + next_array_buffer_size / 2,
+                                  mutable_node->log2_num_children()));
     }
   }
 
-  return true;
+  storage_->dec_num_keys();
+  if (storage_->hdr().num_keys() == 0) {
+    // Reset the trie state to empty by calling Clear() directly.
+    //
+    // Note: in this case, last_multichild_node will be nullptr as well.
+    // - If we never saw a node with multiple children before deletion, then all
+    //   the traversed nodes, including the root node, are single-child nodes
+    //   before deletion.
+    // - Therefore, after deletion, there should be no valid nodes or nexts in
+    //   the trie.
+    ICING_RETURN_IF_ERROR(Clear());
+  }
+
+  return libtextclassifier3::Status::OK;
 }
 
 bool IcingDynamicTrie::ClearPropertyForAllValues(uint32_t property_id) {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    ICING_LOG(ERROR) << "DynamicTrie not initialized";
+    return false;
   }
 
   PropertyReadersAll readers(*this);
@@ -2576,10 +2968,13 @@ bool IcingDynamicTrie::PropertyReaderBase::HasProperty(
 }
 
 IcingDynamicTrie::PropertyReaderBase::PropertyReaderBase(
-    const IcingDynamicTrie &trie, bool deleted, uint32_t property_id)
-    : trie_(trie) {
+    const IcingDynamicTrie& trie, bool deleted, uint32_t property_id)
+    : bitmap_(nullptr), trie_(trie) {
   if (!trie.is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    ICING_LOG(ERROR)
+        << "Cannot initialize PropertyReaderBase with uninitialized "
+           "DynamicTrie. Reader will be empty.";
+    return;
   }
 
   if (deleted) {
@@ -2595,7 +2990,7 @@ IcingDynamicTrie::PropertyReadersAll::PropertyReadersAll(
     const IcingDynamicTrie &trie)
     : trie_(trie) {
   if (!trie.is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    ICING_LOG(ERROR) << "DynamicTrie not initialized";
   }
 }
 
@@ -2647,21 +3042,24 @@ uint64_t IcingDynamicTrie::ValueIndexToPropertyBitmapIndex(
 }
 
 // Testing hooks.
-void IcingDynamicTrie::GetHeader(IcingDynamicTrieHeader *hdr) const {
+libtextclassifier3::Status IcingDynamicTrie::GetHeader(
+    IcingDynamicTrieHeader* hdr) const {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::FailedPreconditionError("DynamicTrie not initialized");
   }
 
   *hdr = storage_->hdr();
+  return libtextclassifier3::Status::OK;
 }
 
-void IcingDynamicTrie::SetHeader(const IcingDynamicTrieHeader &new_hdr) {
+libtextclassifier3::Status IcingDynamicTrie::SetHeader(
+    const IcingDynamicTrieHeader& new_hdr) {
   if (!is_initialized()) {
-    ICING_LOG(FATAL) << "DynamicTrie not initialized";
+    return absl_ports::FailedPreconditionError("DynamicTrie not initialized");
   }
 
   storage_->hdr_.hdr = new_hdr;
-  storage_->WriteHeader();
+  return storage_->WriteHeader();
 }
 
 }  // namespace lib

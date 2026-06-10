@@ -16,17 +16,17 @@
 
 #include <unistd.h>
 
-#include <algorithm>
-#include <cstdlib>
-#include <limits>
+#include <cstdint>
+#include <memory>
+#include <string>
 #include <utility>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/posting_list/flash-index-storage-header.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/hit/hit.h"
 #include "icing/index/main/posting-list-hit-serializer.h"
 #include "icing/store/document-id.h"
@@ -38,7 +38,7 @@ namespace lib {
 
 namespace {
 
-using ::testing::ElementsAreArray;
+using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::IsFalse;
@@ -212,17 +212,30 @@ TEST_F(FlashIndexStorageTest, FreeListInMemory) {
     EXPECT_THAT(flash_index_storage.num_blocks(), Eq(2));
     EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
-    std::vector<Hit> hits1 = {
-        Hit(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/12),
-        Hit(/*section_id=*/6, /*document_id=*/2, /*term_frequency=*/19),
-        Hit(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100),
-        Hit(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197)};
-    for (const Hit& hit : hits1) {
-      ICING_ASSERT_OK(
-          serializer_->PrependHit(&posting_list_holder1.posting_list, hit));
-    }
+    Hit hit0(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/12,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit1(/*section_id=*/6, /*document_id=*/2, /*term_frequency=*/19,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit2(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit3(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder1.posting_list, hit0));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder1.posting_list, hit1));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder1.posting_list, hit2));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder1.posting_list, hit3));
+
     EXPECT_THAT(serializer_->GetHits(&posting_list_holder1.posting_list),
-                IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
+                IsOkAndHolds(ElementsAre(EqualsHit(hit3), EqualsHit(hit2),
+                                         EqualsHit(hit1), EqualsHit(hit0))));
 
     // 2. Get another PL. This should be on the same flash block. There should
     // be no allocation.
@@ -236,17 +249,30 @@ TEST_F(FlashIndexStorageTest, FreeListInMemory) {
     EXPECT_THAT(flash_index_storage.num_blocks(), Eq(2));
     EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
-    std::vector<Hit> hits2 = {
-        Hit(/*section_id=*/4, /*document_id=*/0, /*term_frequency=*/12),
-        Hit(/*section_id=*/8, /*document_id=*/4, /*term_frequency=*/19),
-        Hit(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100),
-        Hit(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197)};
-    for (const Hit& hit : hits2) {
-      ICING_ASSERT_OK(
-          serializer_->PrependHit(&posting_list_holder2.posting_list, hit));
-    }
+    Hit hit4(/*section_id=*/4, /*document_id=*/0, /*term_frequency=*/12,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit5(/*section_id=*/8, /*document_id=*/4, /*term_frequency=*/19,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit6(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit7(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder2.posting_list, hit4));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder2.posting_list, hit5));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder2.posting_list, hit6));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder2.posting_list, hit7));
+
     EXPECT_THAT(serializer_->GetHits(&posting_list_holder2.posting_list),
-                IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
+                IsOkAndHolds(ElementsAre(EqualsHit(hit7), EqualsHit(hit6),
+                                         EqualsHit(hit5), EqualsHit(hit4))));
 
     // 3. Now, free the first posting list. This should add it to the free list
     ICING_ASSERT_OK(
@@ -272,17 +298,31 @@ TEST_F(FlashIndexStorageTest, FreeListInMemory) {
     // gone.
     EXPECT_THAT(serializer_->GetHits(&posting_list_holder3.posting_list),
                 IsOkAndHolds(IsEmpty()));
-    std::vector<Hit> hits3 = {
-        Hit(/*section_id=*/7, /*document_id=*/1, /*term_frequency=*/62),
-        Hit(/*section_id=*/12, /*document_id=*/3, /*term_frequency=*/45),
-        Hit(/*section_id=*/11, /*document_id=*/18, /*term_frequency=*/12),
-        Hit(/*section_id=*/7, /*document_id=*/100, /*term_frequency=*/74)};
-    for (const Hit& hit : hits3) {
-      ICING_ASSERT_OK(
-          serializer_->PrependHit(&posting_list_holder3.posting_list, hit));
-    }
+
+    Hit hit8(/*section_id=*/7, /*document_id=*/1, /*term_frequency=*/62,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit9(/*section_id=*/12, /*document_id=*/3, /*term_frequency=*/45,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit10(/*section_id=*/11, /*document_id=*/18, /*term_frequency=*/12,
+              /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+              /*is_stemmed_hit=*/false);
+    Hit hit11(/*section_id=*/7, /*document_id=*/100, /*term_frequency=*/74,
+              /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+              /*is_stemmed_hit=*/false);
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder3.posting_list, hit8));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder3.posting_list, hit9));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder3.posting_list, hit10));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder3.posting_list, hit11));
+
     EXPECT_THAT(serializer_->GetHits(&posting_list_holder3.posting_list),
-                IsOkAndHolds(ElementsAreArray(hits3.rbegin(), hits3.rend())));
+                IsOkAndHolds(ElementsAre(EqualsHit(hit11), EqualsHit(hit10),
+                                         EqualsHit(hit9), EqualsHit(hit8))));
   }
   EXPECT_THAT(flash_index_storage.GetDiskUsage(),
               Eq(2 * flash_index_storage.block_size()));
@@ -313,17 +353,30 @@ TEST_F(FlashIndexStorageTest, FreeListNotInMemory) {
     EXPECT_THAT(flash_index_storage.num_blocks(), Eq(2));
     EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
-    std::vector<Hit> hits1 = {
-        Hit(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/12),
-        Hit(/*section_id=*/6, /*document_id=*/2, /*term_frequency=*/19),
-        Hit(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100),
-        Hit(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197)};
-    for (const Hit& hit : hits1) {
-      ICING_ASSERT_OK(
-          serializer_->PrependHit(&posting_list_holder1.posting_list, hit));
-    }
+    Hit hit0(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/12,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit1(/*section_id=*/6, /*document_id=*/2, /*term_frequency=*/19,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit2(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit3(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder1.posting_list, hit0));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder1.posting_list, hit1));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder1.posting_list, hit2));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder1.posting_list, hit3));
+
     EXPECT_THAT(serializer_->GetHits(&posting_list_holder1.posting_list),
-                IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
+                IsOkAndHolds(ElementsAre(EqualsHit(hit3), EqualsHit(hit2),
+                                         EqualsHit(hit1), EqualsHit(hit0))));
 
     // 2. Get another PL. This should be on the same flash block. There should
     // be no allocation.
@@ -337,17 +390,30 @@ TEST_F(FlashIndexStorageTest, FreeListNotInMemory) {
     EXPECT_THAT(flash_index_storage.num_blocks(), Eq(2));
     EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
-    std::vector<Hit> hits2 = {
-        Hit(/*section_id=*/4, /*document_id=*/0, /*term_frequency=*/12),
-        Hit(/*section_id=*/8, /*document_id=*/4, /*term_frequency=*/19),
-        Hit(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100),
-        Hit(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197)};
-    for (const Hit& hit : hits2) {
-      ICING_ASSERT_OK(
-          serializer_->PrependHit(&posting_list_holder2.posting_list, hit));
-    }
+    Hit hit4(/*section_id=*/4, /*document_id=*/0, /*term_frequency=*/12,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit5(/*section_id=*/8, /*document_id=*/4, /*term_frequency=*/19,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit6(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit7(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder2.posting_list, hit4));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder2.posting_list, hit5));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder2.posting_list, hit6));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder2.posting_list, hit7));
+
     EXPECT_THAT(serializer_->GetHits(&posting_list_holder2.posting_list),
-                IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
+                IsOkAndHolds(ElementsAre(EqualsHit(hit7), EqualsHit(hit6),
+                                         EqualsHit(hit5), EqualsHit(hit4))));
 
     // 3. Now, free the first posting list. This should add it to the free list
     ICING_ASSERT_OK(
@@ -373,17 +439,31 @@ TEST_F(FlashIndexStorageTest, FreeListNotInMemory) {
     // gone.
     EXPECT_THAT(serializer_->GetHits(&posting_list_holder3.posting_list),
                 IsOkAndHolds(IsEmpty()));
-    std::vector<Hit> hits3 = {
-        Hit(/*section_id=*/7, /*document_id=*/1, /*term_frequency=*/62),
-        Hit(/*section_id=*/12, /*document_id=*/3, /*term_frequency=*/45),
-        Hit(/*section_id=*/11, /*document_id=*/18, /*term_frequency=*/12),
-        Hit(/*section_id=*/7, /*document_id=*/100, /*term_frequency=*/74)};
-    for (const Hit& hit : hits3) {
-      ICING_ASSERT_OK(
-          serializer_->PrependHit(&posting_list_holder3.posting_list, hit));
-    }
+
+    Hit hit8(/*section_id=*/7, /*document_id=*/1, /*term_frequency=*/62,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit9(/*section_id=*/12, /*document_id=*/3, /*term_frequency=*/45,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit10(/*section_id=*/11, /*document_id=*/18, /*term_frequency=*/12,
+              /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+              /*is_stemmed_hit=*/false);
+    Hit hit11(/*section_id=*/7, /*document_id=*/100, /*term_frequency=*/74,
+              /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+              /*is_stemmed_hit=*/false);
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder3.posting_list, hit8));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder3.posting_list, hit9));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder3.posting_list, hit10));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder3.posting_list, hit11));
+
     EXPECT_THAT(serializer_->GetHits(&posting_list_holder3.posting_list),
-                IsOkAndHolds(ElementsAreArray(hits3.rbegin(), hits3.rend())));
+                IsOkAndHolds(ElementsAre(EqualsHit(hit11), EqualsHit(hit10),
+                                         EqualsHit(hit9), EqualsHit(hit8))));
   }
   EXPECT_THAT(flash_index_storage.GetDiskUsage(),
               Eq(2 * flash_index_storage.block_size()));
@@ -416,17 +496,30 @@ TEST_F(FlashIndexStorageTest, FreeListInMemoryPersistence) {
       EXPECT_THAT(flash_index_storage.num_blocks(), Eq(2));
       EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
-      std::vector<Hit> hits1 = {
-          Hit(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/12),
-          Hit(/*section_id=*/6, /*document_id=*/2, /*term_frequency=*/19),
-          Hit(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100),
-          Hit(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197)};
-      for (const Hit& hit : hits1) {
-        ICING_ASSERT_OK(
-            serializer_->PrependHit(&posting_list_holder1.posting_list, hit));
-      }
+      Hit hit0(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/12,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+      Hit hit1(/*section_id=*/6, /*document_id=*/2, /*term_frequency=*/19,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+      Hit hit2(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+      Hit hit3(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder1.posting_list, hit0));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder1.posting_list, hit1));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder1.posting_list, hit2));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder1.posting_list, hit3));
+
       EXPECT_THAT(serializer_->GetHits(&posting_list_holder1.posting_list),
-                  IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
+                  IsOkAndHolds(ElementsAre(EqualsHit(hit3), EqualsHit(hit2),
+                                           EqualsHit(hit1), EqualsHit(hit0))));
 
       // 2. Get another PL. This should be on the same flash block. There should
       // be no allocation.
@@ -440,17 +533,30 @@ TEST_F(FlashIndexStorageTest, FreeListInMemoryPersistence) {
       EXPECT_THAT(flash_index_storage.num_blocks(), Eq(2));
       EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
-      std::vector<Hit> hits2 = {
-          Hit(/*section_id=*/4, /*document_id=*/0, /*term_frequency=*/12),
-          Hit(/*section_id=*/8, /*document_id=*/4, /*term_frequency=*/19),
-          Hit(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100),
-          Hit(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197)};
-      for (const Hit& hit : hits2) {
-        ICING_ASSERT_OK(
-            serializer_->PrependHit(&posting_list_holder2.posting_list, hit));
-      }
+      Hit hit4(/*section_id=*/4, /*document_id=*/0, /*term_frequency=*/12,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+      Hit hit5(/*section_id=*/8, /*document_id=*/4, /*term_frequency=*/19,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+      Hit hit6(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+      Hit hit7(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder2.posting_list, hit4));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder2.posting_list, hit5));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder2.posting_list, hit6));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder2.posting_list, hit7));
+
       EXPECT_THAT(serializer_->GetHits(&posting_list_holder2.posting_list),
-                  IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
+                  IsOkAndHolds(ElementsAre(EqualsHit(hit7), EqualsHit(hit6),
+                                           EqualsHit(hit5), EqualsHit(hit4))));
 
       // 3. Now, free the first posting list. This should add it to the free
       // list
@@ -491,17 +597,31 @@ TEST_F(FlashIndexStorageTest, FreeListInMemoryPersistence) {
       // gone.
       EXPECT_THAT(serializer_->GetHits(&posting_list_holder3.posting_list),
                   IsOkAndHolds(IsEmpty()));
-      std::vector<Hit> hits3 = {
-          Hit(/*section_id=*/7, /*document_id=*/1, /*term_frequency=*/62),
-          Hit(/*section_id=*/12, /*document_id=*/3, /*term_frequency=*/45),
-          Hit(/*section_id=*/11, /*document_id=*/18, /*term_frequency=*/12),
-          Hit(/*section_id=*/7, /*document_id=*/100, /*term_frequency=*/74)};
-      for (const Hit& hit : hits3) {
-        ICING_ASSERT_OK(
-            serializer_->PrependHit(&posting_list_holder3.posting_list, hit));
-      }
+
+      Hit hit8(/*section_id=*/7, /*document_id=*/1, /*term_frequency=*/62,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+      Hit hit9(/*section_id=*/12, /*document_id=*/3, /*term_frequency=*/45,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+      Hit hit10(/*section_id=*/11, /*document_id=*/18, /*term_frequency=*/12,
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
+      Hit hit11(/*section_id=*/7, /*document_id=*/100, /*term_frequency=*/74,
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder3.posting_list, hit8));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder3.posting_list, hit9));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder3.posting_list, hit10));
+      ICING_ASSERT_OK(
+          serializer_->PrependHit(&posting_list_holder3.posting_list, hit11));
+
       EXPECT_THAT(serializer_->GetHits(&posting_list_holder3.posting_list),
-                  IsOkAndHolds(ElementsAreArray(hits3.rbegin(), hits3.rend())));
+                  IsOkAndHolds(ElementsAre(EqualsHit(hit11), EqualsHit(hit10),
+                                           EqualsHit(hit9), EqualsHit(hit8))));
     }
     EXPECT_THAT(flash_index_storage.GetDiskUsage(),
                 Eq(2 * flash_index_storage.block_size()));
@@ -533,17 +653,30 @@ TEST_F(FlashIndexStorageTest, DifferentSizedPostingLists) {
     EXPECT_THAT(flash_index_storage.num_blocks(), Eq(2));
     EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
-    std::vector<Hit> hits1 = {
-        Hit(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/12),
-        Hit(/*section_id=*/6, /*document_id=*/2, /*term_frequency=*/19),
-        Hit(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100),
-        Hit(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197)};
-    for (const Hit& hit : hits1) {
-      ICING_ASSERT_OK(
-          serializer_->PrependHit(&posting_list_holder1.posting_list, hit));
-    }
+    Hit hit0(/*section_id=*/1, /*document_id=*/0, /*term_frequency=*/12,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit1(/*section_id=*/6, /*document_id=*/2, /*term_frequency=*/19,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit2(/*section_id=*/5, /*document_id=*/2, /*term_frequency=*/100,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit3(/*section_id=*/8, /*document_id=*/5, /*term_frequency=*/197,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder1.posting_list, hit0));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder1.posting_list, hit1));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder1.posting_list, hit2));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder1.posting_list, hit3));
+
     EXPECT_THAT(serializer_->GetHits(&posting_list_holder1.posting_list),
-                IsOkAndHolds(ElementsAreArray(hits1.rbegin(), hits1.rend())));
+                IsOkAndHolds(ElementsAre(EqualsHit(hit3), EqualsHit(hit2),
+                                         EqualsHit(hit1), EqualsHit(hit0))));
 
     // 2. Get a PL that is 1/4 block size. Even though a 1/4 block PL could
     // theoretically fit in the same block, we'll allocate a new one because PLs
@@ -560,17 +693,30 @@ TEST_F(FlashIndexStorageTest, DifferentSizedPostingLists) {
     EXPECT_THAT(flash_index_storage.num_blocks(), Eq(3));
     EXPECT_THAT(flash_index_storage.empty(), IsFalse());
 
-    std::vector<Hit> hits2 = {
-        Hit(/*section_id=*/4, /*document_id=*/0, /*term_frequency=*/12),
-        Hit(/*section_id=*/8, /*document_id=*/4, /*term_frequency=*/19),
-        Hit(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100),
-        Hit(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197)};
-    for (const Hit& hit : hits2) {
-      ICING_ASSERT_OK(
-          serializer_->PrependHit(&posting_list_holder2.posting_list, hit));
-    }
+    Hit hit4(/*section_id=*/4, /*document_id=*/0, /*term_frequency=*/12,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit5(/*section_id=*/8, /*document_id=*/4, /*term_frequency=*/19,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit6(/*section_id=*/9, /*document_id=*/7, /*term_frequency=*/100,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    Hit hit7(/*section_id=*/6, /*document_id=*/7, /*term_frequency=*/197,
+             /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+             /*is_stemmed_hit=*/false);
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder2.posting_list, hit4));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder2.posting_list, hit5));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder2.posting_list, hit6));
+    ICING_ASSERT_OK(
+        serializer_->PrependHit(&posting_list_holder2.posting_list, hit7));
+
     EXPECT_THAT(serializer_->GetHits(&posting_list_holder2.posting_list),
-                IsOkAndHolds(ElementsAreArray(hits2.rbegin(), hits2.rend())));
+                IsOkAndHolds(ElementsAre(EqualsHit(hit7), EqualsHit(hit6),
+                                         EqualsHit(hit5), EqualsHit(hit4))));
 
     // 3. Request another 1/4 block-size posting list. This should NOT grow the
     // index because there should be three free posting lists on block2.

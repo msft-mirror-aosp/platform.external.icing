@@ -31,9 +31,7 @@ struct LiteIndexOptions {
   // CalculateTrieOptions.
   LiteIndexOptions(const std::string& filename_base,
                    uint32_t hit_buffer_want_merge_bytes,
-                   bool hit_buffer_sort_at_indexing,
-                   uint32_t hit_buffer_sort_threshold_bytes,
-                   bool include_property_existence_metadata_hits = false);
+                   uint32_t hit_buffer_sort_threshold_bytes);
 
   IcingDynamicTrie::Options lexicon_options;
   IcingDynamicTrie::Options display_mappings_options;
@@ -41,9 +39,7 @@ struct LiteIndexOptions {
   std::string filename_base;
   uint32_t hit_buffer_want_merge_bytes = 0;
   uint32_t hit_buffer_size = 0;
-  bool hit_buffer_sort_at_indexing = false;
   uint32_t hit_buffer_sort_threshold_bytes = 0;
-  bool include_property_existence_metadata_hits = false;
 };
 
 }  // namespace lib

@@ -15,9 +15,12 @@
 #include "icing/util/crc32.h"
 
 #include <cstdint>
+#include <string>
+#include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/portable/zlib.h"
 
@@ -43,9 +46,23 @@ uint32_t Crc32::Append(const std::string_view str) {
   return crc_;
 }
 
+uint32_t Crc32::Combine(const Crc32& other_crc, int other_data_size) {
+  crc_ = crc32_combine(crc_, other_crc.Get(), other_data_size);
+  return crc_;
+}
+
 libtextclassifier3::StatusOr<uint32_t> Crc32::UpdateWithXor(
     const std::string_view xored_str, int full_data_size, int position) {
   // For appending, use Append().
+  if (full_data_size < 0) {
+    return absl_ports::InvalidArgumentError(
+        absl_ports::StrCat("full_data_size must be greater than 0, but was ",
+                           std::to_string(full_data_size)));
+  }
+  if (position < 0) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        "position must be greater than 0, but was ", std::to_string(position)));
+  }
   if (position + xored_str.length() > full_data_size) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
         "offset position %d + length %zd > full data size %d", position,

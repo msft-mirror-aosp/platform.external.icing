@@ -17,6 +17,9 @@ package com.google.android.icing;
 import android.util.Log;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import com.google.android.icing.proto.BatchGetResultProto;
+import com.google.android.icing.proto.BatchPutResultProto;
+import com.google.android.icing.proto.BlobProto;
 import com.google.android.icing.proto.DebugInfoResultProto;
 import com.google.android.icing.proto.DeleteByNamespaceResultProto;
 import com.google.android.icing.proto.DeleteByQueryResultProto;
@@ -27,7 +30,9 @@ import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
+import com.google.android.icing.proto.HandleExpiredDocumentsResultProto;
 import com.google.android.icing.proto.InitializeResultProto;
+import com.google.android.icing.proto.MaintainAnnIndexResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PutResultProto;
@@ -48,6 +53,7 @@ import com.google.protobuf.InvalidProtocolBufferException;
  * <p>It is also being used by AppSearch dynamite 0p client APIs to convert byte arrays to the
  * protos.
  */
+// TODO(b/347054358): Add unit tests for this class.
 public final class IcingSearchEngineUtils {
   private static final String TAG = "IcingSearchEngineUtils";
   private static final ExtensionRegistryLite EXTENSION_REGISTRY_LITE =
@@ -156,6 +162,26 @@ public final class IcingSearchEngineUtils {
   }
 
   @NonNull
+  public static BatchPutResultProto byteArrayToBatchPutResultProto(
+      @Nullable byte[] putResultsBytes) {
+    if (putResultsBytes == null) {
+      Log.e(TAG, "Received null PutResultProtos from native.");
+      return BatchPutResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return BatchPutResultProto.parseFrom(putResultsBytes, EXTENSION_REGISTRY_LITE);
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing PutResultProtos.", e);
+      return BatchPutResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  @NonNull
   public static GetResultProto byteArrayToGetResultProto(@Nullable byte[] getResultBytes) {
     if (getResultBytes == null) {
       Log.e(TAG, "Received null GetResultProto from native.");
@@ -169,6 +195,26 @@ public final class IcingSearchEngineUtils {
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing GetResultProto.", e);
       return GetResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  @NonNull
+  public static BatchGetResultProto byteArrayToBatchGetResultProto(
+      @Nullable byte[] batchGetResultBytes) {
+    if (batchGetResultBytes == null) {
+      Log.e(TAG, "Received null BatchGetResultProto from native.");
+      return BatchGetResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return BatchGetResultProto.parseFrom(batchGetResultBytes, EXTENSION_REGISTRY_LITE);
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing BatchGetResultProto.", e);
+      return BatchGetResultProto.newBuilder()
           .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
           .build();
     }
@@ -232,6 +278,85 @@ public final class IcingSearchEngineUtils {
     } catch (InvalidProtocolBufferException e) {
       Log.e(TAG, "Error parsing SearchResultProto.", e);
       return SearchResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  /**
+   * Converts a byte array to a {@link HandleExpiredDocumentsResultProto}.
+   *
+   * @param handleExpiredDocumentsResultBytes the byte array to convert
+   * @return the {@link HandleExpiredDocumentsResultProto}
+   */
+  @NonNull
+  public static HandleExpiredDocumentsResultProto byteArrayToHandleExpiredDocumentsResultProto(
+      @Nullable byte[] handleExpiredDocumentsResultBytes) {
+    if (handleExpiredDocumentsResultBytes == null) {
+      Log.e(TAG, "Received null HandleExpiredDocumentsResultProto from native.");
+      return HandleExpiredDocumentsResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return HandleExpiredDocumentsResultProto.parseFrom(
+          handleExpiredDocumentsResultBytes, EXTENSION_REGISTRY_LITE);
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing HandleExpiredDocumentsResultProto.", e);
+      return HandleExpiredDocumentsResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  /**
+   * Converts a byte array to a {@link MaintainAnnIndexResultProto}.
+   *
+   * @param maintainAnnIndexResultBytes the byte array to convert
+   * @return the {@link MaintainAnnIndexResultProto}
+   */
+  @NonNull
+  public static MaintainAnnIndexResultProto byteArrayToMaintainAnnIndexResultProto(
+      @Nullable byte[] maintainAnnIndexResultBytes) {
+    if (maintainAnnIndexResultBytes == null) {
+      Log.e(TAG, "Received null MaintainAnnIndexResultProto from native.");
+      return MaintainAnnIndexResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return MaintainAnnIndexResultProto.parseFrom(
+          maintainAnnIndexResultBytes, EXTENSION_REGISTRY_LITE);
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing MaintainAnnIndexResultProto.", e);
+      return MaintainAnnIndexResultProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+  }
+
+  /**
+   * Converts a byte array to a {@link BlobProto}.
+   *
+   * @param blobBytes the byte array to convert
+   * @return the {@link BlobProto}
+   */
+  @NonNull
+  public static BlobProto byteArrayToBlobProto(@Nullable byte[] blobBytes) {
+    if (blobBytes == null) {
+      Log.e(TAG, "Received null BlobProto from native.");
+      return BlobProto.newBuilder()
+          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
+          .build();
+    }
+
+    try {
+      return BlobProto.newBuilder().mergeFrom(blobBytes, EXTENSION_REGISTRY_LITE).build();
+    } catch (InvalidProtocolBufferException e) {
+      Log.e(TAG, "Error parsing BlobProto.", e);
+      return BlobProto.newBuilder()
           .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
           .build();
     }

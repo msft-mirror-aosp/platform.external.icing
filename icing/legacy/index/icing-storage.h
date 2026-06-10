@@ -23,6 +23,12 @@
 #include <cstdint>
 #include <string>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
+#include "icing/util/crc32.h"
+#include "icing/util/logging.h"
+
 namespace icing {
 namespace lib {
 
@@ -39,15 +45,23 @@ class IIcingStorage {
 
   // This must be called before the object is usable.
   // Returns true if the storage is in a usable state.
-  virtual bool Init() = 0;
+  virtual libtextclassifier3::Status Init() = 0;
 
   // Attempts to init the given IIcingStorage. On failure, clears the underlying
-  // data and tries again. Returns false of the second init is also a failure.
-  static bool InitWithRetry(IIcingStorage* file_in) {
-    if (file_in->Init()) {
-      return true;
+  // data and tries again. Returns the failure status if the second init also
+  // fails.
+  static libtextclassifier3::Status InitWithRetry(IIcingStorage* file_in) {
+    libtextclassifier3::Status status = file_in->Init();
+    if (status.ok()) {
+      return status;
     }
-    return file_in->Remove() && file_in->Init();
+    ICING_LOG(WARNING) << "Init failed, clearing underlying data and retrying."
+                       << status.error_message();
+    if (!file_in->Remove()) {
+      return absl_ports::InternalError(
+          "Failed to remove underlying file after init failed");
+    }
+    return file_in->Init();
   }
 
   // Closes all files and system resources.
@@ -60,7 +74,7 @@ class IIcingStorage {
   virtual bool Remove() = 0;
 
   // Syncs any unwritten data to disk.
-  virtual bool Sync() = 0;
+  virtual libtextclassifier3::Status Sync() = 0;
 
   // Gets the total amount of disk usage for the object (i.e. the sum of the
   // bytes of all underlying files).
@@ -70,10 +84,9 @@ class IIcingStorage {
   // Returns kBadFileSize on error.
   virtual uint64_t GetDiskUsage() const = 0;
 
-  // Optional handler for when our process is entering a vulnerable
-  // state (highly likely to get killed). Default implementation does
-  // nothing.
-  virtual void OnSleep() {}
+  // Updates any checksums that this storage maintains.
+  // By default, does nothing.
+  virtual libtextclassifier3::StatusOr<Crc32> UpdateCrc() { return Crc32(); }
 
   virtual void GetDebugInfo(int verbosity, std::string* out) const = 0;
 
