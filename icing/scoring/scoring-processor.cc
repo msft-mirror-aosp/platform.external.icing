@@ -119,6 +119,8 @@ std::vector<ScoredDocumentHit> ScoringProcessor::Score(
         iterator_call_stats.embedding_stats.quantized_shards_read.size()));
     search_stats->set_num_embedding_bytes_read(
         iterator_call_stats.embedding_stats.num_embedding_bytes_read);
+    search_stats->set_num_ann_embeddings_scored(
+        iterator_call_stats.embedding_stats.num_ann_embeddings_scored);
   }
 
   return scored_document_hits;

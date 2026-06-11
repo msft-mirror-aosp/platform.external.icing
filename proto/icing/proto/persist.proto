@@ -23,8 +23,9 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // The type of persistence guarantee that PersistToDisk should provide.
-// Next tag: 3
+// Next tag: 2
 message PersistType {
+  // Next tag: 6
   enum Code {
     // Default. Should never be used.
     UNKNOWN = 0;
@@ -52,12 +53,25 @@ message PersistType {
     // persisted then we will have a checksum mismatch and a recovery. To
     // guarantee that recovery won't occur PersistToDisk(FULL) must be called.
     RECOVERY_PROOF = 3;
+
+    // This call type should be called when the client app is going to terminate
+    // or the OS is going to shutdown.
+    //
+    // By default, it will have the same behavior as RECOVERY_PROOF. It is only
+    // used to differentiate the calling path (especially for Android).
+    SHUTDOWN = 4;
+
+    // This call type should be called only by IcingSearchEngine destructor.
+    //
+    // By default, it will have the same behavior as FULL. It is only used to
+    // differentiate the calling path.
+    DESTRUCTOR = 5;
   }
   optional Code code = 1;
 }
 
 // Result of a call to IcingSearchEngine.Persist
-// Next tag: 4
+// Next tag: 5
 message PersistToDiskResultProto {
   // Status code can be one of:
   //   OK
@@ -72,6 +86,10 @@ message PersistToDiskResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
 }
 
 // Stats of the top-level function IcingSearchEngine::PersistToDisk.

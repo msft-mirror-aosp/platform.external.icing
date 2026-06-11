@@ -49,6 +49,7 @@
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
+#include "icing/util/embedding-util.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
@@ -68,41 +69,52 @@ using ::testing::Pointwise;
 // Indexable properties (section) and section id. Section id is determined by
 // the lexicographical order of indexable property paths.
 // Schema type with indexable properties: FakeType
-// Section id = 0: "body"
-// Section id = 1: "bodyEmbedding"
-// Section id = 2: "quantizedEmbedding"
-// Section id = 3: "title"
-// Section id = 4: "titleEmbedding"
+// Section id = 0: "annEmbedding"
+// Section id = 1: "annQuantizedEmbedding"
+// Section id = 2: "body"
+// Section id = 3: "bodyEmbedding"
+// Section id = 4: "quantizedEmbedding"
+// Section id = 5: "title"
+// Section id = 6: "titleEmbedding"
 static constexpr std::string_view kFakeType = "FakeType";
 static constexpr std::string_view kPropertyBody = "body";
 static constexpr std::string_view kPropertyBodyEmbedding = "bodyEmbedding";
 static constexpr std::string_view kPropertyQuantizedEmbedding =
     "quantizedEmbedding";
+static constexpr std::string_view kPropertyAnnEmbedding = "annEmbedding";
+static constexpr std::string_view kPropertyAnnQuantizedEmbedding =
+    "annQuantizedEmbedding";
 static constexpr std::string_view kPropertyTitle = "title";
 static constexpr std::string_view kPropertyTitleEmbedding = "titleEmbedding";
 static constexpr std::string_view kPropertyNonIndexableEmbedding =
     "nonIndexableEmbedding";
 
-static constexpr SectionId kSectionIdBodyEmbedding = 1;
-static constexpr SectionId kSectionIdQuantizedEmbedding = 2;
-static constexpr SectionId kSectionIdTitleEmbedding = 4;
+static constexpr SectionId kSectionIdAnnEmbedding = 0;
+static constexpr SectionId kSectionIdAnnQuantizedEmbedding = 1;
+static constexpr SectionId kSectionIdBodyEmbedding = 3;
+static constexpr SectionId kSectionIdQuantizedEmbedding = 4;
+static constexpr SectionId kSectionIdTitleEmbedding = 6;
 
 // Schema type with nested indexable properties: FakeCollectionType
-// Section id = 0: "collection.body"
-// Section id = 1: "collection.bodyEmbedding"
-// Section id = 2: "collection.quantizedEmbedding"
-// Section id = 3: "collection.title"
-// Section id = 4: "collection.titleEmbedding"
-// Section id = 5: "fullDocEmbedding"
+// Section id = 0: "collection.annEmbedding"
+// Section id = 1: "collection.annQuantizedEmbedding"
+// Section id = 2: "collection.body"
+// Section id = 3: "collection.bodyEmbedding"
+// Section id = 4: "collection.quantizedEmbedding"
+// Section id = 5: "collection.title"
+// Section id = 6: "collection.titleEmbedding"
+// Section id = 7: "fullDocEmbedding"
 static constexpr std::string_view kFakeCollectionType = "FakeCollectionType";
 static constexpr std::string_view kPropertyCollection = "collection";
 static constexpr std::string_view kPropertyFullDocEmbedding =
     "fullDocEmbedding";
 
-static constexpr SectionId kSectionIdNestedBodyEmbedding = 1;
-static constexpr SectionId kSectionIdNestedQuantizedEmbedding = 2;
-static constexpr SectionId kSectionIdNestedTitleEmbedding = 4;
-static constexpr SectionId kSectionIdFullDocEmbedding = 5;
+static constexpr SectionId kSectionIdNestedAnnEmbedding = 0;
+static constexpr SectionId kSectionIdNestedAnnQuantizedEmbedding = 1;
+static constexpr SectionId kSectionIdNestedBodyEmbedding = 3;
+static constexpr SectionId kSectionIdNestedQuantizedEmbedding = 4;
+static constexpr SectionId kSectionIdNestedTitleEmbedding = 6;
+static constexpr SectionId kSectionIdFullDocEmbedding = 7;
 
 constexpr float kEpsQuantized = 0.01f;
 
@@ -146,6 +158,21 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
                                      .SetDataTypeString(TERM_MATCH_EXACT,
                                                         TOKENIZER_PLAIN)
                                      .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kPropertyAnnEmbedding)
+                            .SetDataTypeVector(
+                                EmbeddingIndexingConfig::EmbeddingIndexingType::
+                                    APPROXIMATE_NEAREST_NEIGHBOR)
+                            .SetCardinality(CARDINALITY_REPEATED))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kPropertyAnnQuantizedEmbedding)
+                            .SetDataTypeVector(
+                                EmbeddingIndexingConfig::EmbeddingIndexingType::
+                                    APPROXIMATE_NEAREST_NEIGHBOR,
+                                QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                            .SetCardinality(CARDINALITY_REPEATED))
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kPropertyBody)
                                      .SetDataTypeString(TERM_MATCH_EXACT,
@@ -248,13 +275,11 @@ class EmbeddingIndexingHandlerTest : public ::testing::Test {
 
 TEST_F(EmbeddingIndexingHandlerTest, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(EmbeddingIndexingHandler::Create(/*clock=*/nullptr,
-                                               embedding_index_.get(),
-                                               /*enable_embedding_index=*/true),
+                                               embedding_index_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   EXPECT_THAT(EmbeddingIndexingHandler::Create(&fake_clock_,
-                                               /*embedding_index=*/nullptr,
-                                               /*enable_embedding_index=*/true),
+                                               /*embedding_index=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
@@ -263,6 +288,10 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
+          .AddVectorProperty(std::string(kPropertyAnnEmbedding),
+                             CreateVector("model", {0.1, 0.2, 0.3}))
+          .AddVectorProperty(std::string(kPropertyAnnQuantizedEmbedding),
+                             CreateVector("model", {0.11, 0.22, 0.33}))
           .AddStringProperty(std::string(kPropertyTitle), "title")
           .AddVectorProperty(std::string(kPropertyTitleEmbedding),
                              CreateVector("model", {0.1, 0.2, 0.3}))
@@ -276,9 +305,14 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
           .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
                              CreateVector("model", {1.1, 1.2, 1.3}))
           .Build();
-  uint32_t shard_id = embedding_index_->GetShardId(
-      /*dimension=*/3, /*model_signature=*/"model",
-      /*schema_name=*/kFakeType);
+  uint32_t shard_id = GetShardId(embedding_index_.get(),
+                                 /*dimension=*/3, /*model_signature=*/"model",
+                                 /*schema_name=*/kFakeType);
+  uint32_t ann_shard_id =
+      GetShardId(embedding_index_.get(),
+                 /*dimension=*/3, /*model_signature=*/"model",
+                 /*schema_name=*/kFakeType,
+                 /*cluster_id=*/embedding_util::kIvfDeltaStoreClusterId);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(
@@ -295,8 +329,7 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
   // Handle document.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
-                                       /*enable_embedding_index=*/true));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
   EXPECT_THAT(handler->Handle(
                   tokenized_document, document_id, put_result.old_document_id,
                   /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
@@ -340,27 +373,50 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleEmbeddingSection) {
           /*schema_name=*/kFakeType),
       IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.4, 0.5, 0.6})));
 
+  // Check ANN index
+  EmbeddingHit ann_hit(BasicHit(kSectionIdAnnEmbedding, /*document_id=*/0),
+                       /*location=*/0);
+  EmbeddingHit ann_quantized_hit(
+      BasicHit(kSectionIdAnnQuantizedEmbedding, /*document_id=*/0),
+      /*location=*/0);
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(
+                  embedding_index_.get(), /*dimension=*/3,
+                  /*model_signature=*/"model",
+                  /*cluster_ids=*/{embedding_util::kIvfDeltaStoreClusterId}),
+              IsOkAndHolds(ElementsAre(ann_hit, ann_quantized_hit)));
+  EXPECT_THAT(
+      GetRawEmbeddingDataFromIndex(embedding_index_.get(), ann_shard_id),
+      ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(ann_shard_id),
+              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(
+          embedding_index_.get(), ann_quantized_hit,
+          /*dimension=*/3, /*model_signature=*/"model",
+          /*schema_name=*/kFakeType,
+          /*cluster_id=*/embedding_util::kIvfDeltaStoreClusterId),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.11, 0.22, 0.33})));
+
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id));
 }
 
-TEST_F(EmbeddingIndexingHandlerTest, EmbeddingShouldNotBeIndexedIfDisabled) {
+// Tests that the handler skips indexing vectors with quantized values if
+// quantization is not enabled in the schema, without failing the document
+// ingestion.
+TEST_F(EmbeddingIndexingHandlerTest,
+       HandleEmbeddingSectionShouldSkipMismatchedQuantization) {
+  PropertyProto::VectorProto vector;
+  vector.set_model_signature("model");
+  std::string quantized_values_str(sizeof(Quantizer) + 3, 'a');
+  vector.set_quantized_values(quantized_values_str);
+
   DocumentProto document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
-          .AddStringProperty(std::string(kPropertyTitle), "title")
-          .AddVectorProperty(std::string(kPropertyTitleEmbedding),
-                             CreateVector("model", {0.1, 0.2, 0.3}))
-          .AddStringProperty(std::string(kPropertyBody), "body")
-          .AddVectorProperty(std::string(kPropertyBodyEmbedding),
-                             CreateVector("model", {0.4, 0.5, 0.6}),
-                             CreateVector("model", {0.7, 0.8, 0.9}))
-          .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
-                             CreateVector("model", {1.1, 1.2, 1.3}))
+          .AddVectorProperty(std::string(kPropertyTitleEmbedding), vector)
           .Build();
-  uint32_t shard_id = embedding_index_->GetShardId(
-      /*dimension=*/3, /*model_signature=*/"model",
-      /*schema_name=*/kFakeType);
+
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(
@@ -372,26 +428,17 @@ TEST_F(EmbeddingIndexingHandlerTest, EmbeddingShouldNotBeIndexedIfDisabled) {
       document_store_->Put(tokenized_document.document_wrapper()));
   DocumentId document_id = put_result.new_document_id;
 
-  ASSERT_THAT(embedding_index_->last_added_document_id(),
-              Eq(kInvalidDocumentId));
-  // If enable_embedding_index is false, the handler should not index any
-  // embeddings.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
-                                       /*enable_embedding_index=*/false));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
   EXPECT_THAT(handler->Handle(
                   tokenized_document, document_id, put_result.old_document_id,
                   /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
               IsOk());
 
-  // Check that the embedding index is empty.
   EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
                                         /*model_signature=*/"model"),
               IsOkAndHolds(IsEmpty()));
-  EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
-              IsEmpty());
-  EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id));
 }
 
 TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
@@ -404,6 +451,11 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
               DocumentBuilder()
                   .SetKey("icing", "nested_fake_type/1")
                   .SetSchema(std::string(kFakeType))
+                  .AddVectorProperty(std::string(kPropertyAnnEmbedding),
+                                     CreateVector("model", {0.1, 0.2, 0.3}))
+                  .AddVectorProperty(
+                      std::string(kPropertyAnnQuantizedEmbedding),
+                      CreateVector("model", {0.11, 0.22, 0.33}))
                   .AddStringProperty(std::string(kPropertyTitle), "title")
                   .AddVectorProperty(std::string(kPropertyTitleEmbedding),
                                      CreateVector("model", {0.1, 0.2, 0.3}))
@@ -421,9 +473,14 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
           .AddVectorProperty(std::string(kPropertyFullDocEmbedding),
                              CreateVector("model", {2.1, 2.2, 2.3}))
           .Build();
-  uint32_t shard_id = embedding_index_->GetShardId(
-      /*dimension=*/3, /*model_signature=*/"model",
-      /*schema_name=*/kFakeCollectionType);
+  uint32_t shard_id = GetShardId(embedding_index_.get(),
+                                 /*dimension=*/3, /*model_signature=*/"model",
+                                 /*schema_name=*/kFakeCollectionType);
+  uint32_t ann_shard_id =
+      GetShardId(embedding_index_.get(),
+                 /*dimension=*/3, /*model_signature=*/"model",
+                 /*schema_name=*/kFakeCollectionType,
+                 /*cluster_id=*/embedding_util::kIvfDeltaStoreClusterId);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(
@@ -440,8 +497,7 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
   // Handle document.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
-                                       /*enable_embedding_index=*/true));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
   EXPECT_THAT(handler->Handle(
                   tokenized_document, document_id, put_result.old_document_id,
                   /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
@@ -488,6 +544,33 @@ TEST_F(EmbeddingIndexingHandlerTest, HandleNestedEmbeddingSection) {
           /*schema_name=*/kFakeCollectionType),
       IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.4, 0.5, 0.6})));
 
+  // Check ANN index
+  EmbeddingHit ann_hit(
+      BasicHit(kSectionIdNestedAnnEmbedding, /*document_id=*/0),
+      /*location=*/0);
+  EmbeddingHit ann_quantized_hit(
+      BasicHit(kSectionIdNestedAnnQuantizedEmbedding, /*document_id=*/0),
+      /*location=*/0);
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(
+                  embedding_index_.get(), /*dimension=*/3,
+                  /*model_signature=*/"model",
+                  /*cluster_ids=*/{embedding_util::kIvfDeltaStoreClusterId}),
+              IsOkAndHolds(ElementsAre(ann_hit, ann_quantized_hit)));
+  EXPECT_THAT(
+      GetRawEmbeddingDataFromIndex(embedding_index_.get(), ann_shard_id),
+      ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(ann_shard_id),
+              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(
+          embedding_index_.get(),
+          EmbeddingHit(BasicHit(kSectionIdNestedAnnQuantizedEmbedding,
+                                /*document_id=*/0),
+                       /*location=*/0),
+          /*dimension=*/3, /*model_signature=*/"model",
+          /*schema_name=*/kFakeCollectionType,
+          /*cluster_id=*/embedding_util::kIvfDeltaStoreClusterId),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.11, 0.22, 0.33})));
   EXPECT_THAT(embedding_index_->last_added_document_id(), Eq(document_id));
 }
 
@@ -497,6 +580,10 @@ TEST_F(EmbeddingIndexingHandlerTest,
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
+          .AddVectorProperty(std::string(kPropertyAnnEmbedding),
+                             CreateVector("model", {0.1, 0.2, 0.3}))
+          .AddVectorProperty(std::string(kPropertyAnnQuantizedEmbedding),
+                             CreateVector("model", {0.11, 0.22, 0.33}))
           .AddStringProperty(std::string(kPropertyTitle), "title")
           .AddVectorProperty(std::string(kPropertyTitleEmbedding),
                              CreateVector("model", {0.1, 0.2, 0.3}))
@@ -507,9 +594,14 @@ TEST_F(EmbeddingIndexingHandlerTest,
           .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
                              CreateVector("model", {1.1, 1.2, 1.3}))
           .Build();
-  uint32_t shard_id = embedding_index_->GetShardId(
-      /*dimension=*/3, /*model_signature=*/"model",
-      /*schema_name=*/kFakeType);
+  uint32_t shard_id = GetShardId(embedding_index_.get(),
+                                 /*dimension=*/3, /*model_signature=*/"model",
+                                 /*schema_name=*/kFakeType);
+  uint32_t ann_shard_id =
+      GetShardId(embedding_index_.get(),
+                 /*dimension=*/3, /*model_signature=*/"model",
+                 /*schema_name=*/kFakeType,
+                 /*cluster_id=*/embedding_util::kIvfDeltaStoreClusterId);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(
@@ -525,8 +617,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
-                                       /*enable_embedding_index=*/true));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
 
   // Handling document with kInvalidDocumentId should cause a failure, and both
   // index data and last_added_document_id should remain unchanged.
@@ -544,6 +635,14 @@ TEST_F(EmbeddingIndexingHandlerTest,
   EXPECT_TRUE(embedding_index_->is_empty());
   EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
               IsEmpty());
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(
+                  embedding_index_.get(), /*dimension=*/3,
+                  /*model_signature=*/"model",
+                  /*cluster_ids=*/{embedding_util::kIvfDeltaStoreClusterId}),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(
+      GetRawEmbeddingDataFromIndex(embedding_index_.get(), ann_shard_id),
+      IsEmpty());
 
   // Recovery mode should get the same result.
   EXPECT_THAT(
@@ -560,6 +659,14 @@ TEST_F(EmbeddingIndexingHandlerTest,
   EXPECT_TRUE(embedding_index_->is_empty());
   EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
               IsEmpty());
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(
+                  embedding_index_.get(), /*dimension=*/3,
+                  /*model_signature=*/"model",
+                  /*cluster_ids=*/{embedding_util::kIvfDeltaStoreClusterId}),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(
+      GetRawEmbeddingDataFromIndex(embedding_index_.get(), ann_shard_id),
+      IsEmpty());
 }
 
 TEST_F(EmbeddingIndexingHandlerTest,
@@ -568,6 +675,10 @@ TEST_F(EmbeddingIndexingHandlerTest,
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
+          .AddVectorProperty(std::string(kPropertyAnnEmbedding),
+                             CreateVector("model", {0.1, 0.2, 0.3}))
+          .AddVectorProperty(std::string(kPropertyAnnQuantizedEmbedding),
+                             CreateVector("model", {0.11, 0.22, 0.33}))
           .AddStringProperty(std::string(kPropertyTitle), "title")
           .AddVectorProperty(std::string(kPropertyTitleEmbedding),
                              CreateVector("model", {0.1, 0.2, 0.3}))
@@ -578,9 +689,14 @@ TEST_F(EmbeddingIndexingHandlerTest,
           .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
                              CreateVector("model", {1.1, 1.2, 1.3}))
           .Build();
-  uint32_t shard_id = embedding_index_->GetShardId(
-      /*dimension=*/3, /*model_signature=*/"model",
-      /*schema_name=*/kFakeType);
+  uint32_t shard_id = GetShardId(embedding_index_.get(),
+                                 /*dimension=*/3, /*model_signature=*/"model",
+                                 /*schema_name=*/kFakeType);
+  uint32_t ann_shard_id =
+      GetShardId(embedding_index_.get(),
+                 /*dimension=*/3, /*model_signature=*/"model",
+                 /*schema_name=*/kFakeType,
+                 /*cluster_id=*/embedding_util::kIvfDeltaStoreClusterId);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
       TokenizedDocument::Create(
@@ -594,8 +710,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
-                                       /*enable_embedding_index=*/true));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
 
   // Handling document with document_id == last_added_document_id should cause a
   // failure, and both index data and last_added_document_id should remain
@@ -615,6 +730,14 @@ TEST_F(EmbeddingIndexingHandlerTest,
   EXPECT_TRUE(embedding_index_->is_empty());
   EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
               IsEmpty());
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(
+                  embedding_index_.get(), /*dimension=*/3,
+                  /*model_signature=*/"model",
+                  /*cluster_ids=*/{embedding_util::kIvfDeltaStoreClusterId}),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(
+      GetRawEmbeddingDataFromIndex(embedding_index_.get(), ann_shard_id),
+      IsEmpty());
 
   // Handling document with document_id < last_added_document_id should cause a
   // failure, and both index data and last_added_document_id should remain
@@ -634,6 +757,14 @@ TEST_F(EmbeddingIndexingHandlerTest,
   EXPECT_TRUE(embedding_index_->is_empty());
   EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
               IsEmpty());
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(
+                  embedding_index_.get(), /*dimension=*/3,
+                  /*model_signature=*/"model",
+                  /*cluster_ids=*/{embedding_util::kIvfDeltaStoreClusterId}),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(
+      GetRawEmbeddingDataFromIndex(embedding_index_.get(), ann_shard_id),
+      IsEmpty());
 }
 
 TEST_F(EmbeddingIndexingHandlerTest,
@@ -643,6 +774,10 @@ TEST_F(EmbeddingIndexingHandlerTest,
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kPropertyTitle), "title one")
+          .AddVectorProperty(std::string(kPropertyAnnEmbedding),
+                             CreateVector("model", {0.1, 0.2, 0.3}))
+          .AddVectorProperty(std::string(kPropertyAnnQuantizedEmbedding),
+                             CreateVector("model", {0.11, 0.22, 0.33}))
           .AddVectorProperty(std::string(kPropertyTitleEmbedding),
                              CreateVector("model", {0.1, 0.2, 0.3}))
           .AddStringProperty(std::string(kPropertyBody), "body one")
@@ -657,6 +792,10 @@ TEST_F(EmbeddingIndexingHandlerTest,
           .SetKey("icing", "fake_type/2")
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kPropertyTitle), "title two")
+          .AddVectorProperty(std::string(kPropertyAnnEmbedding),
+                             CreateVector("model", {10.1, 10.2, 10.3}))
+          .AddVectorProperty(std::string(kPropertyAnnQuantizedEmbedding),
+                             CreateVector("model", {10.11, 10.22, 10.33}))
           .AddVectorProperty(std::string(kPropertyTitleEmbedding),
                              CreateVector("model", {10.1, 10.2, 10.3}))
           .AddStringProperty(std::string(kPropertyBody), "body two")
@@ -666,9 +805,14 @@ TEST_F(EmbeddingIndexingHandlerTest,
           .AddVectorProperty(std::string(kPropertyNonIndexableEmbedding),
                              CreateVector("model", {11.1, 11.2, 11.3}))
           .Build();
-  uint32_t shard_id = embedding_index_->GetShardId(
-      /*dimension=*/3, /*model_signature=*/"model",
-      /*schema_name=*/kFakeType);
+  uint32_t shard_id = GetShardId(embedding_index_.get(),
+                                 /*dimension=*/3, /*model_signature=*/"model",
+                                 /*schema_name=*/kFakeType);
+  uint32_t ann_shard_id =
+      GetShardId(embedding_index_.get(),
+                 /*dimension=*/3, /*model_signature=*/"model",
+                 /*schema_name=*/kFakeType,
+                 /*cluster_id=*/embedding_util::kIvfDeltaStoreClusterId);
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document1,
       TokenizedDocument::Create(
@@ -692,8 +836,7 @@ TEST_F(EmbeddingIndexingHandlerTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<EmbeddingIndexingHandler> handler,
-      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get(),
-                                       /*enable_embedding_index=*/true));
+      EmbeddingIndexingHandler::Create(&fake_clock_, embedding_index_.get()));
 
   // Handle document with document_id > last_added_document_id in recovery mode.
   // The handler should index this document and update last_added_document_id.
@@ -717,6 +860,28 @@ TEST_F(EmbeddingIndexingHandlerTest,
                        /*location=*/6))));
   EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
               ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.2, 0.3));
+  EmbeddingHit ann_hit(BasicHit(kSectionIdAnnEmbedding, /*document_id=*/0),
+                       /*location=*/0);
+  EmbeddingHit ann_quantized_hit(
+      BasicHit(kSectionIdAnnQuantizedEmbedding, /*document_id=*/0),
+      /*location=*/0);
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(
+                  embedding_index_.get(), /*dimension=*/3,
+                  /*model_signature=*/"model",
+                  /*cluster_ids=*/{embedding_util::kIvfDeltaStoreClusterId}),
+              IsOkAndHolds(ElementsAre(ann_hit, ann_quantized_hit)));
+  EXPECT_THAT(
+      GetRawEmbeddingDataFromIndex(embedding_index_.get(), ann_shard_id),
+      ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(ann_shard_id),
+              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(
+          embedding_index_.get(), ann_quantized_hit,
+          /*dimension=*/3, /*model_signature=*/"model",
+          /*schema_name=*/kFakeType,
+          /*cluster_id=*/embedding_util::kIvfDeltaStoreClusterId),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.11, 0.22, 0.33})));
 
   // Handle document with document_id == last_added_document_id in recovery
   // mode. We should not get any error, but the handler should ignore the
@@ -745,6 +910,24 @@ TEST_F(EmbeddingIndexingHandlerTest,
   EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
               ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.2, 0.3));
 
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(
+                  embedding_index_.get(), /*dimension=*/3,
+                  /*model_signature=*/"model",
+                  /*cluster_ids=*/{embedding_util::kIvfDeltaStoreClusterId}),
+              IsOkAndHolds(ElementsAre(ann_hit, ann_quantized_hit)));
+  EXPECT_THAT(
+      GetRawEmbeddingDataFromIndex(embedding_index_.get(), ann_shard_id),
+      ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(ann_shard_id),
+              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(
+          embedding_index_.get(), ann_quantized_hit,
+          /*dimension=*/3, /*model_signature=*/"model",
+          /*schema_name=*/kFakeType,
+          /*cluster_id=*/embedding_util::kIvfDeltaStoreClusterId),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.11, 0.22, 0.33})));
+
   // Handle document with document_id < last_added_document_id in recovery mode.
   // We should not get any error, but the handler should ignore the document, so
   // both index data and last_added_document_id should remain unchanged.
@@ -770,6 +953,24 @@ TEST_F(EmbeddingIndexingHandlerTest,
                        /*location=*/6))));
   EXPECT_THAT(GetRawEmbeddingDataFromIndex(embedding_index_.get(), shard_id),
               ElementsAre(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.1, 0.2, 0.3));
+
+  EXPECT_THAT(GetEmbeddingHitsFromIndex(
+                  embedding_index_.get(), /*dimension=*/3,
+                  /*model_signature=*/"model",
+                  /*cluster_ids=*/{embedding_util::kIvfDeltaStoreClusterId}),
+              IsOkAndHolds(ElementsAre(ann_hit, ann_quantized_hit)));
+  EXPECT_THAT(
+      GetRawEmbeddingDataFromIndex(embedding_index_.get(), ann_shard_id),
+      ElementsAre(0.1, 0.2, 0.3));
+  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(ann_shard_id),
+              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetAndRestoreQuantizedEmbeddingVectorFromIndex(
+          embedding_index_.get(), ann_quantized_hit,
+          /*dimension=*/3, /*model_signature=*/"model",
+          /*schema_name=*/kFakeType,
+          /*cluster_id=*/embedding_util::kIvfDeltaStoreClusterId),
+      IsOkAndHolds(Pointwise(FloatNear(kEpsQuantized), {0.11, 0.22, 0.33})));
 }
 
 }  // namespace lib
