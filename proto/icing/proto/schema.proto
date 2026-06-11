@@ -88,8 +88,13 @@ message SchemaTypeConfigProto {
   // TypePropertyMask.
   repeated string parent_types = 6;
 
-  // List of all account properties that need to be managed. All accounts under
-  // this property should be existed in the account manager.
+  // List of property names that represent that property is an account
+  // property. All properties listed here should be a property of this schema
+  // type.
+  //
+  // Icing does not do any special handling for these properties other than
+  // enforcing that promotion of an existing regular property to an account
+  // property is an incompatible schema change.
   repeated string account_properties = 9;
 
   // If true, then this schema type is only ever used as a property of another
