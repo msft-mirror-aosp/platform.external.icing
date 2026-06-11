@@ -84,7 +84,6 @@ class IndexTest : public Test {
 
     index_dir_ = GetTestTempDir() + "/index_test/";
     Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                           /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_,
@@ -159,7 +158,6 @@ MATCHER_P2(EqualsTermMetadata, content, hit_count, "") {
 
 TEST_F(IndexTest, CreationWithNullPointerShouldFail) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   EXPECT_THAT(Index::Create(options, &filesystem_, /*icing_filesystem=*/nullptr,
                             feature_flags_.get()),
@@ -207,38 +205,6 @@ TEST_F(IndexTest, EmptyIndexAfterMerge) {
                                kSectionIdMaskAll, TermMatchType::EXACT_ONLY));
   EXPECT_THAT(itr->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
-}
-
-TEST_F(IndexTest, CreationWithLiteIndexSortAtIndexingEnabledShouldSort) {
-  // Make the index with lite_index_sort_at_indexing=false and a very small sort
-  // threshold.
-  Index::Options options(index_dir_, /*index_merge_size=*/1024,
-                         /*lite_index_sort_at_indexing=*/false,
-                         /*lite_index_sort_size=*/16);
-  ICING_ASSERT_OK_AND_ASSIGN(
-      index_, Index::Create(options, &filesystem_, &icing_filesystem_,
-                            feature_flags_.get()));
-
-  Index::Editor edit =
-      index_->Edit(kDocumentId0, kSectionId2, /*namespace_id=*/0);
-  ASSERT_THAT(edit.BufferTerm("foo", TermMatchType::EXACT_ONLY), IsOk());
-  ASSERT_THAT(edit.BufferTerm("bar", TermMatchType::EXACT_ONLY), IsOk());
-  ASSERT_THAT(edit.BufferTerm("baz", TermMatchType::EXACT_ONLY), IsOk());
-  ASSERT_THAT(edit.IndexAllBufferedTerms(), IsOk());
-
-  // Persist and recreate the index with lite_index_sort_at_indexing=true
-  ASSERT_THAT(index_->PersistToDisk(), IsOk());
-  options = Index::Options(index_dir_, /*index_merge_size=*/1024,
-                           /*lite_index_sort_at_indexing=*/true,
-                           /*lite_index_sort_size=*/16);
-  ICING_ASSERT_OK_AND_ASSIGN(
-      index_, Index::Create(options, &filesystem_, &icing_filesystem_,
-                            feature_flags_.get()));
-
-  // Check that the index is sorted after recreating with
-  // lite_index_sort_at_indexing, with the unsorted HitBuffer exceeding the sort
-  // threshold.
-  EXPECT_THAT(index_->LiteIndexNeedSort(), IsFalse());
 }
 
 TEST_F(IndexTest, AdvancePastEnd) {
@@ -1253,7 +1219,6 @@ TEST_F(IndexTest, NonAsciiTermsAfterMerge) {
 TEST_F(IndexTest, FullIndex) {
   // Make a smaller index so that it's easier to fill up.
   Index::Options options(index_dir_, /*index_merge_size=*/1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_,
@@ -1323,7 +1288,6 @@ TEST_F(IndexTest, FullIndex) {
 TEST_F(IndexTest, FullIndexMerge) {
   // Make a smaller index so that it's easier to fill up.
   Index::Options options(index_dir_, /*index_merge_size=*/1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_,
@@ -1660,7 +1624,6 @@ TEST_F(IndexTest, IndexCreateIOFailure) {
   ON_CALL(mock_icing_filesystem, CreateDirectoryRecursively)
       .WillByDefault(Return(false));
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   EXPECT_THAT(Index::Create(options, &filesystem_, &mock_icing_filesystem,
                             feature_flags_.get()),
@@ -1694,7 +1657,6 @@ TEST_F(IndexTest, IndexCreateCorruptionFailure) {
 
   // Recreate the index.
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   EXPECT_THAT(Index::Create(options, &filesystem_, &icing_filesystem_,
                             feature_flags_.get()),
@@ -1708,16 +1670,16 @@ TEST_F(IndexTest, UpdateChecksum) {
   ASSERT_THAT(edit.BufferTerm("foo", TermMatchType::PREFIX), IsOk());
   ASSERT_THAT(edit.BufferTerm("bar", TermMatchType::PREFIX), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
-  Crc32 lite_only_crc = index_->GetChecksum();
-  EXPECT_THAT(index_->UpdateChecksum(), Eq(lite_only_crc));
-  EXPECT_THAT(index_->GetChecksum(), Eq(lite_only_crc));
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 lite_only_crc, index_->GetChecksum());
+  EXPECT_THAT(index_->UpdateChecksum(), IsOkAndHolds(Eq(lite_only_crc)));
+  EXPECT_THAT(index_->GetChecksum(), IsOkAndHolds(Eq(lite_only_crc)));
 
   // Merge content into the main index.
   ASSERT_THAT(index_->Merge(), IsOk());
-  Crc32 main_only_crc = index_->GetChecksum();
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 main_only_crc, index_->GetChecksum());
   EXPECT_THAT(main_only_crc, Not(Eq(lite_only_crc)));
-  EXPECT_THAT(index_->UpdateChecksum(), Eq(main_only_crc));
-  EXPECT_THAT(index_->GetChecksum(), Eq(main_only_crc));
+  EXPECT_THAT(index_->UpdateChecksum(), IsOkAndHolds(Eq(main_only_crc)));
+  EXPECT_THAT(index_->GetChecksum(), IsOkAndHolds(Eq(main_only_crc)));
 
   // Add some more content to the lite index
   edit = index_->Edit(kDocumentId1, kSectionId2,
@@ -1725,11 +1687,11 @@ TEST_F(IndexTest, UpdateChecksum) {
   ASSERT_THAT(edit.BufferTerm("baz", TermMatchType::PREFIX), IsOk());
   ASSERT_THAT(edit.BufferTerm("bat", TermMatchType::PREFIX), IsOk());
   EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
-  Crc32 both_crc = index_->GetChecksum();
+  ICING_ASSERT_OK_AND_ASSIGN(Crc32 both_crc, index_->GetChecksum());
   EXPECT_THAT(both_crc, Not(Eq(lite_only_crc)));
   EXPECT_THAT(both_crc, Not(Eq(main_only_crc)));
-  EXPECT_THAT(index_->UpdateChecksum(), Eq(both_crc));
-  EXPECT_THAT(index_->GetChecksum(), Eq(both_crc));
+  EXPECT_THAT(index_->UpdateChecksum(), IsOkAndHolds(Eq(both_crc)));
+  EXPECT_THAT(index_->GetChecksum(), IsOkAndHolds(Eq(both_crc)));
 }
 
 TEST_F(IndexTest, IndexPersistence) {
@@ -1746,7 +1708,6 @@ TEST_F(IndexTest, IndexPersistence) {
 
   // Recreate the index.
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_,
@@ -1778,7 +1739,6 @@ TEST_F(IndexTest, IndexPersistenceAfterMerge) {
 
   // Recreate the index.
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_,
@@ -1798,7 +1758,7 @@ TEST_F(IndexTest, IndexPersistenceAfterMerge) {
 TEST_F(IndexTest, InvalidHitBufferSize) {
   Index::Options options(
       index_dir_, /*index_merge_size=*/std::numeric_limits<uint32_t>::max(),
-      /*lite_index_sort_at_indexing=*/true, /*lite_index_sort_size=*/1024 * 8);
+      /*lite_index_sort_size=*/1024 * 8);
   EXPECT_THAT(Index::Create(options, &filesystem_, &icing_filesystem_,
                             feature_flags_.get()),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -2824,6 +2784,81 @@ TEST_F(IndexTest, PublishQueryStats) {
   EXPECT_THAT(query_stats3.lite_index_hit_buffer_byte_size(), Eq(0));
   EXPECT_THAT(query_stats3.lite_index_hit_buffer_unsorted_byte_size(), Eq(0));
 }
+
+class IndexUpdateChecksumEnsuresDataConsistencyTest
+    : public IndexTest,
+      public ::testing::WithParamInterface<bool> {
+ protected:
+  void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(
+        FeatureFlagsBuilder(GetTestFeatureFlags())
+            .set_enable_optimize_improvements(GetParam())
+            .Build());
+
+    index_dir_ = GetTestTempDir() + "/index_test/";
+    Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
+                           /*lite_index_sort_size=*/1024 * 8);
+    ICING_ASSERT_OK_AND_ASSIGN(
+        index_, Index::Create(options, &filesystem_, &icing_filesystem_,
+                              feature_flags_.get()));
+  }
+};
+
+TEST_P(IndexUpdateChecksumEnsuresDataConsistencyTest,
+       UpdateChecksumEnsuresDataConsistency) {
+  // 1. Add 10 hits
+  for (DocumentId doc_id = 0; doc_id < 10; ++doc_id) {
+    Index::Editor edit = index_->Edit(doc_id, kSectionId2, /*namespace_id=*/0);
+    EXPECT_THAT(edit.BufferTerm("foo", TermMatchType::EXACT_ONLY), IsOk());
+    EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+  }
+
+  // 2. Merge
+  ICING_ASSERT_OK(index_->Merge());
+
+  // 3. Add another 10 hits
+  for (DocumentId doc_id = 10; doc_id < 20; ++doc_id) {
+    Index::Editor edit = index_->Edit(doc_id, kSectionId2, /*namespace_id=*/0);
+    EXPECT_THAT(edit.BufferTerm("foo", TermMatchType::EXACT_ONLY), IsOk());
+    EXPECT_THAT(edit.IndexAllBufferedTerms(), IsOk());
+  }
+
+  // 4. UpdateChecksum, which is what we do for PersistType::RECOVERY_PROOF of
+  // PersistToDisk.
+  ICING_EXPECT_OK(index_->UpdateChecksum());
+
+  // 5. Destroy and reinitialize the index.
+  index_.reset();
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
+                         /*lite_index_sort_size=*/1024 * 8);
+  auto index_or = Index::Create(options, &filesystem_, &icing_filesystem_,
+                                feature_flags_.get());
+
+  // 6. Verify consistency.
+  if (!index_or.ok()) {
+    // If initialization fails, it means data wasn't synced and checksum
+    // mismatch occurred. This is OK, since IcingSearchEngine will try to
+    // restore the index from ground truth.
+    return;
+  }
+  index_ = std::move(index_or).ValueOrDie();
+
+  // Verify all 20 hits
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<DocHitInfo> hits,
+      GetHits("foo", /*term_start_index=*/0, /*unnormalized_term_length=*/0,
+              TermMatchType::EXACT_ONLY));
+  ASSERT_THAT(hits, SizeIs(20));
+  for (int i = 0; i < 20; ++i) {
+    // hits[i] should be docId (19 - i)
+    EXPECT_THAT(hits[i],
+                EqualsDocHitInfo(19 - i, std::vector<SectionId>{kSectionId2}));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(IndexUpdateChecksumEnsuresDataConsistencyTest,
+                         IndexUpdateChecksumEnsuresDataConsistencyTest,
+                         ::testing::Bool());
 
 }  // namespace
 

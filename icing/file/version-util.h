@@ -39,18 +39,24 @@ namespace version_util {
 // - Version 3: M-2024-02. Schema is compatible with v1 and v2.
 // - Version 4: Android V base. Schema is compatible with v1, v2 and v3.
 // - Version 5: M-2025-02. Schema is compatible with v1, v2, v3 and v4.
-inline static constexpr int32_t kVersion = 9;
+// - Version 10: M-2026-03. Introduced schema property definition deduplication.
+//               Schema is incompatible with older versions.
+//
+inline static constexpr int32_t kVersion = 10;
 inline static constexpr int32_t kVersionOne = 1;
 inline static constexpr int32_t kVersionTwo = 2;
 inline static constexpr int32_t kVersionThree = 3;
 inline static constexpr int32_t kVersionFour = 4;
 inline static constexpr int32_t kVersionFive = 5;
+inline static constexpr int32_t kVersionTen = 10;
 
 // Version at which v2 version file is introduced.
 inline static constexpr int32_t kFirstV2Version = kVersionFour;
 
 // Version at which the database field is introduced to the schema proto.
 inline static constexpr int32_t kSchemaDatabaseVersion = kVersionFive;
+// Version at which the schema definition deduping is introduced.
+inline static constexpr int32_t kSchemaDefinitionDedupingVersion = kVersionTen;
 
 inline static constexpr int kVersionZeroFlashIndexMagic = 0x6dfba6ae;
 
@@ -187,6 +193,11 @@ bool ShouldRebuildDerivedFiles(const VersionInfo& existing_version_info,
 // database field is introduced, or if the schema database feature was
 // not enabled in the previous version.
 bool SchemaDatabaseMigrationRequired(
+    const IcingSearchEngineVersionProto& prev_version_proto);
+
+// Returns whether schema definition deduplication is enabled as per the
+// provided version proto.
+bool IsSchemaDedupingEnabled(
     const IcingSearchEngineVersionProto& prev_version_proto);
 
 // Returns the derived files rebuilds required for a given feature.
