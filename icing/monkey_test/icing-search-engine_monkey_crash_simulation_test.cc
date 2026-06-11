@@ -31,8 +31,8 @@ namespace icing {
 namespace lib {
 
 constexpr uint32_t kNumCrashesToSimulate = 5;
-constexpr uint32_t kMinRunningTimePerCrashSeconds = 5;
-constexpr uint32_t kMaxRunningTimePerCrashSeconds = 15;
+constexpr uint32_t kMinRunningTimePerCrashSeconds = 15;
+constexpr uint32_t kMaxRunningTimePerCrashSeconds = 30;
 
 void RunMonkeyTest(uint32_t seed, bool is_first_run, uint32_t num_iterations) {
   IcingMonkeyTestRunnerConfiguration config(
@@ -40,7 +40,7 @@ void RunMonkeyTest(uint32_t seed, bool is_first_run, uint32_t num_iterations) {
       /*num_types=*/30,
       /*num_namespaces=*/100,
       /*num_uris=*/1000,
-      /*index_merge_size=*/1024 * 1024,
+      /*index_merge_size=*/1024 * 512,
       /*initialize_by_existing_data=*/!is_first_run);
   config.possible_num_properties = {0,
                                     1,
@@ -58,7 +58,7 @@ void RunMonkeyTest(uint32_t seed, bool is_first_run, uint32_t num_iterations) {
   config.monkey_api_schedules = {
       {&IcingMonkeyTestRunner::DoPut, 500},
       {&IcingMonkeyTestRunner::DoSearch, 200},
-      {&IcingMonkeyTestRunner::DoGet, 70},
+      {&IcingMonkeyTestRunner::DoGet, 50},
       {&IcingMonkeyTestRunner::DoGetAllNamespaces, 50},
       {&IcingMonkeyTestRunner::DoDelete, 50},
       {&IcingMonkeyTestRunner::DoDeleteByNamespace, 50},
@@ -66,7 +66,8 @@ void RunMonkeyTest(uint32_t seed, bool is_first_run, uint32_t num_iterations) {
       {&IcingMonkeyTestRunner::DoDeleteByQuery, 20},
       {&IcingMonkeyTestRunner::DoOptimize, 5},
       {&IcingMonkeyTestRunner::DoUpdateSchema, 5},
-      {&IcingMonkeyTestRunner::ReloadFromDisk, 5}};
+      {&IcingMonkeyTestRunner::DoPersistToDisk, 5},
+      {&IcingMonkeyTestRunner::ReloadFromDisk, 20}};
 
   std::unique_ptr<IcingMonkeyTestRunner> runner =
       std::make_unique<IcingMonkeyTestRunner>(config);

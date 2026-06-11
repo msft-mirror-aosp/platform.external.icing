@@ -31,9 +31,12 @@ import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
+import com.google.android.icing.proto.HandleExpiredDocumentsResultProto;
 import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.LogSeverity;
+import com.google.android.icing.proto.MaintainAnnIndexOptions;
+import com.google.android.icing.proto.MaintainAnnIndexResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
@@ -195,6 +198,19 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   }
 
   @Override
+  public @NonNull HandleExpiredDocumentsResultProto handleExpiredDocuments() {
+    return IcingSearchEngineUtils.byteArrayToHandleExpiredDocumentsResultProto(
+        icingSearchEngineImpl.handleExpiredDocuments());
+  }
+
+  @Override
+  public @NonNull MaintainAnnIndexResultProto maintainAnnIndex(
+      @NonNull MaintainAnnIndexOptions options) {
+    return IcingSearchEngineUtils.byteArrayToMaintainAnnIndexResultProto(
+        icingSearchEngineImpl.maintainAnnIndex(options.toByteArray()));
+  }
+
+  @Override
   public @NonNull BlobProto openWriteBlob(PropertyProto.@NonNull BlobHandleProto blobHandle) {
     return IcingSearchEngineUtils.byteArrayToBlobProto(
         icingSearchEngineImpl.openWriteBlob(blobHandle.toByteArray()));
@@ -216,6 +232,17 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   public @NonNull BlobProto commitBlob(PropertyProto.@NonNull BlobHandleProto blobHandle) {
     return IcingSearchEngineUtils.byteArrayToBlobProto(
         icingSearchEngineImpl.commitBlob(blobHandle.toByteArray()));
+  }
+
+  @Override
+  public @NonNull BlobProto getAllBlobInfos() {
+    return IcingSearchEngineUtils.byteArrayToBlobProto(icingSearchEngineImpl.getAllBlobInfos());
+  }
+
+  @Override
+  public @NonNull BlobProto putBlobInfos(@NonNull BlobProto blobProto) {
+    return IcingSearchEngineUtils.byteArrayToBlobProto(
+        icingSearchEngineImpl.putBlobInfos(blobProto.toByteArray()));
   }
 
   @Override
