@@ -581,15 +581,13 @@ IcingSearchEngine::IcingSearchEngine(
       feature_flags_(options_.allow_circular_schema_definitions(),
                      options_.enable_repeated_field_joins(),
                      options_.enable_embedding_backup_generation(),
-                     options_.enable_proto_log_new_header_format(),
-                     options_.enable_reusable_decompression_buffer(),
-                     options_.enable_schema_type_id_optimization(),
                      options_.enable_optimize_improvements(),
                      options_.expired_document_purge_threshold_ms(),
                      options_.enable_non_existent_qualified_id_join(),
                      options_.enable_skip_set_schema_type_equality_check(),
                      options_.enable_schema_definition_deduping(),
-                     options_.enable_delete_propagation_from()),
+                     options_.enable_delete_propagation_from(),
+                     options_.enable_account_property_incompatibility_check()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -871,13 +869,16 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   bool perform_schema_database_migration =
       version_util::SchemaDatabaseMigrationRequired(stored_version_proto);
   bool recalculate_schema_properties_digests =
-      version_util::ShouldRecalculatePropertiesDigestsForDeduping(
-          stored_version_proto) &&
+      !version_util::IsSchemaDedupingEnabled(stored_version_proto) &&
       options_.enable_schema_definition_deduping();
+  bool schema_deduping_flag_rollback =
+      version_util::IsSchemaDedupingEnabled(stored_version_proto) &&
+      !options_.enable_schema_definition_deduping();
   auto migrate_status = SchemaStore::MigrateSchema(
       filesystem_.get(), MakeSchemaDirectoryPath(options_.base_dir()),
       version_state_change, version_util::kVersion,
-      perform_schema_database_migration, recalculate_schema_properties_digests);
+      perform_schema_database_migration, recalculate_schema_properties_digests,
+      schema_deduping_flag_rollback);
   if (!migrate_status.ok()) {
     initialize_stats->set_failure_stage(
         InitializeStatsProto::FailureStage::MIGRATE_SCHEMA);
@@ -2524,6 +2525,7 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   int num_deleted = 0;
   // A map used to group deleted documents.
   // From the (namespace, type) pair to a list of uris.
+  // TODO(b/512989426): migrate to use DocumentGroupInfoProto.
   std::unordered_map<DocumentGroupKey,
                      DeleteByQueryResultProto::DocumentGroupInfo*,
                      DocumentGroupKey::Hasher>
@@ -3938,16 +3940,8 @@ IcingSearchEngine::HandleExpiredDocumentsLocked() {
   // Add all deleted documents to the result proto, grouped by DocumentGroupKey
   // (schema, namespace).
   expired_docs_group_info.Merge(std::move(propagated_deleted_docs_group_info));
-  for (const auto& [group_key, document_uri_id_pair_list] :
-       expired_docs_group_info.Get()) {
-    HandleExpiredDocumentsResultProto::DocumentGroupInfo* entry =
-        result_proto.add_deleted_documents();
-    entry->set_schema(group_key.schema_type_name);
-    entry->set_name_space(group_key.name_space);
-    for (const auto& document_uri_id_pair : document_uri_id_pair_list) {
-      entry->add_uris(document_uri_id_pair.uri);
-    }
-  }
+  *result_proto.mutable_deleted_document_group_info() =
+      std::move(expired_docs_group_info).SerializeToProto();
 
   result_status->set_code(StatusProto::OK);
   return result_proto;

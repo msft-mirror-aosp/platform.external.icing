@@ -113,9 +113,9 @@ DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
   cached_hit_scores_idx_ = 0;
   cached_hit_scores_.clear();
   cached_hit_scores_.resize(embedding_hit_infos.size());
-  cached_section_id_masks_.clear();
+  cached_delegate_matches_.clear();
   if (delegate_ != nullptr) {
-    cached_section_id_masks_.resize(embedding_hit_infos.size());
+    cached_delegate_matches_.resize(embedding_hit_infos.size());
   }
 
   std::vector<int> access_order(embedding_hit_infos.size());
@@ -135,12 +135,15 @@ DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
           break;
         }
       }
-      SectionIdMask section_id_mask = kSectionIdMaskNone;
       if (delegate_->doc_hit_info().document_id() ==
           embedding_hit_infos[i].hit.basic_hit().document_id()) {
-        section_id_mask = delegate_->doc_hit_info().hit_section_ids_mask();
+        cached_delegate_matches_[i] = {
+            delegate_->doc_hit_info().hit_section_ids_mask(),
+            /*is_matched=*/true};
+      } else {
+        cached_delegate_matches_[i] = {kSectionIdMaskNone,
+                                       /*is_matched=*/false};
       }
-      cached_section_id_masks_[i] = section_id_mask;
     }
   }
 
@@ -167,7 +170,7 @@ DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
         continue;
       }
       if (delegate_ != nullptr &&
-          cached_section_id_masks_[access_order[i]] == kSectionIdMaskNone) {
+          !cached_delegate_matches_[access_order[i]].is_matched) {
         // The document has been filtered out by the delegate. Therefore, there
         // is no need to calculate the embedding score for this document.
         continue;
@@ -222,15 +225,15 @@ DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
     const HitWithScore& hit_with_score = cached_hit_scores_[i];
     if (hit_with_score.hit.is_valid()) {
       cached_hit_scores_[hit_cnt] = hit_with_score;
-      if (delegate_ != nullptr && i < cached_section_id_masks_.size()) {
-        cached_section_id_masks_[hit_cnt] = cached_section_id_masks_[i];
+      if (delegate_ != nullptr && i < cached_delegate_matches_.size()) {
+        cached_delegate_matches_[hit_cnt] = cached_delegate_matches_[i];
       }
       ++hit_cnt;
     }
   }
   cached_hit_scores_.resize(hit_cnt);
-  if (!cached_section_id_masks_.empty()) {
-    cached_section_id_masks_.resize(hit_cnt);
+  if (!cached_delegate_matches_.empty()) {
+    cached_delegate_matches_.resize(hit_cnt);
   }
   return libtextclassifier3::Status::OK;
 }
@@ -276,7 +279,7 @@ DocHitInfoIteratorEmbeddingV2::AdvanceToNextUnfilteredDocument() {
     }
     if (delegate_ != nullptr) {
       delegate_section_id_mask |=
-          cached_section_id_masks_[cached_hit_scores_idx_ - 1];
+          cached_delegate_matches_[cached_hit_scores_idx_ - 1].section_id_mask;
     }
 
     // We've reached a new section. Reset the match count and retrieve the
@@ -329,7 +332,11 @@ DocHitInfoIteratorEmbeddingV2::AdvanceToNextUnfilteredDocument() {
 
 libtextclassifier3::Status DocHitInfoIteratorEmbeddingV2::Advance() {
   do {
-    ICING_RETURN_IF_ERROR(AdvanceToNextUnfilteredDocument());
+    libtextclassifier3::Status status = AdvanceToNextUnfilteredDocument();
+    if (!status.ok()) {
+      doc_hit_info_ = DocHitInfo(kInvalidDocumentId, kSectionIdMaskNone);
+      return status;
+    }
   } while (doc_hit_info_.hit_section_ids_mask() == kSectionIdMaskNone);
   ++num_advance_calls_;
   return libtextclassifier3::Status::OK;

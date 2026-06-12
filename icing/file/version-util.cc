@@ -531,20 +531,20 @@ bool SchemaDatabaseMigrationRequired(
   return true;
 }
 
-bool ShouldRecalculatePropertiesDigestsForDeduping(
-    const IcingSearchEngineVersionProto& prev_version_proto) {
-  if (prev_version_proto.version() < kSchemaDefinitionDedupingVersion) {
-    return true;
+bool IsSchemaDedupingEnabled(
+    const IcingSearchEngineVersionProto& version_proto) {
+  if (version_proto.version() < kSchemaDefinitionDedupingVersion) {
+    return false;
   }
-  for (const auto& feature : prev_version_proto.enabled_features()) {
+  for (const auto& feature : version_proto.enabled_features()) {
     // The schema deduplication feature was enabled in the previous version, so
     // no need to migrate.
     if (feature.feature_type() == IcingSearchEngineFeatureInfoProto::
                                       FEATURE_SCHEMA_DEFINITION_DEDUPLICATION) {
-      return false;
+      return true;
     }
   }
-  return true;
+  return false;
 }
 
 IcingSearchEngineFeatureInfoProto GetFeatureInfoProto(

@@ -37,6 +37,7 @@
 #include "icing/proto/term.pb.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/section.h"
+#include "icing/util/logging.h"
 
 namespace icing {
 namespace lib {
@@ -117,8 +118,13 @@ void SetEmbeddingIndexingConfig(MonkeyTestRandomEngine* random,
                                 PropertyConfigProto& property, bool indexable) {
   property.clear_embedding_indexing_config();
   if (indexable) {
+    EmbeddingIndexingConfig::EmbeddingIndexingType::Code type =
+        GetRandomBoolean(random)
+            ? EmbeddingIndexingConfig::EmbeddingIndexingType::LINEAR_SEARCH
+            : EmbeddingIndexingConfig::EmbeddingIndexingType::
+                  APPROXIMATE_NEAREST_NEIGHBOR;
     property.mutable_embedding_indexing_config()->set_embedding_indexing_type(
-        EmbeddingIndexingConfig::EmbeddingIndexingType::LINEAR_SEARCH);
+        type);
   }
   if (GetRandomBoolean(random)) {
     property.mutable_embedding_indexing_config()->set_quantization_type(
@@ -312,10 +318,17 @@ void MonkeySchemaGenerator::UpdateProperty(
   } else if (property.data_type() == PropertyConfigProto::DataType::VECTOR) {
     EmbeddingIndexingConfig::QuantizationType::Code old_quantization_type =
         property.embedding_indexing_config().quantization_type();
+    EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+        old_embedding_indexing_type =
+            property.embedding_indexing_config().embedding_indexing_type();
     SetEmbeddingIndexingConfig(random_, property, new_indexable);
     EmbeddingIndexingConfig::QuantizationType::Code new_quantization_type =
         property.embedding_indexing_config().quantization_type();
-    if (old_quantization_type != new_quantization_type) {
+    EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+        new_embedding_indexing_type =
+            property.embedding_indexing_config().embedding_indexing_type();
+    if (old_quantization_type != new_quantization_type ||
+        old_embedding_indexing_type != new_embedding_indexing_type) {
       index_incompatible = true;
     }
   } else if (property.data_type() == PropertyConfigProto::DataType::INT64) {
@@ -389,6 +402,8 @@ void MonkeySchemaGenerator::AddDuplicateType(SchemaProto& schema) {
   SchemaTypeConfigProto new_dupe_type = base_type;
   new_dupe_type.set_schema_type(std::string(kSchemaTypeNamePrefix) +
                                 std::to_string(num_types_generated_++));
+  ICING_LOG(INFO) << "Adding duplicate type: " << new_dupe_type.schema_type()
+                  << "; base type: " << base_type.schema_type();
   int max_property_id = 0;
   for (const PropertyConfigProto& property : new_dupe_type.properties()) {
     max_property_id =
@@ -641,6 +656,12 @@ MonkeyDocumentGenerator::GetVectorPropertyContent(
   return content;
 }
 
+int64_t MonkeyDocumentGenerator::GetRandomInt64Value() const {
+  std::uniform_int_distribution<int64_t> dist(
+      config_->int64_value_range.first, config_->int64_value_range.second);
+  return dist(*random_);
+}
+
 std::vector<int64_t> MonkeyDocumentGenerator::GetInt64PropertyContent(
     PropertyConfigProto::Cardinality::Code cardinality) const {
   int num_values = GetNumInt64(cardinality);
@@ -649,10 +670,8 @@ std::vector<int64_t> MonkeyDocumentGenerator::GetInt64PropertyContent(
     return content;
   }
   content.reserve(num_values);
-  std::uniform_int_distribution<int64_t> value_dist(
-      config_->int64_value_range.first, config_->int64_value_range.second);
   for (int i = 0; i < num_values; ++i) {
-    content.push_back(value_dist(*random_));
+    content.push_back(GetRandomInt64Value());
   }
   return content;
 }

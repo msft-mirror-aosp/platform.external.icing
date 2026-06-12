@@ -20,19 +20,18 @@ namespace icing {
 namespace lib {
 
 FeatureFlags GetTestFeatureFlags() {
-  return FeatureFlags(
-      /*enable_circular_schema_definitions=*/true,
-      /*enable_repeated_field_joins=*/true,
-      /*enable_embedding_backup_generation=*/true,
-      /*enable_proto_log_new_header_format=*/true,
-      /*enable_reusable_decompression_buffer=*/true,
-      /*enable_schema_type_id_optimization=*/true,
-      /*enable_optimize_improvements=*/true,
-      /*expired_document_purge_threshold_ms=*/0,
-      /*enable_non_existent_qualified_id_join=*/true,
-      /*enable_skip_set_schema_type_equality_check=*/true,
-      /*enable_schema_definition_deduping=*/true,
-      /*enable_delete_propagation_from=*/true);
+  return FeatureFlagsBuilder()
+      .set_allow_circular_schema_definitions(true)
+      .set_enable_repeated_field_joins(true)
+      .set_enable_embedding_backup_generation(true)
+      .set_enable_optimize_improvements(true)
+      .set_expired_document_purge_threshold_ms(0)
+      .set_enable_non_existent_qualified_id_join(true)
+      .set_enable_skip_set_schema_type_equality_check(true)
+      .set_enable_schema_definition_deduping(true)
+      .set_enable_delete_propagation_from(true)
+      .set_enable_account_property_incompatibility_check(true)
+      .Build();
 }
 
 }  // namespace lib

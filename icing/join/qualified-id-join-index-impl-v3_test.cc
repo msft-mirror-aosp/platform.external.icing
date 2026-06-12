@@ -41,6 +41,7 @@
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
@@ -75,18 +76,9 @@ class QualifiedIdJoinIndexImplV3Test : public ::testing::TestWithParam<bool> {
  protected:
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(
-        /*allow_circular_schema_definitions=*/true,
-        /*enable_repeated_field_joins=*/true,
-        /*enable_embedding_backup_generation=*/true,
-        /*enable_proto_log_new_header_format=*/true,
-        /*enable_reusable_decompression_buffer=*/true,
-        /*enable_schema_type_id_optimization=*/true,
-        /*enable_optimize_improvements=*/true,
-        /*expired_document_purge_threshold_ms=*/0,
-        /*enable_non_existent_qualified_id_join=*/GetParam(),
-        /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/true,
-        /*enable_delete_propagation_from=*/true);
+        FeatureFlagsBuilder(GetTestFeatureFlags())
+            .set_enable_non_existent_qualified_id_join(GetParam())
+            .Build());
 
     base_dir_ = GetTestTempDir() + "/icing";
     working_path_ = base_dir_ + "/qualified_id_join_index_impl_v3";

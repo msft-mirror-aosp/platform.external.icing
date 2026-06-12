@@ -66,6 +66,7 @@ namespace {
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::Eq;
 using ::testing::HasSubstr;
+using ::testing::IsEmpty;
 using ::testing::Not;
 using ::testing::Return;
 
@@ -5208,6 +5209,349 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaStatsArePopulated) {
               Eq(1000));
   EXPECT_THAT(set_schema_result.set_schema_stats().schema_proto_byte_size(),
               Eq(0));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       AccountPropertyDemotingIsCompatible_enabled) {
+  // Rule 1: Changing an existing nested document property from an account
+  // property to a regular nested document property is COMPATIBLE.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_account_property_incompatibility_check(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // 1. Configure old schema: "Person" has a nested document "worksFor",
+  // which is also defined as an account property.
+  SchemaTypeConfigProto old_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  old_person.add_account_properties("worksFor");
+
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(old_person)
+          .Build();
+  ASSERT_THAT(icing.SetSchema(old_schema).status(), ProtoIsOk());
+
+  // 2. Configure new schema: "worksFor" remains a regular nested document,
+  // but it is removed from the account_properties repeated field.
+  SchemaTypeConfigProto new_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(new_person)
+          .Build();
+
+  // 3. SetSchema should return OK since demoting is fully compatible.
+  SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
+
+  // Verify fields item by item
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.fully_compatible_changed_schema_types(),
+              IsEmpty());
+  EXPECT_THAT(set_schema_result.incompatible_schema_types(), IsEmpty());
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       AccountPropertyPromotingIsIncompatible_enabled) {
+  // Rule 2: Promoting an existing regular nested document property into
+  // an account property is INCOMPATIBLE.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_account_property_incompatibility_check(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // 1. Configure old schema: "Person" has a standard nested document
+  // "worksFor".
+  SchemaTypeConfigProto old_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(old_person)
+          .Build();
+  ASSERT_THAT(icing.SetSchema(old_schema).status(), ProtoIsOk());
+
+  // 2. Configure new schema: "worksFor" is now promoted to an account property.
+  SchemaTypeConfigProto new_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  new_person.add_account_properties("worksFor");
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(new_person)
+          .Build();
+
+  // 3. SetSchema without force override should fail with FAILED_PRECONDITION.
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+
+  // Verify fields item by item
+  EXPECT_THAT(set_schema_result.status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(set_schema_result.status().message(),
+              HasSubstr("Schema is incompatible."));
+  EXPECT_THAT(set_schema_result.incompatible_schema_types(),
+              testing::UnorderedElementsAre("Person"));
+  EXPECT_THAT(set_schema_result.fully_compatible_changed_schema_types(),
+              testing::IsEmpty());
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       AccountPropertyPromotingIsIncompatible_disabled) {
+  // Disabling the feature flag won't consider the schema update as
+  // incompatible.
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // 1. Configure old schema: "Person" has a standard nested document
+  // "worksFor".
+  SchemaTypeConfigProto old_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(old_person)
+          .Build();
+  ASSERT_THAT(icing.SetSchema(old_schema).status(), ProtoIsOk());
+
+  // 2. Configure new schema: "worksFor" is now promoted to an account property.
+  SchemaTypeConfigProto new_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  new_person.add_account_properties("worksFor");
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(new_person)
+          .Build();
+
+  // 3. SetSchema without force override should fail with FAILED_PRECONDITION.
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+
+  // Verify fields item by item
+  ASSERT_THAT(set_schema_result.status(), ProtoIsOk());
+}
+
+TEST_F(IcingSearchEngineSchemaTest, NewAccountPropertyIsCompatible_enabled) {
+  // Rule 3: Introducing a completely new nested document property and
+  // defining it as an account property is COMPATIBLE.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_account_property_incompatibility_check(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // 1. Configure old schema: "Person" only has a regular string name.
+  SchemaTypeConfigProto old_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto old_schema = SchemaBuilder().AddType(old_person).Build();
+  ASSERT_THAT(icing.SetSchema(old_schema).status(), ProtoIsOk());
+
+  // 2. Configure new schema: "Person" introduces a brand new nested document
+  // property "worksFor" and marks it as an account property immediately.
+  SchemaTypeConfigProto new_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  new_person.add_account_properties("worksFor");
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(new_person)
+          .Build();
+
+  // 3. SetSchema should succeed and return OK since adding a new optional
+  // account property won't break existing documents.
+  SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
+
+  // Verify fields item by item
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.fully_compatible_changed_schema_types(),
+              IsEmpty());
+  EXPECT_THAT(set_schema_result.incompatible_schema_types(), IsEmpty());
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       NewNestedAccountPropertyIsCompatible_enabled) {
+  // Rule 3: Introducing a completely new nested document property path and
+  // defining it as an account property is COMPATIBLE.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_account_property_incompatibility_check(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // 1. Configure old schema: 'Person' has 'worksFor' nesting 'Organization',
+  // but 'Organization' starts empty without the 'token' field.
+  SchemaTypeConfigProto old_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(old_person)
+          .Build();
+  ASSERT_THAT(icing.SetSchema(old_schema).status(), ProtoIsOk());
+
+  // 2. Configure new schema: Introduce a brand new 'token' property inside
+  // 'Organization', and define "worksFor.token" as an account property in
+  // 'Person'.
+  SchemaTypeConfigProto new_organization =
+      SchemaTypeConfigBuilder()
+          .SetType("Organization")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("token")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto new_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  new_person.add_account_properties("worksFor.token");
+
+  SchemaProto new_schema =
+      SchemaBuilder().AddType(new_organization).AddType(new_person).Build();
+
+  // 3. SetSchema should succeed and return OK since adding a brand new deep
+  // nested account property path won't break existing documents.
+  SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
+
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.fully_compatible_changed_schema_types(),
+              IsEmpty());
+  EXPECT_THAT(set_schema_result.incompatible_schema_types(), IsEmpty());
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       InvalidNestedAccountPropertyPathIsRejected) {
+  // Verifies that ValidateAllAccountProperties rejects schemas with broken deep
+  // paths.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_account_property_incompatibility_check(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Configure a schema where 'Person' nests 'Organization', but 'Organization'
+  // only has 'id'. The account property incorrectly points to
+  // 'worksFor.non_existent_field'.
+  SchemaTypeConfigProto organization =
+      SchemaTypeConfigBuilder()
+          .SetType("Organization")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("id")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  person.add_account_properties("worksFor.non_existent_field");
+
+  SchemaProto schema =
+      SchemaBuilder().AddType(organization).AddType(person).Build();
+
+  // 3. SetSchema should fail immediately during the pre-validation phase
+  // with INVALID_ARGUMENT due to the invalid nested path structure.
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(schema, /*ignore_errors_and_delete_documents=*/false);
+
+  EXPECT_THAT(set_schema_result.status().code(),
+              Eq(StatusProto::INVALID_ARGUMENT));
 }
 
 }  // namespace
