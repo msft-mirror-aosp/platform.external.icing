@@ -39,7 +39,7 @@ namespace lib {
 
 MonkeySemanticQueryNode::MonkeySemanticQueryNode(
     int vector_index, double min_score, double max_score,
-    SearchSpecProto::EmbeddingQueryMetricType::Code distance_metric,
+    SearchSpecProto::EmbeddingQueryMetricType::Code distance_metric, int nprobe,
     PropertyProto::VectorProto embedding_query_vector,
     std::unordered_set<std::string> property_restricts,
     std::vector<std::string> document_namespaces,
@@ -51,14 +51,15 @@ MonkeySemanticQueryNode::MonkeySemanticQueryNode(
       min_score_(min_score),
       max_score_(max_score),
       distance_metric_(distance_metric),
+      nprobe_(nprobe),
       embedding_query_vector_(std::move(embedding_query_vector)) {}
 
 MonkeySemanticQueryNode::MonkeySemanticQueryNode(
     int vector_index, double min_score, double max_score,
-    SearchSpecProto::EmbeddingQueryMetricType::Code distance_metric,
+    SearchSpecProto::EmbeddingQueryMetricType::Code distance_metric, int nprobe,
     PropertyProto::VectorProto embedding_query_vector)
     : MonkeySemanticQueryNode(
-          vector_index, min_score, max_score, distance_metric,
+          vector_index, min_score, max_score, distance_metric, nprobe,
           std::move(embedding_query_vector),
           /*property_restricts=*/{},
           /*document_namespaces=*/{}, /*document_schema_types=*/{}) {}
@@ -87,6 +88,14 @@ MonkeySemanticQueryNode::DoesDocumentMatchQuery(
     if (!property_index_info.indexable ||
         property_index_info.data_type !=
             PropertyConfigProto::DataType::VECTOR) {
+      continue;
+    }
+
+    // Skip ANN search if nprobe is <= 0.
+    if (property_index_info.embedding_indexing_type ==
+            EmbeddingIndexingConfig::EmbeddingIndexingType::
+                APPROXIMATE_NEAREST_NEIGHBOR &&
+        nprobe_ <= 0) {
       continue;
     }
 
