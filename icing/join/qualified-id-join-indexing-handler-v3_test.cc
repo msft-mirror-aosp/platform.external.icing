@@ -83,15 +83,9 @@ class QualifiedIdJoinIndexingHandlerV3Test
  protected:
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(
-        /*allow_circular_schema_definitions=*/true,
-        /*enable_repeated_field_joins=*/true,
-        /*enable_embedding_backup_generation=*/true,
-        /*enable_optimize_improvements=*/true,
-        /*expired_document_purge_threshold_ms=*/0,
-        /*enable_non_existent_qualified_id_join=*/GetParam(),
-        /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/true,
-        /*enable_delete_propagation_from=*/true);
+        FeatureFlagsBuilder(GetTestFeatureFlags())
+            .set_enable_non_existent_qualified_id_join(GetParam())
+            .Build());
 
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
