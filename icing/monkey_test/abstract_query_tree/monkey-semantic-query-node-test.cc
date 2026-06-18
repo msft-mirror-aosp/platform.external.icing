@@ -160,7 +160,8 @@ TEST_F(MonkeySemanticQueryNodeTest, SemanticSearch) {
   MonkeySemanticQueryNode node(
       /*vector_index=*/0, /*min_score=*/0.6,
       /*max_score=*/0.9, /*distance_metric=*/
-      SearchSpecProto::EmbeddingQueryMetricType::COSINE, query_vector);
+      SearchSpecProto::EmbeddingQueryMetricType::COSINE, /*nprobe=*/0,
+      query_vector);
 
   EXPECT_THAT(node.EvaluateQuery(engine_.get()),
               IsOkAndHolds(UnorderedElementsAre(3, 6, 7)));
@@ -171,7 +172,8 @@ TEST_F(MonkeySemanticQueryNodeTest, SemanticSearchWithPropertyRestrict) {
       CreateVector({1.0f, 0.0f}, "model1");
   MonkeySemanticQueryNode node(
       /*vector_index=*/0, /*min_score=*/0.6, /*max_score=*/0.9,
-      SearchSpecProto::EmbeddingQueryMetricType::COSINE, query_vector,
+      SearchSpecProto::EmbeddingQueryMetricType::COSINE, /*nprobe=*/0,
+      query_vector,
       /*property_restricts=*/{"embedding2"}, /*document_namespaces=*/{},
       /*document_schema_types=*/{});
 
@@ -188,7 +190,8 @@ TEST_F(MonkeySemanticQueryNodeTest, GenerateQueryString) {
   MonkeySemanticQueryNode basic_node(
       /*vector_index=*/0, /*min_score=*/0.6,
       /*max_score=*/0.9, /*distance_metric=*/
-      SearchSpecProto::EmbeddingQueryMetricType::COSINE, query_vector);
+      SearchSpecProto::EmbeddingQueryMetricType::COSINE, /*nprobe=*/0,
+      query_vector);
 
   EXPECT_THAT(basic_node.GenerateQueryString(),
               Eq("semanticSearch(getEmbeddingParameter(0), 0.60, 0.90, "
@@ -197,7 +200,8 @@ TEST_F(MonkeySemanticQueryNodeTest, GenerateQueryString) {
   MonkeySemanticQueryNode property_restrict_node(
       /*vector_index=*/0, /*min_score=*/0.6,
       /*max_score=*/0.9, /*distance_metric=*/
-      SearchSpecProto::EmbeddingQueryMetricType::COSINE, query_vector,
+      SearchSpecProto::EmbeddingQueryMetricType::COSINE, /*nprobe=*/0,
+      query_vector,
       /*property_restricts=*/{"embedding2"}, /*document_namespaces=*/{},
       /*document_schema_types=*/{});
   EXPECT_THAT(property_restrict_node.GenerateQueryString(),
@@ -207,7 +211,8 @@ TEST_F(MonkeySemanticQueryNodeTest, GenerateQueryString) {
   MonkeySemanticQueryNode dot_product_distance_metric_node(
       /*vector_index=*/0, /*min_score=*/0.6,
       /*max_score=*/0.9, /*distance_metric=*/
-      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT, query_vector,
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT, /*nprobe=*/0,
+      query_vector,
       /*property_restricts=*/{"embedding2"}, /*document_namespaces=*/{},
       /*document_schema_types=*/{});
   EXPECT_THAT(dot_product_distance_metric_node.GenerateQueryString(),
