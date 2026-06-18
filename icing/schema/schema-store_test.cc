@@ -715,9 +715,9 @@ TEST_F(SchemaStoreTest, SetSchemaWithUpdateAccountPropertyDescriptionOk) {
           .SetDatabase("db1/")
           .AddAccountProperty("account1")
           .AddProperty(PropertyConfigBuilder()
-                           .SetName("subject")
+                           .SetName("account1")
                            .SetDataType(TYPE_STRING)
-                           .SetCardinality(CARDINALITY_REQUIRED))
+                           .SetCardinality(CARDINALITY_REPEATED))
           .Build();
 
   SchemaProto schema = SchemaBuilder().AddType(type_config).Build();
@@ -735,10 +735,15 @@ TEST_F(SchemaStoreTest, SetSchemaWithUpdateAccountPropertyDescriptionOk) {
   SchemaTypeConfigProto updated_type_config =
       SchemaTypeConfigBuilder(type_config)
           .AddAccountProperty("account2")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("account2")
+                           .SetDataType(TYPE_STRING)
+                           .SetCardinality(CARDINALITY_REPEATED))
           .Build();
   schema = SchemaBuilder().AddType(updated_type_config).Build();
   result = SchemaStore::SetSchemaResult();
   result.success = true;
+  result.schema_types_changed_fully_compatible_by_name.insert("db1/email");
   EXPECT_THAT(schema_store->SetSchema(CreateSetSchemaRequestProto(
                   schema, /*database=*/"db1/",
                   /*ignore_errors_and_delete_documents=*/false)),
@@ -5660,16 +5665,11 @@ TEST_F(
   {
     // Create an instance of the schema store with schema_definition_deduping
     // enabled.
-    FeatureFlags feature_flags(
-        /*allow_circular_schema_definitions=*/true,
-        /*enable_repeated_field_joins=*/true,
-        /*enable_embedding_backup_generation=*/true,
-        /*enable_optimize_improvements=*/true,
-        /*expired_document_purge_threshold_ms=*/0,
-        /*enable_non_existent_qualified_id_join=*/true,
-        /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/true,
-        /*enable_delete_propagation_from=*/true);
+    FeatureFlags feature_flags =
+        FeatureFlagsBuilder(GetTestFeatureFlags())
+            .set_enable_schema_definition_deduping(true)
+            .Build();
+
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -5709,16 +5709,11 @@ TEST_F(
 
   {
     // Previous version would have deduping disabled.
-    FeatureFlags feature_flags(
-        /*allow_circular_schema_definitions=*/true,
-        /*enable_repeated_field_joins=*/true,
-        /*enable_embedding_backup_generation=*/true,
-        /*enable_optimize_improvements=*/true,
-        /*expired_document_purge_threshold_ms=*/0,
-        /*enable_non_existent_qualified_id_join=*/true,
-        /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/false,
-        /*enable_delete_propagation_from=*/true);
+    FeatureFlags feature_flags =
+        FeatureFlagsBuilder(GetTestFeatureFlags())
+            .set_enable_schema_definition_deduping(false)
+            .Build();
+
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -6775,16 +6770,10 @@ TEST_P(SchemaStoreTestWithParam,
   {
     // Create an instance of the schema store and set the schema without
     // enabling schema deduplication.
-    FeatureFlags feature_flags(
-        /*allow_circular_schema_definitions=*/true,
-        /*enable_repeated_field_joins=*/true,
-        /*enable_embedding_backup_generation=*/true,
-        /*enable_optimize_improvements=*/true,
-        /*expired_document_purge_threshold_ms=*/0,
-        /*enable_non_existent_qualified_id_join=*/true,
-        /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/false,
-        /*enable_delete_propagation_from=*/true);
+    FeatureFlags feature_flags =
+        FeatureFlagsBuilder(GetTestFeatureFlags())
+            .set_enable_schema_definition_deduping(false)
+            .Build();
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
@@ -6805,16 +6794,11 @@ TEST_P(SchemaStoreTestWithParam,
       /*schema_deduping_flag_rollback=*/false));
   {
     // Create a new instance of the schema store with schema_deduping enabled.
-    FeatureFlags feature_flags(
-        /*allow_circular_schema_definitions=*/true,
-        /*enable_repeated_field_joins=*/true,
-        /*enable_embedding_backup_generation=*/true,
-        /*enable_optimize_improvements=*/true,
-        /*expired_document_purge_threshold_ms=*/0,
-        /*enable_non_existent_qualified_id_join=*/true,
-        /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/true,
-        /*enable_delete_propagation_from=*/true);
+    FeatureFlags feature_flags =
+        FeatureFlagsBuilder(GetTestFeatureFlags())
+            .set_enable_schema_definition_deduping(true)
+            .Build();
+
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -7013,17 +6997,11 @@ TEST_P(SchemaStoreTestWithParam,
       SchemaBuilder().AddType(db1_email_type).AddType(db2_email_type).Build();
   {
     // Create an instance of the schema store and set the schema without
-    // enabling schema database or schema deduplication.
-    FeatureFlags feature_flags(
-        /*allow_circular_schema_definitions=*/true,
-        /*enable_repeated_field_joins=*/true,
-        /*enable_embedding_backup_generation=*/true,
-        /*enable_optimize_improvements=*/true,
-        /*expired_document_purge_threshold_ms=*/0,
-        /*enable_non_existent_qualified_id_join=*/true,
-        /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/false,
-        /*enable_delete_propagation_from=*/true);
+    // enabling schema deduplication.
+    FeatureFlags feature_flags =
+        FeatureFlagsBuilder(GetTestFeatureFlags())
+            .set_enable_schema_definition_deduping(false)
+            .Build();
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
@@ -7043,17 +7021,13 @@ TEST_P(SchemaStoreTestWithParam,
       /*recalculate_schema_properties_digests=*/true,
       /*schema_deduping_flag_rollback=*/false));
   {
-    // Create a new instance of the schema store with both flags enabled.
-    FeatureFlags feature_flags(
-        /*allow_circular_schema_definitions=*/true,
-        /*enable_repeated_field_joins=*/true,
-        /*enable_embedding_backup_generation=*/true,
-        /*enable_optimize_improvements=*/true,
-        /*expired_document_purge_threshold_ms=*/0,
-        /*enable_non_existent_qualified_id_join=*/true,
-        /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/true,
-        /*enable_delete_propagation_from=*/true);
+    // Create a new instance of the schema store with schema deduplication
+    // enabled.
+    FeatureFlags feature_flags =
+        FeatureFlagsBuilder(GetTestFeatureFlags())
+            .set_enable_schema_definition_deduping(true)
+            .Build();
+
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,
@@ -7275,16 +7249,10 @@ TEST_P(SchemaStoreTestWithParam, MigrateSchemaWithSchemaDedupingFlagRollback) {
   {
     // Create an instance of the schema store and set the schema with schema
     // deduping flag enabled.
-    FeatureFlags feature_flags(
-        /*allow_circular_schema_definitions=*/true,
-        /*enable_repeated_field_joins=*/true,
-        /*enable_embedding_backup_generation=*/true,
-        /*enable_optimize_improvements=*/true,
-        /*expired_document_purge_threshold_ms=*/0,
-        /*enable_non_existent_qualified_id_join=*/true,
-        /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/true,
-        /*enable_delete_propagation_from=*/true);
+    FeatureFlags feature_flags =
+        FeatureFlagsBuilder(GetTestFeatureFlags())
+            .set_enable_schema_definition_deduping(true)
+            .Build();
 
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
@@ -7307,16 +7275,11 @@ TEST_P(SchemaStoreTestWithParam, MigrateSchemaWithSchemaDedupingFlagRollback) {
   {
     // Create a new instance of the schema store with schema deduping flag
     // disabled.
-    FeatureFlags feature_flags(
-        /*allow_circular_schema_definitions=*/true,
-        /*enable_repeated_field_joins=*/true,
-        /*enable_embedding_backup_generation=*/true,
-        /*enable_optimize_improvements=*/true,
-        /*expired_document_purge_threshold_ms=*/0,
-        /*enable_non_existent_qualified_id_join=*/true,
-        /*enable_skip_set_schema_type_equality_check=*/true,
-        /*enable_schema_definition_deduping=*/false,
-        /*enable_delete_propagation_from=*/true);
+    FeatureFlags feature_flags =
+        FeatureFlagsBuilder(GetTestFeatureFlags())
+            .set_enable_schema_definition_deduping(false)
+            .Build();
+
     ICING_ASSERT_OK_AND_ASSIGN(
         std::unique_ptr<SchemaStore> schema_store,
         SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_,

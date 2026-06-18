@@ -36,7 +36,7 @@ class MonkeySemanticQueryNode : public MonkeyAbstractRestrictableLeafQueryNode {
   explicit MonkeySemanticQueryNode(
       int vector_index, double min_score, double max_score,
       SearchSpecProto::EmbeddingQueryMetricType::Code distance_metric,
-      PropertyProto::VectorProto embedding_query_vector,
+      int nprobe, PropertyProto::VectorProto embedding_query_vector,
       std::unordered_set<std::string> property_restricts,
       std::vector<std::string> document_namespaces,
       std::vector<std::string> document_schema_types);
@@ -44,7 +44,7 @@ class MonkeySemanticQueryNode : public MonkeyAbstractRestrictableLeafQueryNode {
   explicit MonkeySemanticQueryNode(
       int vector_index, double min_score, double max_score,
       SearchSpecProto::EmbeddingQueryMetricType::Code distance_metric,
-      PropertyProto::VectorProto embedding_query_vector);
+      int nprobe, PropertyProto::VectorProto embedding_query_vector);
 
   std::string GenerateQueryString() const override;
 
@@ -62,6 +62,8 @@ class MonkeySemanticQueryNode : public MonkeyAbstractRestrictableLeafQueryNode {
   double max_score_;
   // The distance metric to use.
   SearchSpecProto::EmbeddingQueryMetricType::Code distance_metric_;
+  // The number of probes for ANN search.
+  int nprobe_;
 
   // SearchSpecProto specific fields that aren't needed to generate the query
   // string.

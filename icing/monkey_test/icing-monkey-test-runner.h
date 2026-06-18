@@ -54,14 +54,22 @@ class IcingMonkeyTestRunner {
   void DoDeleteBySchemaType();
   void DoDeleteByQuery();
   void DoSearch();
+  void DoJoinSearch();
   void DoGetDebugInfo();
 
   // Operations with no observable side-effects.
   void DoPersistToDisk();
   void ReloadFromDisk();
   void DoOptimize();
+  void DoMaintainAnnIndex();
 
  private:
+  void InternalSearch(bool is_join_search);
+
+  void CreateIcingSearchEngine();
+  // Reloads the in-memory icing from the disk.
+  void ReloadInMemoryIcing();
+
   IcingMonkeyTestRunnerConfiguration config_;
   MonkeyTestRandomEngine random_;
   Filesystem filesystem_;
@@ -71,10 +79,6 @@ class IcingMonkeyTestRunner {
 
   std::unique_ptr<MonkeySchemaGenerator> schema_generator_;
   std::unique_ptr<MonkeyDocumentGenerator> document_generator_;
-
-  void CreateIcingSearchEngine();
-  // Reloads the in-memory icing from the disk.
-  void ReloadInMemoryIcing();
 };
 
 }  // namespace lib
