@@ -1502,15 +1502,10 @@ TEST_P(DocumentStoreTest, PurgeExpiredDocuments_shouldSkipDeletedDocuments) {
 TEST_P(DocumentStoreTest,
        PurgeExpiredDocuments_shouldPurgeDocumentsThatExpireWithinThreshold) {
   auto custom_feature_flags = std::make_unique<FeatureFlags>(
-      /*enable_circular_schema_definitions=*/true,
-      /*enable_repeated_field_joins=*/true,
-      /*enable_embedding_backup_generation=*/true,
-      /*enable_optimize_improvements=*/true,
-      /*expired_document_purge_threshold_ms=*/1000,  // 1 second
-      /*enable_non_existent_qualified_id_join=*/true,
-      /*enable_skip_set_schema_type_equality_check=*/true,
-      /*enable_schema_definition_deduping=*/true,
-      /*enable_delete_propagation_from=*/true);
+      FeatureFlagsBuilder(GetTestFeatureFlags())
+          .set_expired_document_purge_threshold_ms(1000)  // 1 second
+          .Build());
+
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(

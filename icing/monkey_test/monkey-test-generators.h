@@ -105,6 +105,8 @@ class MonkeyDocumentGenerator {
     return schema_->types(dist(*random_));
   }
 
+  int64_t GetRandomInt64Value() const;
+
   std::string_view GetToken() const {
     // TODO: Instead of randomly picking tokens from the language set
     // kCommonWords, we can make some words more common than others to simulate
@@ -147,6 +149,8 @@ class MonkeyDocumentGenerator {
     // maximum uri + 1 as an estimate.
     num_docs_generated_ = max_uri + 1;
   }
+
+  const SchemaProto* schema() const { return schema_; }
 
  private:
   MonkeyTestRandomEngine* random_;                    // Does not own.
