@@ -553,7 +553,7 @@ message IcingSearchEngineOptions {
 }
 
 // Result of a call to IcingSearchEngine.Initialize
-// Next tag: 6
+// Next tag: 7
 message InitializeResultProto {
   // Status code can be one of:
   //   OK
@@ -587,4 +587,9 @@ message InitializeResultProto {
 
   // TODO(b/147699081): Add a field to indicate lost_schema and lost_documents.
   // go/icing-library-apis.
+
+  // Size of the InitializeResultProto response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 6;
 }
