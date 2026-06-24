@@ -277,31 +277,35 @@ EmbeddingMatchSnippetProto CreateEmbeddingMatchSnippetProto(
 EmbeddingQueryResults CreateEmailEmbeddingQueryResults(int num_documents) {
   SectionId embedding1_section_id = 1;
   SectionId embedding2_section_id = 2;
-  EmbeddingQueryResults embedding_query_results;
+  EmbeddingQueryResults embedding_query_results(/*num_query_vectors=*/2);
 
   for (int doc_id = 0; doc_id < num_documents; ++doc_id) {
     EmbeddingMatchInfos& info_model1 =
-        embedding_query_results
-            .result_infos[/*query_index=*/0][EMBEDDING_METRIC_DOT_PRODUCT]
-                         [doc_id];
-    info_model1.AppendScore(1.1 + doc_id);
-    info_model1.AppendScore(2.2 + doc_id);
+        GetOrCreateEmbeddingMatchInfosForDocument(
+            embedding_query_results, /*query_index=*/0,
+            EMBEDDING_METRIC_DOT_PRODUCT, doc_id);
+    info_model1.AppendScore(*embedding_query_results.global_scores,
+                            1.1 + doc_id);
     // {2, 3, 4 + doc_id}, position 2
     info_model1.AppendSectionInfo(
-        embedding1_section_id,
+        *embedding_query_results.global_section_infos, embedding1_section_id,
         /*position_in_section_for_dimension_and_signature=*/1);
+    info_model1.AppendScore(*embedding_query_results.global_scores,
+                            2.2 + doc_id);
     // {-1, -2, -6 + doc_id}, position 1
     info_model1.AppendSectionInfo(
-        embedding2_section_id,
+        *embedding_query_results.global_section_infos, embedding2_section_id,
         /*position_in_section_for_dimension_and_signature=*/0);
 
     EmbeddingMatchInfos& info_model2 =
-        embedding_query_results
-            .result_infos[/*query_index=*/1][EMBEDDING_METRIC_COSINE][doc_id];
-    info_model2.AppendScore(3.3 + doc_id);
+        GetOrCreateEmbeddingMatchInfosForDocument(
+            embedding_query_results, /*query_index=*/1, EMBEDDING_METRIC_COSINE,
+            doc_id);
+    info_model2.AppendScore(*embedding_query_results.global_scores,
+                            3.3 + doc_id);
     // {1, 2, 3, 4 + doc_id}, position 1
     info_model2.AppendSectionInfo(
-        embedding1_section_id,
+        *embedding_query_results.global_section_infos, embedding1_section_id,
         /*position_in_section_for_dimension_and_signature=*/0);
   }
   return embedding_query_results;
@@ -355,8 +359,10 @@ TEST_F(ResultRetrieverV2SnippetTest,
       /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).snippet(),
@@ -418,8 +424,10 @@ TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
 
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.num_results_with_snippets, Eq(3));
@@ -539,8 +547,10 @@ TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
 
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.num_results_with_snippets, Eq(1));
@@ -635,8 +645,10 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfo) {
 
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.num_results_with_snippets, Eq(3));
@@ -757,6 +769,118 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfo) {
               ElementsAre("foo"));
 }
 
+TEST_F(ResultRetrieverV2SnippetTest, SnippetWithAnnPositionNegativeOne) {
+  // Document 1: Repeated property with multiple values.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(CreateEmailDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+
+  // Document 2: Repeated property with only 1 value.
+  DocumentProto document2 =
+      DocumentBuilder()
+          .SetKey("icing", "Email/2")
+          .SetSchema("Email")
+          .AddStringProperty("subject", "subject foo 2")
+          .AddStringProperty("body", "body bar 2")
+          .AddVectorProperty("embedding1", CreateVector("my_model1", {1, 2, 3}))
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(document_util::CreateDocumentWrapper(document2)));
+  DocumentId document_id2 = put_result2.new_document_id;
+
+  std::vector<SectionId> hit_section_ids = {
+      GetSectionId("Email", "subject"), GetSectionId("Email", "body"),
+      GetSectionId("Email", "embedding1")};
+  SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
+
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, hit_section_id_mask, /*score=*/0},
+      {document_id2, hit_section_id_mask, /*score=*/0}};
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
+
+  ResultSpecProto::SnippetSpecProto snippet_spec = CreateSnippetSpec();
+  snippet_spec.set_get_embedding_match_info(true);
+  ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
+  *result_spec.mutable_snippet_spec() = std::move(snippet_spec);
+
+  std::vector<PropertyProto::VectorProto> embedding_query_vectors = {
+      CreateVector("my_model1", {-1, -1, 1})};
+
+  EmbeddingQueryResults embedding_query_results(/*num_query_vectors=*/1);
+
+  // Setup for Doc 1
+  EmbeddingMatchInfos& info1 = GetOrCreateEmbeddingMatchInfosForDocument(
+      embedding_query_results, /*query_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
+      document_id1);
+  info1.AppendScore(*embedding_query_results.global_scores, 1.0);
+  info1.AppendSectionInfo(
+      *embedding_query_results.global_section_infos,
+      GetSectionId("Email", "embedding1"),
+      /*position_in_section_for_dimension_and_signature=*/-1);
+
+  // Setup for Doc 2
+  EmbeddingMatchInfos& info2 = GetOrCreateEmbeddingMatchInfosForDocument(
+      embedding_query_results, /*query_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT,
+      document_id2);
+  info2.AppendScore(*embedding_query_results.global_scores, 1.0);
+  info2.AppendSectionInfo(
+      *embedding_query_results.global_section_infos,
+      GetSectionId("Email", "embedding1"),
+      /*position_in_section_for_dimension_and_signature=*/-1);
+
+  ResultStateV2 result_state(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+          std::move(scored_document_hits), /*is_descending=*/false),
+      /*parent_adjustment_info=*/
+      std::make_unique<ResultAdjustmentInfo>(
+          CreateSearchSpec(TermMatchType::EXACT_ONLY, embedding_query_vectors,
+                           EMBEDDING_METRIC_DOT_PRODUCT),
+          CreateScoringSpec(/*is_descending_order=*/false), result_spec,
+          schema_store_.get(), embedding_query_results,
+          std::unordered_set<DocumentId>{document_id1, document_id2},
+          SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
+      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+
+  PageResult page_result =
+      result_retriever
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
+          .first;
+  ASSERT_THAT(page_result.results, SizeIs(2));
+  EXPECT_THAT(page_result.num_results_with_snippets, Eq(2));
+
+  // Verify Doc 1 (should have entries: body, embedding1[-1], subject)
+  const SnippetProto& result_snippet1 = page_result.results.at(0).snippet();
+  ASSERT_THAT(result_snippet1.entries(), SizeIs(3));
+  EXPECT_THAT(result_snippet1.entries(0).property_name(), Eq("body"));
+  EXPECT_THAT(result_snippet1.entries(1).property_name(), Eq("embedding1[-1]"));
+  EXPECT_THAT(result_snippet1.entries(2).property_name(), Eq("subject"));
+  ASSERT_THAT(result_snippet1.entries(1).embedding_matches(), SizeIs(1));
+  EXPECT_THAT(result_snippet1.entries(1).embedding_matches(0).semantic_score(),
+              testing::DoubleEq(1.0));
+
+  // Verify Doc 2 (should have entries: body, embedding1, subject)
+  const SnippetProto& result_snippet2 = page_result.results.at(1).snippet();
+  ASSERT_THAT(result_snippet2.entries(), SizeIs(3));
+  EXPECT_THAT(result_snippet2.entries(0).property_name(), Eq("body"));
+  EXPECT_THAT(result_snippet2.entries(1).property_name(), Eq("embedding1"));
+  EXPECT_THAT(result_snippet2.entries(2).property_name(), Eq("subject"));
+  ASSERT_THAT(result_snippet2.entries(1).embedding_matches(), SizeIs(1));
+  EXPECT_THAT(result_snippet2.entries(1).embedding_matches(0).semantic_score(),
+              testing::DoubleEq(1.0));
+}
+
 TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfoDisabled) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
@@ -817,8 +941,10 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfoDisabled) {
 
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.num_results_with_snippets, Eq(3));
@@ -944,8 +1070,10 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
 
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).snippet().entries(), Not(IsEmpty()));
@@ -1013,8 +1141,10 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldNotSnippetAnyResults) {
   // We can't return any snippets for this page.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).snippet().entries(), IsEmpty());
@@ -1085,8 +1215,10 @@ TEST_F(ResultRetrieverV2SnippetTest,
   // We can't return any snippets for this page even though num_to_snippet > 0.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).snippet().entries(), IsEmpty());
@@ -1208,8 +1340,10 @@ TEST_F(ResultRetrieverV2SnippetTest, JoinSnippeted) {
 
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.num_results_with_snippets, Eq(3));
@@ -1454,8 +1588,10 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllJoinedResults) {
   // should be snippeted.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 
@@ -1588,8 +1724,10 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeJoinedResults) {
   // snippeted.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
 

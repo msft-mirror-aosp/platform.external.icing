@@ -35,12 +35,17 @@ namespace lib {
 // A random schema generator used for monkey testing.
 class MonkeySchemaGenerator {
  public:
+  static constexpr std::string_view kSchemaTypeNamePrefix = "MonkeyTestType";
+  static constexpr std::string_view kSchemaPropertyNamePrefix =
+      "MonkeyTestProp";
+
   struct UpdateSchemaResult {
     SchemaProto schema;
     bool is_invalid_schema;
     std::unordered_set<std::string> schema_types_deleted;
     std::unordered_set<std::string> schema_types_incompatible;
     std::unordered_set<std::string> schema_types_index_incompatible;
+    std::unordered_set<std::string> schema_types_join_incompatible;
   };
 
   explicit MonkeySchemaGenerator(
@@ -50,18 +55,25 @@ class MonkeySchemaGenerator {
 
   SchemaProto GenerateSchema();
 
-  UpdateSchemaResult UpdateSchema(const SchemaProto& schema);
+  UpdateSchemaResult UpdateSchema(SchemaProto schema);
+
+  // Reload the previous status of the schema generator.
+  void ReloadPreviousStatus(const SchemaProto& schema);
 
  private:
   PropertyConfigProto GenerateProperty(
       const SchemaTypeConfigProto& type_config,
-      PropertyConfigProto::Cardinality::Code cardinality, bool indexable);
+      PropertyConfigProto::Cardinality::Code cardinality, bool indexable,
+      bool joinable);
 
   void UpdateProperty(const SchemaTypeConfigProto& type_config,
                       PropertyConfigProto& property,
                       UpdateSchemaResult& result);
 
   SchemaTypeConfigProto GenerateType();
+
+  // Adds a duplicate type to the input schema in place.
+  void AddDuplicateType(SchemaProto& schema);
 
   void UpdateType(SchemaTypeConfigProto& type_config,
                   UpdateSchemaResult& result);
@@ -81,6 +93,8 @@ class MonkeySchemaGenerator {
 // Same for num_namespaces.
 class MonkeyDocumentGenerator {
  public:
+  static constexpr std::string_view kDocumentUriPrefix = "uri";
+
   explicit MonkeyDocumentGenerator(
       MonkeyTestRandomEngine* random, const SchemaProto* schema,
       const IcingMonkeyTestRunnerConfiguration* config)
@@ -91,6 +105,8 @@ class MonkeyDocumentGenerator {
     return schema_->types(dist(*random_));
   }
 
+  int64_t GetRandomInt64Value() const;
+
   std::string_view GetToken() const {
     // TODO: Instead of randomly picking tokens from the language set
     // kCommonWords, we can make some words more common than others to simulate
@@ -100,22 +116,41 @@ class MonkeyDocumentGenerator {
     return kCommonWords[dist(*random_)];
   }
 
-  PropertyProto::VectorProto GetRandomVector() const;
+  PropertyProto::VectorProto GetRandomVector(bool allow_quantized_value) const;
 
   std::string GetNamespace() const;
+  std::string GetNamespaceWithRange(int l, int r) const;
 
   std::string GetUri() const;
+  std::string GetUriWithRange(int l, int r) const;
 
   int GetNumTokens() const;
 
   int GetNumVectors(PropertyConfigProto::Cardinality::Code cardinality) const;
 
+  int GetNumInt64(PropertyConfigProto::Cardinality::Code cardinality) const;
+
   std::vector<std::string> GetStringPropertyContent() const;
+
+  std::vector<std::string> GetQualifiedIds(
+      PropertyConfigProto::Cardinality::Code cardinality) const;
 
   std::vector<PropertyProto::VectorProto> GetVectorPropertyContent(
       PropertyConfigProto::Cardinality::Code cardinality) const;
 
+  std::vector<int64_t> GetInt64PropertyContent(
+      PropertyConfigProto::Cardinality::Code cardinality) const;
+
   MonkeyTokenizedDocument GenerateDocument();
+
+  // Reload the previous status of the document generator.
+  void ReloadPreviousStatus(uint32_t max_uri) {
+    // To reset num_docs_generated_ according to the previous run, we use the
+    // maximum uri + 1 as an estimate.
+    num_docs_generated_ = max_uri + 1;
+  }
+
+  const SchemaProto* schema() const { return schema_; }
 
  private:
   MonkeyTestRandomEngine* random_;                    // Does not own.

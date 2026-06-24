@@ -14,6 +14,7 @@
 
 #include "icing/result/result-retriever-v2.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -99,41 +100,42 @@ bool ApplySnippet(ResultAdjustmentInfo* adjustment_info,
 
 }  // namespace
 
-bool GroupResultLimiterV2::ShouldBeRemoved(
+std::optional<int> GroupResultLimiterV2::GetGroupResultLimitsIndex(
     const ScoredDocumentHit& scored_document_hit,
     const std::unordered_map<int32_t, int>& entry_id_group_id_map,
-    const DocumentStore& document_store, std::vector<int>& group_result_limits,
+    const DocumentStore& document_store,
     ResultSpecProto::ResultGroupingType result_group_type,
     int64_t current_time_ms) const {
+  if (result_group_type == ResultSpecProto::ResultGroupingType::
+                               ResultSpecProto_ResultGroupingType_NONE) {
+    // No limit. Return -1 to skip the group result limit.
+    return -1;
+  }
+
   auto document_filter_data_optional =
       document_store.GetAliveDocumentFilterData(
           scored_document_hit.document_id(), current_time_ms);
   if (!document_filter_data_optional) {
-    // The document doesn't exist.
-    return true;
+    // The document doesn't exist. Return std::nullopt to exclude the document.
+    return std::nullopt;
   }
-  NamespaceId namespace_id =
-      document_filter_data_optional.value().namespace_id();
-  SchemaTypeId schema_type_id =
-      document_filter_data_optional.value().schema_type_id();
-  auto entry_id_or = document_store.GetResultGroupingEntryId(
+  NamespaceId namespace_id = document_filter_data_optional->namespace_id();
+  SchemaTypeId schema_type_id = document_filter_data_optional->schema_type_id();
+
+  std::optional<int32_t> entry_id = document_store.GetResultGroupingEntryId(
       result_group_type, namespace_id, schema_type_id);
-  if (!entry_id_or.ok()) {
-    return false;
+  if (!entry_id.has_value()) {
+    // No limit. Return -1 to skip the group result limit.
+    return -1;
   }
-  int32_t entry_id = entry_id_or.ValueOrDie();
-  auto iter = entry_id_group_id_map.find(entry_id);
+
+  auto iter = entry_id_group_id_map.find(*entry_id);
   if (iter == entry_id_group_id_map.end()) {
     // If a ResultGrouping Entry Id isn't found in entry_id_group_id_map, then
     // there are no limits placed on results from this entry id.
-    return false;
+    return -1;
   }
-  int& count = group_result_limits.at(iter->second);
-  if (count <= 0) {
-    return true;
-  }
-  --count;
-  return false;
+  return iter->second;
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<ResultRetrieverV2>>
@@ -159,7 +161,8 @@ ResultRetrieverV2::Create(
 }
 
 std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
-    ResultStateV2& result_state, int64_t current_time_ms) const {
+    ResultStateV2& result_state, int32_t max_results,
+    int64_t current_time_ms) const {
   absl_ports::unique_lock l(&result_state.mutex);
 
   // For calculating page
@@ -170,8 +173,9 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
   // Retrieve info
   std::vector<SearchResultProto::ResultProto> results;
   int32_t num_total_bytes = 0;
+  int desired_page_size = std::min(result_state.num_per_page(), max_results);
   while (num_total_bytes < result_state.num_total_bytes_per_page_threshold() &&
-         results.size() < result_state.num_per_page() &&
+         results.size() < desired_page_size &&
          !result_state.scored_document_hits_ranker->empty()) {
     RetrieveResult result = Retrieve(result_state, current_time_ms);
     if (result.result_proto.has_value()) {
@@ -186,17 +190,28 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
       //
       // (Use subtraction to avoid integer overflow).
       size_t result_bytes = result.result_proto->ByteSizeLong();
-      if (feature_flags_.enable_strict_page_byte_size_limit() &&
-          !results.empty() &&
+      if (!results.empty() &&
           result_bytes >= result_state.num_total_bytes_per_page_threshold() -
                               num_total_bytes) {
         // Exceeds the byte size threshold, so skip the current document. Also
         // it remains in the ranker and will be included in the next page.
+        ICING_LOG(INFO) << "Skipping document due to byte size threshold. "
+                           "Current num docs: "
+                        << results.size()
+                        << ", total byte size: " << num_total_bytes
+                        << ", next doc byte size: " << result_bytes
+                        << ", threshold: "
+                        << result_state.num_total_bytes_per_page_threshold();
         break;
       }
 
       results.push_back(std::move(*result.result_proto));
       num_total_bytes += result_bytes;
+
+      // Decrement the counter of the group result limit in ResultState.
+      if (result.group_result_limits_index != -1) {
+        --result_state.group_result_limits[result.group_result_limits_index];
+      }
     }
 
     result_state.scored_document_hits_ranker->Pop();
@@ -221,24 +236,44 @@ ResultRetrieverV2::RetrieveResult ResultRetrieverV2::Retrieve(
   const JoinedScoredDocumentHit& next_best_document_hit =
       result_state.scored_document_hits_ranker->Top();
 
-  if (group_result_limiter_->ShouldBeRemoved(
-          next_best_document_hit.parent_scored_document_hit(),
-          result_state.entry_id_group_id_map(), doc_store_,
-          result_state.group_result_limits, result_state.result_group_type(),
-          current_time_ms)) {
-    return RetrieveResult{.result_proto = std::nullopt,
-                          .has_parent_snippets = false};
+  // Get the index of the group result limits for the given scored document hit,
+  // and check if the document should be excluded.
+  std::optional<int> idx = group_result_limiter_->GetGroupResultLimitsIndex(
+      next_best_document_hit.parent_scored_document_hit(),
+      result_state.entry_id_group_id_map(), doc_store_,
+      result_state.result_group_type(), current_time_ms);
+  if (!idx.has_value()) {
+    // Should exclude the document, so return an invalid result.
+    return {.result_proto = std::nullopt,
+            .group_result_limits_index = -1,
+            .has_parent_snippets = false};
+  }
+
+  if (*idx == -1) {
+    // No limit for the result document. Pass.
+  } else if (*idx < 0 || *idx >= result_state.group_result_limits.size()) {
+    // This should not happen. But let's check it anyway and log. Also set the
+    // index to -1 indicating that there is no limit.
+    ICING_LOG(WARNING) << "Get an invalid group result limits index: " << *idx;
+    *idx = -1;
+  } else if (result_state.group_result_limits[*idx] <= 0) {
+    // Should exclude the document since the group has no budget left, so
+    // return an invalid result.
+    return {.result_proto = std::nullopt,
+            .group_result_limits_index = -1,
+            .has_parent_snippets = false};
   }
 
   DocumentId doc_id =
       next_best_document_hit.parent_scored_document_hit().document_id();
   auto document_or = doc_store_.Get(doc_id);
   if (!document_or.ok()) {
-    // Skip the document if getting errors.
+    // Exclude the document if getting errors.
     ICING_LOG(WARNING) << "Fail to fetch document from document store: "
                        << document_or.status().error_message();
-    return RetrieveResult{.result_proto = std::nullopt,
-                          .has_parent_snippets = false};
+    return {.result_proto = std::nullopt,
+            .group_result_limits_index = -1,
+            .has_parent_snippets = false};
   }
   DocumentProto document = std::move(document_or).ValueOrDie();
 
@@ -300,6 +335,7 @@ ResultRetrieverV2::RetrieveResult ResultRetrieverV2::Retrieve(
   }
 
   return RetrieveResult{.result_proto = std::make_optional(std::move(result)),
+                        .group_result_limits_index = *idx,
                         .has_parent_snippets = has_parent_snippets};
 }
 

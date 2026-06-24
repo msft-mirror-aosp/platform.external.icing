@@ -25,14 +25,18 @@ import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
 import com.google.android.icing.proto.DocumentProto;
 import com.google.android.icing.proto.GetAllNamespacesResultProto;
+import com.google.android.icing.proto.GetNextPageRequestProto;
 import com.google.android.icing.proto.GetOptimizeInfoResultProto;
 import com.google.android.icing.proto.GetResultProto;
 import com.google.android.icing.proto.GetResultSpecProto;
 import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
+import com.google.android.icing.proto.HandleExpiredDocumentsResultProto;
 import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.LogSeverity;
+import com.google.android.icing.proto.MaintainAnnIndexOptions;
+import com.google.android.icing.proto.MaintainAnnIndexResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
@@ -182,8 +186,28 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   }
 
   @Override
+  public @NonNull SearchResultProto getNextPage(
+      @NonNull GetNextPageRequestProto getNextPageRequest) {
+    return IcingSearchEngineUtils.byteArrayToSearchResultProto(
+        icingSearchEngineImpl.getNextPageWithRequestProto(getNextPageRequest.toByteArray()));
+  }
+
+  @Override
   public void invalidateNextPageToken(long nextPageToken) {
     icingSearchEngineImpl.invalidateNextPageToken(nextPageToken);
+  }
+
+  @Override
+  public @NonNull HandleExpiredDocumentsResultProto handleExpiredDocuments() {
+    return IcingSearchEngineUtils.byteArrayToHandleExpiredDocumentsResultProto(
+        icingSearchEngineImpl.handleExpiredDocuments());
+  }
+
+  @Override
+  public @NonNull MaintainAnnIndexResultProto maintainAnnIndex(
+      @NonNull MaintainAnnIndexOptions options) {
+    return IcingSearchEngineUtils.byteArrayToMaintainAnnIndexResultProto(
+        icingSearchEngineImpl.maintainAnnIndex(options.toByteArray()));
   }
 
   @Override
@@ -208,6 +232,17 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   public @NonNull BlobProto commitBlob(PropertyProto.@NonNull BlobHandleProto blobHandle) {
     return IcingSearchEngineUtils.byteArrayToBlobProto(
         icingSearchEngineImpl.commitBlob(blobHandle.toByteArray()));
+  }
+
+  @Override
+  public @NonNull BlobProto getAllBlobInfos() {
+    return IcingSearchEngineUtils.byteArrayToBlobProto(icingSearchEngineImpl.getAllBlobInfos());
+  }
+
+  @Override
+  public @NonNull BlobProto putBlobInfos(@NonNull BlobProto blobProto) {
+    return IcingSearchEngineUtils.byteArrayToBlobProto(
+        icingSearchEngineImpl.putBlobInfos(blobProto.toByteArray()));
   }
 
   @Override

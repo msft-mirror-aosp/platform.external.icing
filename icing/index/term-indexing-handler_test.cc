@@ -250,11 +250,11 @@ std::vector<DocHitInfoTermFrequencyPair> GetHitsWithTermFrequency(
 
 TEST_F(TermIndexingHandlerTest, HandleBothStringSectionAndPropertyExistence) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   DocumentProto document =
       DocumentBuilder()
@@ -317,11 +317,11 @@ TEST_F(TermIndexingHandlerTest, HandleBothStringSectionAndPropertyExistence) {
 TEST_F(TermIndexingHandlerTest,
        HandleIntoLiteIndex_sortInIndexingNotTriggered) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   DocumentProto document =
       DocumentBuilder()
@@ -383,11 +383,11 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_sortInIndexingTriggered) {
   // HitBuffer after inserting 8 hits
   Index::Options options(index_dir_,
                          /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   DocumentProto document0 =
       DocumentBuilder()
@@ -537,11 +537,11 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_enableSortInIndexing) {
   // HitBuffer after inserting 8 hits
   Index::Options options(index_dir_,
                          /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/false,
                          /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   DocumentProto document0 =
       DocumentBuilder()
@@ -630,10 +630,10 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_enableSortInIndexing) {
   ASSERT_THAT(index->PersistToDisk(), IsOk());
   options = Index::Options(index_dir_,
                            /*index_merge_size=*/1024 * 1024,
-                           /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
-      index, Index::Create(options, &filesystem_, &icing_filesystem_));
+      index, Index::Create(options, &filesystem_, &icing_filesystem_,
+                           feature_flags_.get()));
 
   // Verify that the HitBuffer has been sorted after initializing with
   // sort_at_indexing enabled.

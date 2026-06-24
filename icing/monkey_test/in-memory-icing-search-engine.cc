@@ -17,9 +17,11 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -29,69 +31,32 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
-#include "icing/index/embed/embedding-scorer.h"
+#include "icing/join/qualified-id.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-abstract-query-node.h"
+#include "icing/monkey_test/monkey-test-util.h"
 #include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/store/document-id.h"
+#include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/util/status-macros.h"
+#include "unicode/uloc.h"
 
 namespace icing {
 namespace lib {
 
-namespace {
-
-// Check if s1 is a prefix of s2.
-bool IsPrefix(std::string_view s1, std::string_view s2) {
-  if (s1.length() > s2.length()) {
-    return false;
-  }
-  return s1 == s2.substr(0, s1.length());
+InMemoryIcingSearchEngine::InMemoryIcingSearchEngine(
+    MonkeyTestRandomEngine* random)
+    : random_(random) {
+  language_segmenter_factory::SegmenterOptions segmenter_options(
+      ULOC_US, /*jni_cache=*/nullptr, /*enable_icu_segmenter=*/true);
+  language_segmenter_ =
+      language_segmenter_factory::Create(
+          segmenter_options, /*icu_segmenter_creation_status=*/nullptr)
+          .ValueOrDie();
 }
-
-const std::string_view kSemanticSearchPrefix =
-    "semanticSearch(getEmbeddingParameter(0)";
-
-libtextclassifier3::StatusOr<std::pair<double, double>> GetEmbeddingSearchRange(
-    std::string_view s) {
-  std::vector<double> values;
-  std::string current_number;
-  int i = s.find(kSemanticSearchPrefix) + kSemanticSearchPrefix.length();
-  for (; i < s.size(); ++i) {
-    char c = s[i];
-    if (c == '.' || c == '-' || (c >= '0' && c <= '9')) {
-      current_number += c;
-    } else {
-      if (!current_number.empty()) {
-        values.push_back(std::stod(current_number));
-        current_number.clear();
-      }
-    }
-  }
-  if (values.size() != 2) {
-    return absl_ports::InvalidArgumentError(
-        absl_ports::StrCat("Not an embedding search.", s));
-  }
-  return std::make_pair(values[0], values[1]);
-}
-
-bool DoesVectorsMatch(const EmbeddingScorer *scorer,
-                      std::pair<double, double> embedding_search_range,
-                      const PropertyProto::VectorProto &vector1,
-                      const PropertyProto::VectorProto &vector2) {
-  if (vector1.model_signature() != vector2.model_signature() ||
-      vector1.values_size() != vector2.values_size()) {
-    return false;
-  }
-  float score = scorer->Score(vector1.values_size(), vector1.values().data(),
-                              vector2.values().data());
-  return embedding_search_range.first <= score &&
-         score <= embedding_search_range.second;
-}
-
-}  // namespace
 
 libtextclassifier3::StatusOr<const PropertyConfigProto *>
 InMemoryIcingSearchEngine::GetPropertyConfig(
@@ -111,13 +76,12 @@ InMemoryIcingSearchEngine::GetPropertyConfig(
 
 libtextclassifier3::StatusOr<InMemoryIcingSearchEngine::PropertyIndexInfo>
 InMemoryIcingSearchEngine::GetPropertyIndexInfo(
-    const std::string &schema_type,
-    const MonkeyTokenizedSection &section) const {
+    const std::string& schema_type, std::string_view property_path) const {
   bool in_indexable_properties_list = false;
   bool all_indexable_from_top = true;
 
   std::vector<std::string_view> properties_in_path =
-      absl_ports::StrSplit(section.path, ".");
+      absl_ports::StrSplit(property_path, ".");
   if (properties_in_path.empty()) {
     return absl_ports::InvalidArgumentError("Got empty path.");
   }
@@ -130,18 +94,44 @@ InMemoryIcingSearchEngine::GetPropertyIndexInfo(
     if (prop->data_type() == PropertyConfigProto::DataType::STRING) {
       TermMatchType::Code term_match_type =
           prop->string_indexing_config().term_match_type();
-      bool indexable = term_match_type != TermMatchType::UNKNOWN;
-      return PropertyIndexInfo{indexable, term_match_type};
-    }
-    if (prop->data_type() == PropertyConfigProto::DataType::VECTOR) {
+      StringIndexingConfig::TokenizerType::Code tokenizer_type =
+          prop->string_indexing_config().tokenizer_type();
       bool indexable =
-          prop->embedding_indexing_config().embedding_indexing_type() !=
-          EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN;
-      return PropertyIndexInfo{indexable};
+          term_match_type != TermMatchType::UNKNOWN &&
+          tokenizer_type != StringIndexingConfig::TokenizerType::NONE;
+      return PropertyIndexInfo{.data_type = prop->data_type(),
+                               .term_match_type = term_match_type,
+                               .tokenizer_type = tokenizer_type,
+                               .indexable = indexable};
+    }
+
+    if (prop->data_type() == PropertyConfigProto::DataType::VECTOR) {
+      EmbeddingIndexingConfig::EmbeddingIndexingType::Code
+          embedding_indexing_type =
+              prop->embedding_indexing_config().embedding_indexing_type();
+      bool indexable = embedding_indexing_type !=
+                       EmbeddingIndexingConfig::EmbeddingIndexingType::UNKNOWN;
+      EmbeddingIndexingConfig::QuantizationType::Code quantization_type =
+          prop->embedding_indexing_config().quantization_type();
+      return PropertyIndexInfo{
+          .data_type = prop->data_type(),
+          .quantization_type = quantization_type,
+          .embedding_indexing_type = embedding_indexing_type,
+          .indexable = indexable};
+    }
+
+    if (prop->data_type() == PropertyConfigProto::DataType::INT64) {
+      IntegerIndexingConfig::NumericMatchType::Code numeric_match_type =
+          prop->integer_indexing_config().numeric_match_type();
+      bool indexable = numeric_match_type !=
+                       IntegerIndexingConfig::NumericMatchType::UNKNOWN;
+      return PropertyIndexInfo{.data_type = prop->data_type(),
+                               .numeric_match_type = numeric_match_type,
+                               .indexable = indexable};
     }
 
     if (prop->data_type() != PropertyConfigProto::DataType::DOCUMENT) {
-      return PropertyIndexInfo{/*indexable=*/false};
+      return PropertyIndexInfo{.data_type = prop->data_type()};
     }
 
     bool old_all_indexable_from_top = all_indexable_from_top;
@@ -162,76 +152,48 @@ InMemoryIcingSearchEngine::GetPropertyIndexInfo(
       }
       // Check in_indexable_properties_list again.
       if (!in_indexable_properties_list) {
-        return PropertyIndexInfo{/*indexable=*/false};
+        return PropertyIndexInfo{.data_type = prop->data_type()};
       }
     }
     curr_schema_type = prop->document_indexing_config().GetTypeName();
   }
-  return PropertyIndexInfo{/*indexable=*/false};
+
+  return absl_ports::NotFoundError(
+      absl_ports::StrCat("Property: ", property_path, " is not found."));
 }
 
-libtextclassifier3::StatusOr<bool>
-InMemoryIcingSearchEngine::DoesDocumentMatchQuery(
-    const MonkeyTokenizedDocument &document,
-    const SearchSpecProto &search_spec) const {
-  std::string_view query = search_spec.query();
-  std::vector<std::string_view> strs = absl_ports::StrSplit(query, ":");
-  std::string_view section_restrict;
-  if (strs.size() > 1) {
-    section_restrict = strs[0];
-    query = strs[1];
+std::optional<InMemoryIcingSearchEngine::PropertyJoinableInfo>
+InMemoryIcingSearchEngine::GetPropertyJoinableInfo(
+    const std::string& schema_type, std::string_view property_path) const {
+  std::vector<std::string_view> properties_in_path =
+      absl_ports::StrSplit(property_path, ".");
+  if (properties_in_path.empty()) {
+    return std::nullopt;
   }
 
-  // Preprocess for embedding search.
-  libtextclassifier3::StatusOr<std::pair<double, double>>
-      embedding_search_range_or = GetEmbeddingSearchRange(query);
-  std::unique_ptr<EmbeddingScorer> embedding_scorer;
-  if (embedding_search_range_or.ok()) {
-    ICING_ASSIGN_OR_RETURN(
-        embedding_scorer,
-        EmbeddingScorer::Create(search_spec.embedding_query_metric_type()));
-  }
+  std::string curr_schema_type = schema_type;
+  for (int i = 0; i < properties_in_path.size(); ++i) {
+    auto prop_or =
+        GetPropertyConfig(curr_schema_type, std::string(properties_in_path[i]));
+    if (!prop_or.ok()) {
+      return std::nullopt;
+    }
+    const PropertyConfigProto* prop = prop_or.ValueOrDie();
 
-  for (const MonkeyTokenizedSection &section : document.tokenized_sections) {
-    if (!section_restrict.empty() && section.path != section_restrict) {
-      continue;
+    if (prop->data_type() != PropertyConfigProto::DataType::DOCUMENT &&
+        i == properties_in_path.size() - 1) {
+      return PropertyJoinableInfo{
+          .data_type = prop->data_type(),
+          .value_type = prop->joinable_config().value_type(),
+          .delete_propagation_type =
+              prop->joinable_config().delete_propagation_type()};
     }
-    ICING_ASSIGN_OR_RETURN(
-        PropertyIndexInfo property_index_info,
-        GetPropertyIndexInfo(document.document.schema(), section));
-    if (!property_index_info.indexable) {
-      // Skip non-indexable property.
-      continue;
-    }
-
-    if (embedding_search_range_or.ok()) {
-      // Process embedding search.
-      for (const PropertyProto::VectorProto &vector :
-           section.embedding_vectors) {
-        if (DoesVectorsMatch(embedding_scorer.get(),
-                             embedding_search_range_or.ValueOrDie(),
-                             search_spec.embedding_query_vectors(0), vector)) {
-          return true;
-        }
-      }
-    } else {
-      // Process term search.
-      for (const std::string &token : section.token_sequence) {
-        if (property_index_info.term_match_type == TermMatchType::EXACT_ONLY ||
-            search_spec.term_match_type() == TermMatchType::EXACT_ONLY) {
-          if (token == query) {
-            return true;
-          }
-        } else if (IsPrefix(query, token)) {
-          return true;
-        }
-      }
-    }
+    curr_schema_type = prop->schema_type();
   }
-  return false;
+  return std::nullopt;
 }
 
-void InMemoryIcingSearchEngine::SetSchema(SchemaProto &&schema) {
+void InMemoryIcingSearchEngine::SetSchema(SchemaProto schema) {
   schema_ = std::make_unique<SchemaProto>(std::move(schema));
   property_config_map_.clear();
   for (const SchemaTypeConfigProto &type_config : schema_->types()) {
@@ -297,8 +259,8 @@ void InMemoryIcingSearchEngine::Put(const MonkeyTokenizedDocument &document) {
   // Delete the old one if existing.
   Delete(document.document.namespace_(), document.document.uri()).IgnoreError();
   existing_doc_ids_.push_back(documents_.size());
-  namespace_uri_docid_map[document.document.namespace_()]
-                         [document.document.uri()] = documents_.size();
+  namespace_uri_docid_map_[document.document.namespace_()]
+                          [document.document.uri()] = documents_.size();
   documents_.push_back(document);
 }
 
@@ -318,7 +280,7 @@ libtextclassifier3::Status InMemoryIcingSearchEngine::Delete(
   if (doc_id_or.ok()) {
     DocumentId doc_id = doc_id_or.ValueOrDie();
     const DocumentProto &document = documents_[doc_id].document;
-    namespace_uri_docid_map[document.namespace_()].erase(document.uri());
+    namespace_uri_docid_map_[document.namespace_()].erase(document.uri());
     auto end_itr =
         std::remove(existing_doc_ids_.begin(), existing_doc_ids_.end(), doc_id);
     existing_doc_ids_.erase(end_itr, existing_doc_ids_.end());
@@ -365,11 +327,18 @@ InMemoryIcingSearchEngine::DeleteBySchemaType(const std::string &schema_type) {
 }
 
 libtextclassifier3::StatusOr<uint32_t> InMemoryIcingSearchEngine::DeleteByQuery(
-    const SearchSpecProto &search_spec) {
-  ICING_ASSIGN_OR_RETURN(std::vector<DocumentId> doc_ids_to_delete,
-                         InternalSearch(search_spec));
+    const MonkeyAbstractQueryNode* node) {
+  ICING_ASSIGN_OR_RETURN(
+      std::vector<NestedResultDocumentId> nested_results_to_delete,
+      InternalSearch(node, /*nested_queries=*/{}));
+
+  // Unzip the nested structure and collect all document ids to delete. This
+  // will dedupe doc ids and count # of deletions correctly.
+  std::unordered_set<DocumentId> doc_ids_to_delete;
+  UnzipNestedResultDocumentIds(nested_results_to_delete, doc_ids_to_delete);
+
   for (DocumentId doc_id : doc_ids_to_delete) {
-    const DocumentProto &document = documents_[doc_id].document;
+    const DocumentProto& document = documents_[doc_id].document;
     if (!Delete(document.namespace_(), document.uri()).ok()) {
       return absl_ports::InternalError(
           "Should never happen. There are inconsistencies in the in-memory "
@@ -379,22 +348,35 @@ libtextclassifier3::StatusOr<uint32_t> InMemoryIcingSearchEngine::DeleteByQuery(
   return doc_ids_to_delete.size();
 }
 
-libtextclassifier3::StatusOr<std::vector<DocumentProto>>
-InMemoryIcingSearchEngine::Search(const SearchSpecProto &search_spec) const {
-  ICING_ASSIGN_OR_RETURN(std::vector<DocumentId> matched_doc_ids,
-                         InternalSearch(search_spec));
-  std::vector<DocumentProto> result;
-  result.reserve(matched_doc_ids.size());
-  for (DocumentId doc_id : matched_doc_ids) {
-    result.push_back(documents_[doc_id].document);
+libtextclassifier3::StatusOr<std::vector<SearchResultProto::ResultProto>>
+InMemoryIcingSearchEngine::Search(
+    const MonkeyAbstractQueryNode* base_query_node,
+    const std::vector<JoinQuerySpec>& nested_queries) const {
+  ICING_ASSIGN_OR_RETURN(std::vector<NestedResultDocumentId> matched_results,
+                         InternalSearch(base_query_node, nested_queries));
+
+  return FetchNestedResultDocuments(matched_results);
+}
+
+std::vector<std::string> InMemoryIcingSearchEngine::GetAllJoinProperties()
+    const {
+  std::unordered_set<std::string> join_properties;
+  for (const auto& [_, property_config_map] : property_config_map_) {
+    for (const auto& [property_name, property_config] : property_config_map) {
+      if (property_config.joinable_config().value_type() !=
+          JoinableConfig::ValueType::NONE) {
+        join_properties.insert(property_name);
+      }
+    }
   }
-  return result;
+  return std::vector<std::string>(join_properties.begin(),
+                                  join_properties.end());
 }
 
 libtextclassifier3::StatusOr<DocumentId> InMemoryIcingSearchEngine::InternalGet(
     const std::string &name_space, const std::string &uri) const {
-  auto uris = namespace_uri_docid_map.find(name_space);
-  if (uris != namespace_uri_docid_map.end()) {
+  auto uris = namespace_uri_docid_map_.find(name_space);
+  if (uris != namespace_uri_docid_map_.end()) {
     auto doc = uris->second.find(uri);
     if (doc != uris->second.end()) {
       return doc->second;
@@ -405,18 +387,150 @@ libtextclassifier3::StatusOr<DocumentId> InMemoryIcingSearchEngine::InternalGet(
       " is not found by InMemoryIcingSearchEngine::InternalGet."));
 }
 
-libtextclassifier3::StatusOr<std::vector<DocumentId>>
+libtextclassifier3::StatusOr<
+    std::vector<InMemoryIcingSearchEngine::NestedResultDocumentId>>
 InMemoryIcingSearchEngine::InternalSearch(
-    const SearchSpecProto &search_spec) const {
-  std::vector<DocumentId> matched_doc_ids;
-  for (DocumentId doc_id : existing_doc_ids_) {
+    const MonkeyAbstractQueryNode* base_query_node,
+    const std::vector<JoinQuerySpec>& nested_queries) const {
+  // Step 1: evaluate join search by all levels of queries in reverse order.
+  JoinedNestedResultDocumentIdMap curr_map;
+  for (auto itr = nested_queries.rbegin(); itr != nested_queries.rend();
+       ++itr) {
     ICING_ASSIGN_OR_RETURN(
-        bool match, DoesDocumentMatchQuery(documents_[doc_id], search_spec));
-    if (match) {
-      matched_doc_ids.push_back(doc_id);
+        curr_map, InternalSingleLevelJoinSearch(*itr, std::move(curr_map)));
+  }
+
+  // Step 2: finally, evaluate the top (1st) level search spec, and join with
+  //   the results from the lower levels (if any).
+  ICING_ASSIGN_OR_RETURN(std::vector<DocumentId> base_query_matched_doc_ids,
+                         base_query_node->EvaluateQuery(this));
+  std::vector<NestedResultDocumentId> matched_results;
+  for (DocumentId doc_id : base_query_matched_doc_ids) {
+    auto itr = curr_map.find(doc_id);
+    matched_results.push_back(NestedResultDocumentId{
+        .document_id = doc_id,
+        .nested_document_ids = itr == curr_map.end()
+                                   ? std::vector<NestedResultDocumentId>()
+                                   : std::move(itr->second)});
+  }
+  return matched_results;
+}
+
+libtextclassifier3::StatusOr<
+    InMemoryIcingSearchEngine::JoinedNestedResultDocumentIdMap>
+InMemoryIcingSearchEngine::InternalSingleLevelJoinSearch(
+    const JoinQuerySpec& join_query_spec,
+    JoinedNestedResultDocumentIdMap&& child_map) const {
+  // Evaluate the query and get all matched doc ids at the current level.
+  ICING_ASSIGN_OR_RETURN(std::vector<DocumentId> matched_doc_ids,
+                         join_query_spec.curr_query_node->EvaluateQuery(this));
+
+  // Join:
+  // - child_map contains doc id -> nested result ids of the LOWER (child)
+  //   level, obtained from the previous iteration.
+  // - matched_doc_ids are the result doc ids at the the current level.
+  // - From this level's perspective, the child_map's key (parent doc id) is the
+  //   result doc id at this level, so join matched_doc_ids with child_map's
+  //   key.
+  // - Since it is left join, only keep doc ids that are present in
+  //   matched_doc_ids and discard the key-value pairs in child_map whose keys
+  //   are not in matched_doc_ids.
+  // - Finally, read out the join property values from the current level's
+  //   document and group the results by the values. This will be used for the
+  //   next iteration (upper level).
+  JoinedNestedResultDocumentIdMap curr_map;
+  for (DocumentId matched_doc_id : matched_doc_ids) {
+    // Check if the target joinable property (specified by
+    // curr_join_prop_expr) of this document is joinable or not.
+    // If it is not joinable, then this document CANNOT be joined with the upper
+    // level, so skip it.
+    std::optional<PropertyJoinableInfo> property_joinable_info =
+        GetPropertyJoinableInfo(documents_[matched_doc_id].document.schema(),
+                                join_query_spec.curr_join_prop_expr);
+    if (property_joinable_info == std::nullopt ||
+        property_joinable_info->data_type !=
+            PropertyConfigProto::DataType::STRING ||
+        property_joinable_info->value_type == JoinableConfig::ValueType::NONE) {
+      // Skip non-joinable property.
+      continue;
+    }
+
+    auto itr = child_map.find(matched_doc_id);
+    NestedResultDocumentId nested_result_doc_id = {
+        .document_id = matched_doc_id,
+        .nested_document_ids = itr == child_map.end()
+                                   ? std::vector<NestedResultDocumentId>()
+                                   : std::move(itr->second)};
+
+    // Get all referenced (parent) doc qualified ids. This is the join
+    // relationship between the current level and the upper level.
+    const MonkeySection* joinable_property =
+        documents_[matched_doc_id].GetSectionByPath(
+            join_query_spec.curr_join_prop_expr);
+    if (joinable_property == nullptr) {
+      continue;
+    }
+
+    std::unordered_set<DocumentId> seen_ref_doc_ids;
+    for (std::string_view qualified_id_str : joinable_property->string_values) {
+      auto qualified_id_or = QualifiedId::Parse(qualified_id_str);
+      if (!qualified_id_or.ok()) {
+        // Skip invalid qualified id.
+        continue;
+      }
+      QualifiedId qualified_id = std::move(qualified_id_or).ValueOrDie();
+
+      auto ref_doc_id_or =
+          InternalGet(qualified_id.name_space(), qualified_id.uri());
+      if (ref_doc_id_or.ok() &&
+          seen_ref_doc_ids.find(ref_doc_id_or.ValueOrDie()) ==
+              seen_ref_doc_ids.end()) {
+        curr_map[ref_doc_id_or.ValueOrDie()].push_back(
+            nested_result_doc_id);  // Copy instead of move, given that now we
+                                    // support N-N join and nested_result_doc_id
+                                    // might be added to multiple parents.
+        seen_ref_doc_ids.insert(ref_doc_id_or.ValueOrDie());
+      }
     }
   }
-  return matched_doc_ids;
+  return curr_map;
+}
+
+std::vector<SearchResultProto::ResultProto>
+InMemoryIcingSearchEngine::FetchNestedResultDocuments(
+    const std::vector<NestedResultDocumentId>& nested_result_doc_ids) const {
+  std::vector<SearchResultProto::ResultProto> results;
+  results.reserve(nested_result_doc_ids.size());
+  for (const NestedResultDocumentId& nested_result_doc_id :
+       nested_result_doc_ids) {
+    SearchResultProto::ResultProto result;
+
+    // Parent document.
+    *result.mutable_document() =
+        documents_[nested_result_doc_id.document_id].document;
+
+    // Child documents.
+    std::vector<SearchResultProto::ResultProto> nested_results =
+        FetchNestedResultDocuments(nested_result_doc_id.nested_document_ids);
+    if (!nested_results.empty()) {
+      result.mutable_joined_results()->Add(nested_results.begin(),
+                                           nested_results.end());
+    }
+
+    results.push_back(std::move(result));
+  }
+  return results;
+}
+
+void InMemoryIcingSearchEngine::UnzipNestedResultDocumentIds(
+    const std::vector<NestedResultDocumentId>& nested_result_doc_ids,
+    std::unordered_set<DocumentId>& doc_ids_out) const {
+  for (const NestedResultDocumentId& nested_result_doc_id :
+       nested_result_doc_ids) {
+    doc_ids_out.insert(nested_result_doc_id.document_id);
+    UnzipNestedResultDocumentIds(nested_result_doc_id.nested_document_ids,
+                                 doc_ids_out);
+  }
 }
 
 }  // namespace lib
