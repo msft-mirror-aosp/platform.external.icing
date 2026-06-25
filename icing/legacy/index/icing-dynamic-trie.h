@@ -628,7 +628,9 @@ class IcingDynamicTrie : public IIcingStorage {
   //     it could traverse into a deleted subtree, or invalid memory addresses.
   //   - This also means storage_->empty() should be checked before calling this
   //     function with the root node.
-  void CollectStatsRecursive(const Node &node, Stats *stats,
+  // Note: Refactored from recursive to iterative to prevent stack overflow
+  // on deep tries.
+  void CollectStatsIterative(const Node& node, Stats* stats,
                              uint32_t depth = 0) const;
 
   // Helpers for Find and Insert.

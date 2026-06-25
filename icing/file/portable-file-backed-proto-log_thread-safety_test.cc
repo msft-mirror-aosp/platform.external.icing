@@ -35,7 +35,7 @@ using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::NotNull;
 
 class PortableFileBackedProtoLogThreadSafetyTest
-    : public ::testing::TestWithParam<bool> {
+    : public ::testing::Test {
  protected:
   void SetUp() override {
     file_path_ = GetTestTempDir() + "/proto_log_thread_safety";
@@ -48,7 +48,7 @@ class PortableFileBackedProtoLogThreadSafetyTest
   std::string file_path_;
 };
 
-TEST_P(PortableFileBackedProtoLogThreadSafetyTest, ConcurrentReadProto) {
+TEST_F(PortableFileBackedProtoLogThreadSafetyTest, ConcurrentReadProto) {
   // Write some documents to the log.
   ICING_ASSERT_OK_AND_ASSIGN(
       auto create_result,
@@ -61,9 +61,7 @@ TEST_P(PortableFileBackedProtoLogThreadSafetyTest, ConcurrentReadProto) {
                   DocumentProto>::kDefaultCompressionLevel,
               PortableFileBackedProtoLog<
                   DocumentProto>::kDefaultCompressionThresholdBytes,
-              /*compression_mem_level_in=*/1,
-              /*enable_new_header_format_in=*/true,
-              /*enable_reusable_decompression_buffer_in=*/GetParam())));
+              /*compression_mem_level_in=*/1)));
   std::unique_ptr<PortableFileBackedProtoLog<DocumentProto>> proto_log =
       std::move(create_result.proto_log);
   ASSERT_THAT(proto_log, NotNull());
@@ -107,9 +105,7 @@ TEST_P(PortableFileBackedProtoLogThreadSafetyTest, ConcurrentReadProto) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(PortableFileBackedProtoLogThreadSafetyTest,
-                         PortableFileBackedProtoLogThreadSafetyTest,
-                         testing::Values(true, false));
+
 
 }  // namespace
 }  // namespace lib

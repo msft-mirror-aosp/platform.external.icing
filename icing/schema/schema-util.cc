@@ -36,6 +36,7 @@
 #include "icing/feature-flags.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/schema/property-util.h"
 #include "icing/util/logging.h"
 #include "icing/util/sha256.h"
 #include "icing/util/status-macros.h"
@@ -103,6 +104,7 @@ bool AreEmbeddingIndexingConfigsEqual(
 bool ArePropertiesEqual(const PropertyConfigProto& old_property,
                         const PropertyConfigProto& new_property) {
   return old_property.property_name() == new_property.property_name() &&
+         old_property.description() == new_property.description() &&
          old_property.data_type() == new_property.data_type() &&
          old_property.schema_type() == new_property.schema_type() &&
          old_property.cardinality() == new_property.cardinality() &&
@@ -170,6 +172,174 @@ bool IsPropertyCompatible(const PropertyConfigProto& old_property,
   return IsDataTypeCompatible(old_property, new_property) &&
          IsSchemaTypeCompatible(old_property, new_property) &&
          IsCardinalityCompatible(old_property, new_property);
+}
+
+// Check account properties compatibility with full support for nested paths:
+// 1. Demoting: Changing an existing property from an account property to a
+//    regular property is COMPATIBLE.
+// 2. Promoting: Changing an existing regular property into an account
+//    property is INCOMPATIBLE.
+// 3. New property: Introducing a completely new property and defining it
+//    as an account property is COMPATIBLE.
+bool IsAccountPropertyIncompatible(
+    const SchemaTypeConfigProto& old_type_config,
+    const SchemaTypeConfigProto& new_type_config,
+    const SchemaUtil::TypeConfigMap& old_type_config_map) {
+  // Track all account properties that already existed in the older definition.
+  std::unordered_set<std::string_view> old_account_properties;
+  for (const auto& prop : old_type_config.account_properties()) {
+    old_account_properties.insert(prop);
+  }
+
+  // Iterate through each account property path declared in the new schema
+  // version.
+  for (std::string_view new_account_path :
+       new_type_config.account_properties()) {
+    // If the path was already an account property in the past, it remains fully
+    // compatible.
+    if (old_account_properties.count(new_account_path) > 0) {
+      continue;
+    }
+
+    // Trace down the path components inside the old schema to evaluate if this
+    // property chain is newly introduced or if it's an existing regular field
+    // being upgraded.
+    std::vector<std::string_view> path_segments =
+        property_util::SplitPropertyPathExpr(new_account_path);
+
+    const SchemaTypeConfigProto* current_old_type = &old_type_config;
+    bool property_existed_in_old_schema = true;
+
+    for (size_t i = 0; i < path_segments.size(); ++i) {
+      property_util::PropertyInfo prop_info =
+          property_util::ParsePropertyNameExpr(path_segments[i]);
+
+      const PropertyConfigProto* matched_old_prop = nullptr;
+      for (const auto& old_prop : current_old_type->properties()) {
+        if (old_prop.property_name() == prop_info.name) {
+          matched_old_prop = &old_prop;
+          break;
+        }
+      }
+
+      // If any node in the path is missing from the old schema layout, it
+      // counts as a brand-new property path addition, which is safe and
+      // compatible.
+      if (matched_old_prop == nullptr) {
+        property_existed_in_old_schema = false;
+        break;
+      }
+
+      // If there are more segments to explore, descend into the nested
+      // document.
+      if (i < path_segments.size() - 1) {
+        if (matched_old_prop->data_type() !=
+            PropertyConfigProto::DataType::DOCUMENT) {
+          property_existed_in_old_schema = false;
+          break;
+        }
+
+        auto old_lookup_it =
+            old_type_config_map.find(matched_old_prop->schema_type());
+        if (old_lookup_it == old_type_config_map.end()) {
+          property_existed_in_old_schema = false;
+          break;
+        }
+        current_old_type = &old_lookup_it->second;
+      }
+    }
+
+    // If the entire property path previously existed but lacked an account
+    // designation, it means a normal structural field was promoted. This breaks
+    // backfilling compatibility.
+    if (property_existed_in_old_schema) {
+      ICING_LOG(INFO) << absl_ports::StrCat(
+          "Property path '", old_type_config.schema_type(), ".",
+          new_account_path,
+          "' was promoted to an account property, which is incompatible.");
+      return true;  // Found an incompatibility.
+    }
+  }
+
+  return false;  // All account properties are compatible.
+}
+
+// Validates that all path expressions defined in 'account_properties' across
+// all schema types point to valid, existing properties within the schema
+// definition. This executes as a top-down verification phase after basic
+// property checks pass.
+libtextclassifier3::Status ValidateAllAccountProperties(
+    const SchemaProto& schema) {
+  // 1. Build a forward lookup map from schema_type name to its config proto.
+  // This allows O(1) random-access retrieval of any child type config during
+  // deep nested document path traversal, keeping overall complexity at O(N).
+  std::unordered_map<std::string_view, const SchemaTypeConfigProto*>
+      schema_type_lookup;
+  for (const auto& type_config : schema.types()) {
+    schema_type_lookup[type_config.schema_type()] = &type_config;
+  }
+
+  // 2. Iterate through every schema type defined in the master schema.
+  for (const auto& type_config : schema.types()) {
+    std::string_view schema_type(type_config.schema_type());
+
+    // 3. Process each account property path expression defined for the current
+    // type.
+    for (const auto& account_property : type_config.account_properties()) {
+      std::vector<std::string_view> path_segments =
+          property_util::SplitPropertyPathExpr(account_property);
+
+      const SchemaTypeConfigProto* current_type = &type_config;
+
+      // 4. Trace the path segments sequentially from top to bottom.
+      for (size_t i = 0; i < path_segments.size(); ++i) {
+        property_util::PropertyInfo prop_info =
+            property_util::ParsePropertyNameExpr(path_segments[i]);
+
+        const PropertyConfigProto* matched_prop = nullptr;
+        // Search for a matching property declaration inside the current tier's
+        // configuration.
+        for (const auto& prop : current_type->properties()) {
+          if (prop.property_name() == prop_info.name) {
+            matched_prop = &prop;
+            break;
+          }
+        }
+
+        if (matched_prop == nullptr) {
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Account property path '", account_property,
+              "' is invalid or does not exist in schema type '", schema_type,
+              "'"));
+        }
+
+        // 5. If this is an intermediate segment (not the leaf node), we must
+        // descend further.
+        if (i < path_segments.size() - 1) {
+          if (matched_prop->data_type() !=
+              PropertyConfigProto::DataType::DOCUMENT) {
+            return absl_ports::InvalidArgumentError(
+                absl_ports::StrCat("Account property path '", account_property,
+                                   "' is invalid because '", prop_info.name,
+                                   "' is not a DOCUMENT type"));
+          }
+
+          auto lookup_it = schema_type_lookup.find(matched_prop->schema_type());
+          if (lookup_it == schema_type_lookup.end()) {
+            return absl_ports::InvalidArgumentError(
+                absl_ports::StrCat("Account property path '", account_property,
+                                   "' references a non-existent schema type '",
+                                   matched_prop->schema_type(), "'"));
+          }
+
+          // Advance our structural pointer deeper into the child document
+          // definition for the next loop cycle.
+          current_type = lookup_it->second;
+        }
+      }
+    }
+  }
+  return libtextclassifier3::Status::OK;
 }
 
 void AddIncompatibleChangeToDelta(
@@ -1124,6 +1294,10 @@ libtextclassifier3::StatusOr<SchemaUtil::DependentMap> SchemaUtil::Validate(
   // Verify that every child type's property set has included all compatible
   // properties from parent types.
   ICING_RETURN_IF_ERROR(ValidateInheritedProperties(schema));
+
+  if (feature_flags.enable_account_property_incompatibility_check()) {
+    ICING_RETURN_IF_ERROR(ValidateAllAccountProperties(schema));
+  }
   return dependent_map;
 }
 
@@ -1661,6 +1835,13 @@ SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
           << old_type_config.schema_type()
           << "' has changed, required reconstructing joinable cache.";
       is_join_incompatible = true;
+    }
+
+    if (feature_flags.enable_account_property_incompatibility_check() &&
+        IsAccountPropertyIncompatible(old_type_config,
+                                      new_schema_type_and_config->second,
+                                      old_type_config_map)) {
+      is_incompatible = true;
     }
 
     if (is_incompatible) {

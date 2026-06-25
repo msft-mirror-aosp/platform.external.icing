@@ -148,6 +148,11 @@ class DocHitInfoIteratorEmbeddingV2
     bool is_ann;
   };
 
+  struct DelegateMatchInfo {
+    SectionIdMask section_id_mask = kSectionIdMaskNone;
+    bool is_matched = false;
+  };
+
   explicit DocHitInfoIteratorEmbeddingV2(
       std::vector<float> query_floats,
       SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
@@ -243,7 +248,7 @@ class DocHitInfoIteratorEmbeddingV2
 
   // Cached data from the embeddings index
   std::vector<HitWithScore> cached_hit_scores_;
-  std::vector<SectionIdMask> cached_section_id_masks_;
+  std::vector<DelegateMatchInfo> cached_delegate_matches_;
   int cached_hit_scores_idx_;
   bool no_more_hit_;
 

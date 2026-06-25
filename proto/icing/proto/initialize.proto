@@ -149,7 +149,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 56
+// Next tag: 57
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -428,10 +428,9 @@ message IcingSearchEngineOptions {
   optional bool enable_passing_filter_to_children = 41
       [deprecated = true, default = true];
 
-  // Whether to enable the new header format (refactor legacy format and
-  // introduce unsynced tail checksum) related changes in
-  // PortableFileBackedProtoLog.
-  optional bool enable_proto_log_new_header_format = 42;
+  // DEPRECATED: The flag is always treated as true.
+  optional bool enable_proto_log_new_header_format = 42
+      [deprecated = true, default = true];
 
   // Whether to enable the new embedding iterator DocHitInfoIteratorEmbeddingV2.
   // This new iterator optimizes the access order of the embedding data for
@@ -441,14 +440,17 @@ message IcingSearchEngineOptions {
   optional bool enable_embedding_iterator_v2 = 43
       [deprecated = true, default = true];
 
-  // Whether PortableFileBackedProtoLog should retain a decompression buffer
-  // that reads can reuse rather than allocating a new one for each read.
-  optional bool enable_reusable_decompression_buffer = 44;
+  // DEPRECATED: The flag is always treated as true.
+  optional bool enable_reusable_decompression_buffer = 44
+      [deprecated = true, default = true];
 
   // Whether to enable schema-type id optimization for setSchema. When enabled,
   // the type-ids of existing types will be preserved when possible, and there
   // will be no schema type-id reassignment for adding new types.
-  optional bool enable_schema_type_id_optimization = 45;
+  //
+  // DEPRECATED: The flag is always treated as true.
+  optional bool enable_schema_type_id_optimization = 45
+      [deprecated = true, default = true];
 
   // The number of shards to use for the embedding index. 1 means no sharding.
   optional uint32 embedding_index_num_shards = 46 [default = 1];
@@ -514,8 +516,8 @@ message IcingSearchEngineOptions {
   // deduped, and only one of the types will be stored with full property
   // definitions.
   //
-  // NOTE: Deduping will only take effect if enable_schema_type_id_optimization
-  // is also enabled.
+  // NOTE: Deduping will only take effect if schema type-id optimization
+  // is also enabled (which it is by default).
   optional bool enable_schema_definition_deduping = 53;
 
   // Whether to enable database stableness logging.
@@ -534,6 +536,18 @@ message IcingSearchEngineOptions {
   //
   // Note: This flag should ONLY be enabled in tests.
   optional bool enable_manual_persist_to_disk = 55;
+
+  // Whether to enable the account property incompatibility check.
+  //
+  // If set to true, Icing will check for the following incompatibility when
+  // updating the schema:
+  // - Changing an existing property from an account property to a regular
+  //   property is COMPATIBLE.
+  // - Changing an existing regular property into an account property is
+  //   INCOMPATIBLE.
+  // - Introducing a completely new property and defining it as an account
+  //   property is COMPATIBLE.
+  optional bool enable_account_property_incompatibility_check = 56;
 
   reserved 2, 20, 25;
 }
