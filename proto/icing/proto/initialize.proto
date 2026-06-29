@@ -149,7 +149,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 57
+// Next tag: 58
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -548,6 +548,14 @@ message IcingSearchEngineOptions {
   // - Introducing a completely new property and defining it as an account
   //   property is COMPATIBLE.
   optional bool enable_account_property_incompatibility_check = 56;
+
+  // Whether to release schema-store's cached proto instances after use.
+  //
+  // Once enabled, the schema-store will release its cached proto instances
+  // after Initialize() or SetSchema(). This saves memory, at the cost of
+  // slower subsequent calls to GetSchema() (which will need to reload from
+  // disk).
+  optional bool schema_store_release_cached_proto_after_use = 57;
 
   reserved 2, 20, 25;
 }

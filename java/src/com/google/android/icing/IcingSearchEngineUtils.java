@@ -46,7 +46,6 @@ import com.google.android.icing.proto.SuggestionResponse;
 import com.google.protobuf.ExtensionRegistryLite;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.MessageLite;
-import java.util.function.Function;
 
 /**
  * Contains utility methods for IcingSearchEngine to convert byte arrays to the corresponding
@@ -457,20 +456,24 @@ public final class IcingSearchEngineUtils {
     return builder.build();
   }
 
+  private interface StatusResponseFactory<B> {
+    B create(StatusProto status);
+  }
+
   @NonNull
   private static <B extends MessageLite.Builder> B getResponseProtoBuilderFromRawData(
       @Nullable byte[] result,
       @NonNull B builder,
-      @NonNull Function<StatusProto, B> createResponseWithStatus) {
+      @NonNull StatusResponseFactory<B> createResponseWithStatus) {
     if (result == null) {
-      return createResponseWithStatus.apply(
+      return createResponseWithStatus.create(
           StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL).build());
     }
 
     try {
       builder.mergeFrom(result, EXTENSION_REGISTRY_LITE);
     } catch (InvalidProtocolBufferException e) {
-      return createResponseWithStatus.apply(
+      return createResponseWithStatus.create(
           StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL).build());
     }
 

@@ -213,7 +213,9 @@ std::unique_ptr<MonkeyTermQueryNode> GenerateRandomTermNode(
   auto query_node = std::make_unique<MonkeyTermQueryNode>(
       term, /*is_prefix=*/false, /*is_verbatim=*/false,
       search_spec.term_match_type(),
-      /*document_namespaces=*/std::vector<std::string>(),
+      /*document_namespaces=*/
+      std::vector<std::string>(search_spec.namespace_filters().begin(),
+                               search_spec.namespace_filters().end()),
       /*document_schema_types=*/
       std::vector<std::string>(search_spec.schema_type_filters().begin(),
                                search_spec.schema_type_filters().end()),
@@ -261,7 +263,9 @@ std::unique_ptr<MonkeySemanticQueryNode> GenerateRandomSemanticNode(
       /*vector_index=*/vector_index, low, high, metric_type,
       search_spec.embedding_query_nprobe(), std::move(vector),
       /*property_restricts=*/std::move(property_restricts),
-      /*document_namespaces=*/std::vector<std::string>(),
+      /*document_namespaces=*/
+      std::vector<std::string>(search_spec.namespace_filters().begin(),
+                               search_spec.namespace_filters().end()),
       /*document_schema_types=*/
       std::vector<std::string>(search_spec.schema_type_filters().begin(),
                                search_spec.schema_type_filters().end()));
@@ -281,7 +285,9 @@ GenerateRandomPropertyDefinedNode(
   present_operators.is_property_defined_query = true;
   return std::make_unique<MonkeyPropertyDefinedQueryNode>(
       property_path,
-      /*document_namespaces=*/std::vector<std::string>(),
+      /*document_namespaces=*/
+      std::vector<std::string>(search_spec.namespace_filters().begin(),
+                               search_spec.namespace_filters().end()),
       /*document_schema_types=*/
       std::vector<std::string>(search_spec.schema_type_filters().begin(),
                                search_spec.schema_type_filters().end()));
@@ -310,7 +316,9 @@ std::unique_ptr<MonkeyAbstractLeafQueryNode> GenerateRandomNumericNode(
 
   auto query_node = std::make_unique<MonkeyNumericQueryNode>(
       property_path, comparator, value,
-      /*document_namespaces=*/std::vector<std::string>(),
+      /*document_namespaces=*/
+      std::vector<std::string>(search_spec.namespace_filters().begin(),
+                               search_spec.namespace_filters().end()),
       /*document_schema_types=*/
       std::vector<std::string>(search_spec.schema_type_filters().begin(),
                                search_spec.schema_type_filters().end()));
@@ -330,7 +338,9 @@ std::unique_ptr<MonkeyHasPropertyQueryNode> GenerateRandomHasPropertyQueryNode(
   present_operators.is_has_property_query = true;
   return std::make_unique<MonkeyHasPropertyQueryNode>(
       property_name,
-      /*document_namespaces=*/std::vector<std::string>(),
+      /*document_namespaces=*/
+      std::vector<std::string>(search_spec.namespace_filters().begin(),
+                               search_spec.namespace_filters().end()),
       /*document_schema_types=*/
       std::vector<std::string>(search_spec.schema_type_filters().begin(),
                                search_spec.schema_type_filters().end()));
@@ -359,7 +369,9 @@ GenerateRandomNotNode(MonkeyTestRandomEngine* random,
   present_operators.is_negation_query = true;
   return std::make_unique<MonkeyNotQueryNode>(
       std::move(child_node),
-      /*document_namespaces=*/std::vector<std::string>(),
+      /*document_namespaces=*/
+      std::vector<std::string>(search_spec.namespace_filters().begin(),
+                               search_spec.namespace_filters().end()),
       /*document_schema_types=*/
       std::vector<std::string>(search_spec.schema_type_filters().begin(),
                                search_spec.schema_type_filters().end()));
@@ -460,6 +472,20 @@ libtextclassifier3::StatusOr<MonkeyQueryPair> GenerateRandomMonkeyQueryPair(
   }
   search_spec.mutable_schema_type_filters()->Add(type_filters.begin(),
                                                  type_filters.end());
+
+  if (document_generator->num_namespaces() > 0) {
+    // %50 chance of getting one namespace filter
+    // %25 chance of getting two namespace filters
+    // %25 chance of getting no namespace filters
+    std::vector<std::string> namespace_filters;
+    for (int i = 0; i < 2; ++i) {
+      if (GetRandomBoolean(random)) {
+        namespace_filters.push_back(document_generator->GetNamespace());
+      }
+    }
+    search_spec.mutable_namespace_filters()->Add(namespace_filters.begin(),
+                                                 namespace_filters.end());
+  }
   if (GetRandomBoolean(random)) {
     search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
   } else {
@@ -1180,6 +1206,8 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
 
   icing_options.set_enable_schema_definition_deduping(true);
   icing_options.set_build_property_existence_metadata_hits(true);
+  icing_options.set_schema_store_release_cached_proto_after_use(
+      GetRandomBoolean(&random_));
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }
