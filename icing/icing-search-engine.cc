@@ -58,7 +58,6 @@
 #include "icing/join/document-dependency-processor.h"
 #include "icing/join/join-children-fetcher.h"
 #include "icing/join/join-processor.h"
-#include "icing/join/qualified-id-join-index-impl-v2.h"
 #include "icing/join/qualified-id-join-index-impl-v3.h"
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id-join-indexing-handler.h"
@@ -587,7 +586,8 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_skip_set_schema_type_equality_check(),
                      options_.enable_schema_definition_deduping(),
                      options_.enable_delete_propagation_from(),
-                     options_.enable_account_property_incompatibility_check()),
+                     options_.enable_account_property_incompatibility_check(),
+                     options_.schema_store_release_cached_proto_after_use()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -967,8 +967,14 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   normalizer_ = std::move(normalizer_or).ValueOrDie();
 
   libtextclassifier3::Status index_init_status;
-  if (absl_ports::IsNotFound(
-          schema_store_->GetFileBackedSchemaProto().status())) {
+  bool no_schema_found;
+  if (feature_flags_.schema_store_release_cached_proto_after_use()) {
+    no_schema_found = !schema_store_->HasSchemaSuccessfullySet();
+  } else {
+    no_schema_found = absl_ports::IsNotFound(
+        schema_store_->GetFileBackedSchemaProto().status());
+  }
+  if (no_schema_found) {
     // Case 1: schema not found.
     //
     // - The schema was either lost or never set before.
@@ -1783,7 +1789,8 @@ GetSchemaResultProto IcingSearchEngine::GetSchema() {
     return result_proto;
   }
 
-  if (!feature_flags_.enable_schema_definition_deduping()) {
+  if (!feature_flags_.enable_schema_definition_deduping() &&
+      !feature_flags_.schema_store_release_cached_proto_after_use()) {
     // When schema definition deduping is disabled, GetFileBackedSchemaProto
     // returns the full schema proto with all the properties.
     auto schema_or = schema_store_->GetFileBackedSchemaProto();
@@ -4403,15 +4410,21 @@ IcingSearchEngine::RestoreIndexIfNeeded() {
 }
 
 libtextclassifier3::StatusOr<bool> IcingSearchEngine::LostPreviousSchema() {
-  auto status_or = schema_store_->GetFileBackedSchemaProto();
-  if (status_or.ok()) {
-    // Found a schema.
-    return false;
-  }
+  if (feature_flags_.schema_store_release_cached_proto_after_use()) {
+    if (schema_store_->HasSchemaSuccessfullySet()) {
+      return false;
+    }
+  } else {
+    auto status_or = schema_store_->GetFileBackedSchemaProto();
+    if (status_or.ok()) {
+      // Found a schema.
+      return false;
+    }
 
-  if (!absl_ports::IsNotFound(status_or.status())) {
-    // Any other type of error
-    return status_or.status();
+    if (!absl_ports::IsNotFound(status_or.status())) {
+      // Any other type of error
+      return status_or.status();
+    }
   }
 
   // We know: We don't have a schema now.

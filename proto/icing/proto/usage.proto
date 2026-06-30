@@ -57,7 +57,7 @@ message UsageReport {
 }
 
 // Result of a call to IcingSearchEngine.ReportUsage
-// Next tag: 4
+// Next tag: 6
 message ReportUsageResultProto {
   // Status code can be one of:
   //   OK
@@ -73,4 +73,14 @@ message ReportUsageResultProto {
   // The start time of the binder transaction latency. This is used to measure
   // the latency of passing data from the VM via the binder.
   optional int64 vm_binder_transaction_latency_start_time_ms = 3;
+
+  // Size of the UsageReport request in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 request_bytes = 4;
+
+  // Size of the ReportUsageResultProto response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 5;
 }

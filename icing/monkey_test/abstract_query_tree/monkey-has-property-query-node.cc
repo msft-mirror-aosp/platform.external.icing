@@ -38,11 +38,21 @@ libtextclassifier3::StatusOr<bool>
 MonkeyHasPropertyQueryNode::DoesDocumentMatchQuery(
     const InMemoryIcingSearchEngine* engine,
     const MonkeyTokenizedDocument& document) const {
-  // A document has a property if it has a section with the given property path.
-  // MonkeySection is only created for properties with values.
+  // A document has a property if it has a section with the given property path
+  // and at least one non-empty value.
   for (const auto& section : document.sections) {
     if (section.path == property_path_) {
-      return true;
+      bool has_string_value = false;
+      for (const std::string& value : section.string_values) {
+        // Empty string ("") are not considered non-empty and thus we need
+        // to check if there are any non-empty string values.
+        if (!value.empty()) {
+          has_string_value = true;
+          break;
+        }
+      }
+      return has_string_value || !section.integer_values.empty() ||
+             !section.vector_values.empty();
     }
   }
   return false;
