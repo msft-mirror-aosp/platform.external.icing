@@ -50,7 +50,6 @@
 #include "icing/store/key-mapper.h"
 #include "icing/util/clock.h"
 #include "icing/util/crc32.h"
-#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -318,12 +317,32 @@ class SchemaStore {
   // only be used if you don't need the full schema property definitions in
   // SchemaTypeConfigProto.properties. Otherwise, use `GetFullSchemaProto()`.
   //
+  // DEPRECATED: Should not be called outside of SchemaStore::Initialize() when
+  // `schema_store_release_cached_proto_after_use` is enabled. Use other schema
+  // store methods to get information about the schema instead.
+  //
+  // TODO: b/90448633 - Make this method private after
+  // schema_store_release_cached_proto_after_use is fully rolled out.
+  //
   // Returns:
   //   - SchemaProto* if exists
   //   - INTERNAL_ERROR on any IO errors
   //   - NOT_FOUND_ERROR if a schema hasn't been set before
   libtextclassifier3::StatusOr<const SchemaProto*> GetFileBackedSchemaProto()
       const;
+
+  // Releases in-memory cached schema protos to manage memory footprint.
+  //
+  // - If schema_store_release_cached_proto_after_use() is true:
+  //   All cached schema protos (base and overlay) are released from memory.
+  // - Otherwise:
+  //   Only the inactive schema proto is released. Specifically, if an overlay
+  //   schema is present, the base schema is released from memory while the
+  //   overlay schema is retained.
+  //
+  // Callers should call this after calling GetFileBackedSchemaProto() post-
+  // initialization to ensure the reloaded proto is released from memory.
+  void ReleaseCachedSchemaFiles();
 
   // Retrieves the full schema proto, with full schema type config definitions
   // that contains all property definitions.
@@ -657,6 +676,10 @@ class SchemaStore {
     return it->second;
   }
 
+  // Returns true if the schema store has been successfully initialized with an
+  // existing schema.
+  bool HasSchemaSuccessfullySet() const { return has_schema_successfully_set_; }
+
  private:
   // Factory function to create a SchemaStore and set its schema. The created
   // instance does not take ownership of any input components and all pointers
@@ -810,18 +833,6 @@ class SchemaStore {
 
   // Returns the size of the schema proto in bytes.
   int64_t GetStoredSchemaProtoByteSize() const;
-
-  // Resets the schema_file_'s cached FileBackedProto instance if needed.
-  //
-  // This is the case if the overlay_schema_file_ is present.
-  void ResetSchemaFileIfNeeded() {
-    if (overlay_schema_file_ != nullptr) {
-      ICING_VLOG(2)
-          << "Freeing schema store's base schema file's "
-             "FileBackedProto instance since overlay_schema_file_ is present.";
-      schema_file_.ReleaseCachedSchemaFile();
-    }
-  }
 
   // Sets the schema for a database for the first time.
   //
@@ -978,29 +989,69 @@ class SchemaStore {
     explicit SchemaFileCache(const Filesystem* filesystem,
                              const std::string& schema_file_path)
         : filesystem_(filesystem), schema_file_path_(schema_file_path) {}
+
     // Returns a reference to the proto read from the schema FileBackedProto.
+    // The read proto is cached in memory for future reads. It is up to the
+    // caller to call ReleaseCachedSchemaFile() to and release the cache later
+    // if needed.
     //
     // NOTE: The caller does NOT get ownership of the object returned and
     // the returned object is only valid till a new version of the proto is
     // written to the file.
     //
-    // Returns NOT_FOUND if the file was empty or never written to.
-    // Returns INTERNAL_ERROR if an IO error or a corruption was encountered.
-    libtextclassifier3::StatusOr<const SchemaProto*> Read() {
-      return GetCachedSchemaFile().Read();
+    // Returns:
+    //   - SchemaProto on success.
+    //   - NOT_FOUND if the file was empty or never written to.
+    //   - INTERNAL_ERROR if an IO error or a corruption was encountered.
+    libtextclassifier3::StatusOr<const SchemaProto*> ReadAndCacheSchema() {
+      return GetAndCacheFileBackedSchemaProto().Read();
+    }
+
+    // Reads and returns the SchemaProto from disk without keeping it in the
+    // cache.
+    //
+    // If the schema file has already been cached in memory, this reuses the
+    // existing cache. Otherwise, it reads the schema from disk using a
+    // temporary file reader and returns it without updating the cache (so it
+    // will not be kept in memory).
+    //
+    // Returns:
+    //   - SchemaProto on success.
+    //   - NOT_FOUND if the file was empty or never written to.
+    //   - INTERNAL_ERROR if an IO error or a corruption was encountered.
+    libtextclassifier3::StatusOr<SchemaProto> ReadWithoutCaching() const {
+      if (schema_file_ != nullptr) {
+        // Reuse the existing cache if it's already in memory.
+        ICING_ASSIGN_OR_RETURN(const SchemaProto* proto, schema_file_->Read());
+        return *proto;
+      }
+      FileBackedProto<SchemaProto> temp_file_backed_proto(*filesystem_,
+                                                          schema_file_path_);
+      ICING_ASSIGN_OR_RETURN(const SchemaProto* proto,
+                             temp_file_backed_proto.Read());
+      return *proto;
     }
 
     // Writes the new schema_proto to schema_file_ and updates the cached
     // checksum.
     //
+    // - If cache_written_schema is true, the written schema remains cached in
+    //   memory, in which case the caller must call ReleaseCachedSchemaFile() to
+    //   release the cache later if needed.
+    // - Otherwise, it is released/cleared immediately.
+    //
     // Returns: INTERNAL_ERROR if any IO error is encountered.
-    libtextclassifier3::Status Write(
-        std::unique_ptr<SchemaProto> schema_proto) {
+    libtextclassifier3::Status Write(std::unique_ptr<SchemaProto> schema_proto,
+                                     bool cache_written_schema) {
       ICING_RETURN_IF_ERROR(
-          GetCachedSchemaFile().Write(std::move(schema_proto)));
+          GetAndCacheFileBackedSchemaProto().Write(std::move(schema_proto)));
       ICING_ASSIGN_OR_RETURN(Crc32 checksum,
-                             GetCachedSchemaFile().GetChecksum());
+                             GetAndCacheFileBackedSchemaProto().GetChecksum());
       checksum_ = std::make_unique<Crc32>(checksum);
+
+      if (!cache_written_schema) {
+        ReleaseCachedSchemaFile();
+      }
       return libtextclassifier3::Status::OK;
     }
 
@@ -1016,17 +1067,48 @@ class SchemaStore {
     // Releases the cached schema_file_ FileBackedProto instance.
     void ReleaseCachedSchemaFile() { schema_file_.reset(); }
 
+    // Returns true if the schema_file_ FileBackedProto instance is cached (i.e.
+    // already initialized and parsed from disk).
+    bool IsFileBackedProtoCached() const { return schema_file_ != nullptr; }
+
+    // Returns true if the schema file exists and has a non-zero size, false
+    // otherwise.
+    bool DoesSchemaFileExist() const {
+      int64_t file_size = filesystem_->GetFileSize(schema_file_path_.c_str());
+      if (file_size == Filesystem::kBadFileSize || file_size == 0) {
+        return false;
+      }
+      return true;
+    }
+
+    // Returns the checksum of the schema file. The checksum is cached in
+    // memory after the first read.
+    //
+    // Returns:
+    //   - Crc32 on success.
+    //   - INTERNAL_ERROR if an IO error or a corruption was encountered.
     libtextclassifier3::StatusOr<Crc32> GetChecksum() {
+      bool schema_already_cached = IsFileBackedProtoCached();
       if (checksum_ == nullptr) {
-        ICING_ASSIGN_OR_RETURN(Crc32 checksum,
-                               GetCachedSchemaFile().GetChecksum());
+        ICING_ASSIGN_OR_RETURN(
+            Crc32 checksum, GetAndCacheFileBackedSchemaProto().GetChecksum());
         checksum_ = std::make_unique<Crc32>(std::move(checksum));
+      }
+
+      if (!schema_already_cached) {
+        // Release the cached schema file if it was not cached before.
+        ReleaseCachedSchemaFile();
       }
       return *checksum_;
     }
 
    private:
-    FileBackedProto<SchemaProto>& GetCachedSchemaFile() {
+    // Returns a reference to the cached schema_file_ FileBackedProto instance.
+    //
+    // If the schema_file_ is not cached prior to this call, this method will
+    // cache it in memory.  It is up to the caller to call
+    // ReleaseCachedSchemaFile() to and release the cache later if needed.
+    FileBackedProto<SchemaProto>& GetAndCacheFileBackedSchemaProto() {
       if (schema_file_ == nullptr) {
         schema_file_ = std::make_unique<FileBackedProto<SchemaProto>>(
             *filesystem_, schema_file_path_);
@@ -1049,7 +1131,7 @@ class SchemaStore {
 
   // This schema holds the definition of any schema types that are not
   // compatible with older versions of Icing code.
-  std::unique_ptr<FileBackedProto<SchemaProto>> overlay_schema_file_;
+  std::unique_ptr<SchemaFileCache> overlay_schema_file_;
 
   // Maps schema types to a densely-assigned unique id.
   std::unique_ptr<KeyMapper<SchemaTypeId>> schema_type_mapper_;

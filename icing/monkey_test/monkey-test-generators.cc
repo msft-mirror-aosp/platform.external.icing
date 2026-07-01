@@ -95,7 +95,8 @@ bool IsJoinableProperty(const PropertyConfigProto& property) {
 
 void SetStringIndexingConfig(MonkeyTestRandomEngine* random,
                              PropertyConfigProto& property, bool indexable,
-                             bool joinable) {
+                             bool joinable,
+                             bool enable_join_delete_propagation) {
   property.clear_string_indexing_config();
   property.clear_joinable_config();
   if (indexable) {
@@ -111,6 +112,13 @@ void SetStringIndexingConfig(MonkeyTestRandomEngine* random,
   if (joinable) {
     JoinableConfig* joinable_config = property.mutable_joinable_config();
     joinable_config->set_value_type(JoinableConfig::ValueType::QUALIFIED_ID);
+
+    if (enable_join_delete_propagation && GetRandomBoolean(random)) {
+      // If delete propagation feature is enabled, then 50% chance of getting a
+      // joinable property with delete propagation.
+      joinable_config->set_delete_propagation_type(
+          JoinableConfig::DeletePropagationType::PROPAGATE_FROM);
+    }
   }
 }
 
@@ -180,8 +188,7 @@ MonkeySchemaGenerator::UpdateSchemaResult MonkeySchemaGenerator::UpdateSchema(
 
   // Updating about 1/3 of existing types.
   for (int i = 0; i < new_schema.types_size(); ++i) {
-    std::uniform_int_distribution<> dist(0, 2);
-    if (dist(*random_) == 0) {
+    if (GetRandomBooleanWithProbability(random_, 0.3333333333f)) {
       UpdateType(*new_schema.mutable_types(i), result);
     }
   }
@@ -238,14 +245,16 @@ PropertyConfigProto MonkeySchemaGenerator::GenerateProperty(
   //   joinable, then it has to be a string property.
   if (joinable) {
     prop.set_data_type(PropertyConfigProto::DataType::STRING);
-    SetStringIndexingConfig(random_, prop, indexable, joinable);
+    SetStringIndexingConfig(random_, prop, indexable, joinable,
+                            config_->enable_join_delete_propagation);
   } else {
     // 0=STRING, 1=VECTOR, 2=INT64
     std::uniform_int_distribution<> dist(0, 2);
     int data_type_choice = dist(*random_);
     if (data_type_choice == 0) {
       prop.set_data_type(PropertyConfigProto::DataType::STRING);
-      SetStringIndexingConfig(random_, prop, indexable, joinable);
+      SetStringIndexingConfig(random_, prop, indexable, joinable,
+                              config_->enable_join_delete_propagation);
     } else if (data_type_choice == 1) {
       prop.set_data_type(PropertyConfigProto::DataType::VECTOR);
       SetEmbeddingIndexingConfig(random_, prop, indexable);
@@ -285,34 +294,41 @@ void MonkeySchemaGenerator::UpdateProperty(
 
   bool old_indexable = IsIndexableProperty(property);
   bool new_indexable = GetRandomBoolean(random_);
-  bool old_joinable = IsJoinableProperty(property);
-  // 20% chance to flip joinable. Only works for string properties.
-  bool new_joinable = old_joinable;
-  if (config_->IsJoinEnabled() &&
-      GetRandomBooleanWithProbability(random_, 0.2f)) {
-    new_joinable = !old_joinable;
-  }
 
   bool index_incompatible = old_indexable != new_indexable;
-  bool join_incompatible = old_joinable != new_joinable;
+  bool join_incompatible = false;
 
   if (property.data_type() == PropertyConfigProto::DataType::STRING) {
     TermMatchType::Code old_term_match_type =
         property.string_indexing_config().term_match_type();
     JoinableConfig::ValueType::Code old_joinable_value_type =
         property.joinable_config().value_type();
+    JoinableConfig::DeletePropagationType::Code old_delete_propagation_type =
+        property.joinable_config().delete_propagation_type();
 
-    SetStringIndexingConfig(random_, property, new_indexable, new_joinable);
+    bool old_joinable = IsJoinableProperty(property);
+    // 20% chance to flip joinable. Only works for string properties.
+    bool new_joinable = old_joinable;
+    if (config_->IsJoinEnabled() &&
+        GetRandomBooleanWithProbability(random_, 0.2f)) {
+      new_joinable = !old_joinable;
+    }
+
+    SetStringIndexingConfig(random_, property, new_indexable, new_joinable,
+                            config_->enable_join_delete_propagation);
 
     TermMatchType::Code new_term_match_type =
         property.string_indexing_config().term_match_type();
     JoinableConfig::ValueType::Code new_joinable_value_type =
         property.joinable_config().value_type();
+    JoinableConfig::DeletePropagationType::Code new_delete_propagation_type =
+        property.joinable_config().delete_propagation_type();
 
     if (old_term_match_type != new_term_match_type) {
       index_incompatible = true;
     }
-    if (old_joinable_value_type != new_joinable_value_type) {
+    if (old_joinable_value_type != new_joinable_value_type ||
+        old_delete_propagation_type != new_delete_propagation_type) {
       join_incompatible = true;
     }
   } else if (property.data_type() == PropertyConfigProto::DataType::VECTOR) {
@@ -706,7 +722,19 @@ MonkeyTokenizedDocument MonkeyDocumentGenerator::GenerateDocument() {
                                   JoinableConfig::ValueType::QUALIFIED_ID) ||
                                  GetRandomBooleanWithProbability(random_, 0.3f);
       }
+
       if (generate_qualified_ids) {
+        // Note: GetQualifiedIds may return some non-existing qualified ids.
+        // - If delete propagation is enabled, these non-existing qualified ids
+        //   will be treated as unsatisfied dependencies and will cause
+        //   PutDocument to fail.
+        // - However, for testing purpose, we still need to generate some
+        //   non-existing qualified ids to test the dependency validation and
+        //   fail PutDocument correctly.
+        // - Therefore, we still call GetQualifiedIds to cover both existing and
+        //   non-existing qualified ids. But tuning the random space for
+        //   qualified id (document namespace and uri) is essential to control
+        //   delete propagation tests.
         prop_content = GetQualifiedIds(prop.cardinality());
       } else {
         prop_content = GetStringPropertyContent();
