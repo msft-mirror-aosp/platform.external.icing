@@ -393,7 +393,7 @@ message SnippetProto {
 }
 
 // Icing lib-supplied results from a search results.
-// Next tag: 9
+// Next tag: 11
 message SearchResultProto {
   // Status code can be one of:
   //   OK
@@ -468,6 +468,17 @@ message SearchResultProto {
   // The start time of the binder transaction latency. This is used to measure
   // the latency of passing data from the VM via the binder.
   optional int64 vm_binder_transaction_latency_start_time_ms = 8;
+
+  // Combined size of the SearchSpecProto, ScoringSpecProto, and ResultSpecProto
+  // requests in bytes, or size of the GetNextPageRequestProto request in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 request_bytes = 9;
+
+  // Size of the SearchResultProto response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 10;
 }
 
 // Next tag: 3
@@ -584,7 +595,7 @@ message NamespaceDocumentUriGroup {
   repeated string document_uris = 2;
 }
 
-// Next tag: 5
+// Next tag: 7
 message SuggestionResponse {
   message Suggestion {
     // The suggested query string for client to search for.
@@ -607,6 +618,16 @@ message SuggestionResponse {
   // The start time of the binder transaction latency. This is used to measure
   // the latency of passing data from the VM via the binder.
   optional int64 vm_binder_transaction_latency_start_time_ms = 4;
+
+  // Size of the SuggestionSpecProto request in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 request_bytes = 5;
+
+  // Size of the SuggestionResponse response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 6;
 }
 
 // Specification for a left outer join.
