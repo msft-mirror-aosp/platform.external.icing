@@ -21,27 +21,39 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/transform/icu/icu-normalizer.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/status-util.h"
 
 namespace icing {
 namespace lib {
 
 namespace normalizer_factory {
 
-// Creates an ICU-based  normalizer. max_term_byte_size enforces the max size of
-// text after normalization, text will be truncated if exceeds the max size.
+using ::icing::lib::status_util::TransformStatus;
+
+// Creates an ICU-based normalizer based on the provided options.
+//
+// @param options: The options for creating the normalizer.
+// @param icu_normalizer_creation_status: Optional output parameter that will be
+//        populated with the status of IcuNormalizer.
 //
 // Returns:
 //   A normalizer on success
-//   INVALID_ARGUMENT if max_term_byte_size <= 0
+//   INVALID_ARGUMENT_ERROR if options.max_term_byte_size <= 0
 //   INTERNAL_ERROR on errors
 libtextclassifier3::StatusOr<std::unique_ptr<Normalizer>> Create(
-    int max_term_byte_size) {
-  if (max_term_byte_size <= 0) {
+    const NormalizerOptions& options,
+    StatusProto* icu_normalizer_creation_status) {
+  if (options.max_term_byte_size <= 0) {
     return absl_ports::InvalidArgumentError(
         "max_term_byte_size must be greater than zero.");
   }
-  return IcuNormalizer::Create(max_term_byte_size);
+  auto icu_normalizer_or = IcuNormalizer::Create(options.max_term_byte_size);
+  if (icu_normalizer_creation_status != nullptr) {
+    TransformStatus(icu_normalizer_or.status(), icu_normalizer_creation_status);
+  }
+  return icu_normalizer_or;
 }
 
 }  // namespace normalizer_factory

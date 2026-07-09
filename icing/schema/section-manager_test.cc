@@ -14,10 +14,12 @@
 
 #include "icing/schema/section-manager.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/document-builder.h"
@@ -27,6 +29,8 @@
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-type-manager.h"
 #include "icing/schema/schema-util.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
 #include "icing/testing/common-matchers.h"
@@ -37,7 +41,9 @@ namespace lib {
 
 namespace {
 
+using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::ElementsAre;
+using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::Pointee;
 using ::testing::SizeIs;
@@ -48,6 +54,10 @@ static constexpr std::string_view kTypeEmail = "Email";
 static constexpr std::string_view kPropertyRecipientIds = "recipientIds";
 static constexpr std::string_view kPropertyRecipients = "recipients";
 static constexpr std::string_view kPropertySubject = "subject";
+static constexpr std::string_view kPropertySubjectEmbedding =
+    "subjectEmbedding";
+static constexpr std::string_view kPropertySubjectEmbeddingQuantized =
+    "subjectEmbeddingQuantized";
 static constexpr std::string_view kPropertyTimestamp = "timestamp";
 // non-indexable
 static constexpr std::string_view kPropertyAttachment = "attachment";
@@ -109,6 +119,23 @@ PropertyConfigProto CreateSubjectPropertyConfig() {
       .Build();
 }
 
+PropertyConfigProto CreateSubjectEmbeddingPropertyConfig() {
+  return PropertyConfigBuilder()
+      .SetName(kPropertySubjectEmbedding)
+      .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+      .SetCardinality(CARDINALITY_OPTIONAL)
+      .Build();
+}
+
+PropertyConfigProto CreateSubjectEmbeddingQuantizedPropertyConfig() {
+  return PropertyConfigBuilder()
+      .SetName(kPropertySubjectEmbeddingQuantized)
+      .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH,
+                         QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+      .SetCardinality(CARDINALITY_OPTIONAL)
+      .Build();
+}
+
 PropertyConfigProto CreateTimestampPropertyConfig() {
   return PropertyConfigBuilder()
       .SetName(kPropertyTimestamp)
@@ -145,6 +172,8 @@ SchemaTypeConfigProto CreateEmailTypeConfig() {
   return SchemaTypeConfigBuilder()
       .SetType(kTypeEmail)
       .AddProperty(CreateSubjectPropertyConfig())
+      .AddProperty(CreateSubjectEmbeddingPropertyConfig())
+      .AddProperty(CreateSubjectEmbeddingQuantizedPropertyConfig())
       .AddProperty(PropertyConfigBuilder()
                        .SetName(kPropertyText)
                        .SetDataTypeString(TERM_MATCH_UNKNOWN, TOKENIZER_NONE)
@@ -199,16 +228,18 @@ SchemaTypeConfigProto CreateGroupTypeConfig() {
 
 class SectionManagerTest : public ::testing::Test {
  protected:
+  SectionManagerTest()
+      : type_config_info_cache_(/*enable_schema_definition_deduping=*/true) {}
+
   void SetUp() override {
     test_dir_ = GetTestTempDir() + "/icing";
 
     auto email_type = CreateEmailTypeConfig();
     auto conversation_type = CreateConversationTypeConfig();
     auto group_type = CreateGroupTypeConfig();
-    type_config_map_.emplace(email_type.schema_type(), email_type);
-    type_config_map_.emplace(conversation_type.schema_type(),
-                             conversation_type);
-    type_config_map_.emplace(group_type.schema_type(), group_type);
+    type_config_info_cache_.AddTypeConfig(email_type);
+    type_config_info_cache_.AddTypeConfig(conversation_type);
+    type_config_info_cache_.AddTypeConfig(group_type);
 
     // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each
     // one 128KiB so the total DynamicTrieKeyMapper should get 384KiB
@@ -220,11 +251,21 @@ class SectionManagerTest : public ::testing::Test {
     ICING_ASSERT_OK(schema_type_mapper_->Put(kTypeConversation, 1));
     ICING_ASSERT_OK(schema_type_mapper_->Put(kTypeGroup, 2));
 
+    email_subject_embedding_ = PropertyProto::VectorProto();
+    email_subject_embedding_.add_values(1.0);
+    email_subject_embedding_.add_values(2.0);
+    email_subject_embedding_.add_values(3.0);
+    email_subject_embedding_.set_model_signature("my_model");
+
     email_document_ =
         DocumentBuilder()
             .SetKey("icing", "email/1")
             .SetSchema(std::string(kTypeEmail))
             .AddStringProperty(std::string(kPropertySubject), "the subject")
+            .AddVectorProperty(std::string(kPropertySubjectEmbedding),
+                               email_subject_embedding_)
+            .AddVectorProperty(std::string(kPropertySubjectEmbeddingQuantized),
+                               email_subject_embedding_)
             .AddStringProperty(std::string(kPropertyText), "the text")
             .AddBytesProperty(std::string(kPropertyAttachment),
                               "attachment bytes")
@@ -262,9 +303,10 @@ class SectionManagerTest : public ::testing::Test {
 
   Filesystem filesystem_;
   std::string test_dir_;
-  SchemaUtil::TypeConfigMap type_config_map_;
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache_;
   std::unique_ptr<KeyMapper<SchemaTypeId>> schema_type_mapper_;
 
+  PropertyProto::VectorProto email_subject_embedding_;
   DocumentProto email_document_;
   DocumentProto conversation_document_;
   DocumentProto group_document_;
@@ -274,7 +316,8 @@ TEST_F(SectionManagerTest, ExtractSections) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Extracts all sections from 'Email' document
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -308,18 +351,36 @@ TEST_F(SectionManagerTest, ExtractSections) {
   EXPECT_THAT(section_group.integer_sections[0].content, ElementsAre(1, 2, 3));
 
   EXPECT_THAT(section_group.integer_sections[1].metadata,
-              EqualsSectionMetadata(/*expected_id=*/3,
+              EqualsSectionMetadata(/*expected_id=*/5,
                                     /*expected_property_path=*/"timestamp",
                                     CreateTimestampPropertyConfig()));
   EXPECT_THAT(section_group.integer_sections[1].content,
               ElementsAre(kDefaultTimestamp));
+
+  // Vector sections
+  EXPECT_THAT(section_group.vector_sections, SizeIs(2));
+  EXPECT_THAT(
+      section_group.vector_sections[0].metadata,
+      EqualsSectionMetadata(/*expected_id=*/3,
+                            /*expected_property_path=*/"subjectEmbedding",
+                            CreateSubjectEmbeddingPropertyConfig()));
+  EXPECT_THAT(section_group.vector_sections[0].content,
+              ElementsAre(EqualsProto(email_subject_embedding_)));
+  EXPECT_THAT(section_group.vector_sections[1].metadata,
+              EqualsSectionMetadata(
+                  /*expected_id=*/4,
+                  /*expected_property_path=*/"subjectEmbeddingQuantized",
+                  CreateSubjectEmbeddingQuantizedPropertyConfig()));
+  EXPECT_THAT(section_group.vector_sections[1].content,
+              ElementsAre(EqualsProto(email_subject_embedding_)));
 }
 
 TEST_F(SectionManagerTest, ExtractSectionsNested) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Extracts all sections from 'Conversation' document
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -359,18 +420,38 @@ TEST_F(SectionManagerTest, ExtractSectionsNested) {
 
   EXPECT_THAT(
       section_group.integer_sections[1].metadata,
-      EqualsSectionMetadata(/*expected_id=*/3,
+      EqualsSectionMetadata(/*expected_id=*/5,
                             /*expected_property_path=*/"emails.timestamp",
                             CreateTimestampPropertyConfig()));
   EXPECT_THAT(section_group.integer_sections[1].content,
               ElementsAre(kDefaultTimestamp, kDefaultTimestamp));
+
+  // Vector sections
+  EXPECT_THAT(section_group.vector_sections, SizeIs(2));
+  EXPECT_THAT(section_group.vector_sections[0].metadata,
+              EqualsSectionMetadata(
+                  /*expected_id=*/3,
+                  /*expected_property_path=*/"emails.subjectEmbedding",
+                  CreateSubjectEmbeddingPropertyConfig()));
+  EXPECT_THAT(section_group.vector_sections[0].content,
+              ElementsAre(EqualsProto(email_subject_embedding_),
+                          EqualsProto(email_subject_embedding_)));
+  EXPECT_THAT(section_group.vector_sections[1].metadata,
+              EqualsSectionMetadata(
+                  /*expected_id=*/4,
+                  /*expected_property_path=*/"emails.subjectEmbeddingQuantized",
+                  CreateSubjectEmbeddingQuantizedPropertyConfig()));
+  EXPECT_THAT(section_group.vector_sections[1].content,
+              ElementsAre(EqualsProto(email_subject_embedding_),
+                          EqualsProto(email_subject_embedding_)));
 }
 
 TEST_F(SectionManagerTest, ExtractSectionsIndexableNestedPropertiesList) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Extracts all sections from 'Group' document
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -455,13 +536,16 @@ TEST_F(SectionManagerTest, GetSectionMetadata) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Email (section id -> section property path):
   //   0 -> recipientIds
   //   1 -> recipients
   //   2 -> subject
-  //   3 -> timestamp
+  //   3 -> subjectEmbedding
+  //   4 -> subjectEmbeddingQuantized
+  //   5 -> timestamp
   EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
                   /*schema_type_id=*/0, /*section_id=*/0),
               IsOkAndHolds(Pointee(EqualsSectionMetadata(
@@ -472,13 +556,37 @@ TEST_F(SectionManagerTest, GetSectionMetadata) {
               IsOkAndHolds(Pointee(EqualsSectionMetadata(
                   /*expected_id=*/1, /*expected_property_path=*/"recipients",
                   CreateRecipientsPropertyConfig()))));
+  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
+                  /*schema_type_id=*/0, /*section_id=*/2),
+              IsOkAndHolds(Pointee(EqualsSectionMetadata(
+                  /*expected_id=*/2, /*expected_property_path=*/"subject",
+                  CreateSubjectPropertyConfig()))));
+  EXPECT_THAT(
+      schema_type_manager->section_manager().GetSectionMetadata(
+          /*schema_type_id=*/0, /*section_id=*/3),
+      IsOkAndHolds(Pointee(EqualsSectionMetadata(
+          /*expected_id=*/3, /*expected_property_path=*/"subjectEmbedding",
+          CreateSubjectEmbeddingPropertyConfig()))));
+  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
+                  /*schema_type_id=*/0, /*section_id=*/4),
+              IsOkAndHolds(Pointee(EqualsSectionMetadata(
+                  /*expected_id=*/4,
+                  /*expected_property_path=*/"subjectEmbeddingQuantized",
+                  CreateSubjectEmbeddingQuantizedPropertyConfig()))));
+  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
+                  /*schema_type_id=*/0, /*section_id=*/5),
+              IsOkAndHolds(Pointee(EqualsSectionMetadata(
+                  /*expected_id=*/5, /*expected_property_path=*/"timestamp",
+                  CreateTimestampPropertyConfig()))));
 
   // Conversation (section id -> section property path):
   //   0 -> emails.recipientIds
   //   1 -> emails.recipients
   //   2 -> emails.subject
-  //   3 -> emails.timestamp
-  //   4 -> name
+  //   3 -> emails.subjectEmbedding
+  //   4 -> emails.subjectEmbeddingQuantized
+  //   5 -> emails.timestamp
+  //   6 -> name
   EXPECT_THAT(
       schema_type_manager->section_manager().GetSectionMetadata(
           /*schema_type_id=*/1, /*section_id=*/0),
@@ -497,16 +605,28 @@ TEST_F(SectionManagerTest, GetSectionMetadata) {
       IsOkAndHolds(Pointee(EqualsSectionMetadata(
           /*expected_id=*/2, /*expected_property_path=*/"emails.subject",
           CreateSubjectPropertyConfig()))));
-  EXPECT_THAT(
-      schema_type_manager->section_manager().GetSectionMetadata(
-          /*schema_type_id=*/1, /*section_id=*/3),
-      IsOkAndHolds(Pointee(EqualsSectionMetadata(
-          /*expected_id=*/3, /*expected_property_path=*/"emails.timestamp",
-          CreateTimestampPropertyConfig()))));
+  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
+                  /*schema_type_id=*/1, /*section_id=*/3),
+              IsOkAndHolds(Pointee(EqualsSectionMetadata(
+                  /*expected_id=*/3,
+                  /*expected_property_path=*/"emails.subjectEmbedding",
+                  CreateSubjectEmbeddingPropertyConfig()))));
   EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
                   /*schema_type_id=*/1, /*section_id=*/4),
               IsOkAndHolds(Pointee(EqualsSectionMetadata(
-                  /*expected_id=*/4, /*expected_property_path=*/"name",
+                  /*expected_id=*/4,
+                  /*expected_property_path=*/"emails.subjectEmbeddingQuantized",
+                  CreateSubjectEmbeddingQuantizedPropertyConfig()))));
+  EXPECT_THAT(
+      schema_type_manager->section_manager().GetSectionMetadata(
+          /*schema_type_id=*/1, /*section_id=*/5),
+      IsOkAndHolds(Pointee(EqualsSectionMetadata(
+          /*expected_id=*/5, /*expected_property_path=*/"emails.timestamp",
+          CreateTimestampPropertyConfig()))));
+  EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
+                  /*schema_type_id=*/1, /*section_id=*/6),
+              IsOkAndHolds(Pointee(EqualsSectionMetadata(
+                  /*expected_id=*/6, /*expected_property_path=*/"name",
                   CreateNamePropertyConfig()))));
 
   // Group (section id -> section property path):
@@ -594,8 +714,9 @@ TEST_F(SectionManagerTest, GetSectionMetadataInvalidSchemaTypeId) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
-  ASSERT_THAT(type_config_map_, SizeIs(3));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
+  ASSERT_THAT(type_config_info_cache_.size(), Eq(3));
 
   EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
                   /*schema_type_id=*/-1, /*section_id=*/0),
@@ -609,31 +730,36 @@ TEST_F(SectionManagerTest, GetSectionMetadataInvalidSectionId) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Email (section id -> section property path):
   //   0 -> recipientIds
   //   1 -> recipients
   //   2 -> subject
-  //   3 -> timestamp
+  //   3 -> subjectEmbedding
+  //   4 -> subjectEmbeddingQuantized
+  //   5 -> timestamp
   EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
                   /*schema_type_id=*/0, /*section_id=*/-1),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/0, /*section_id=*/4),
+                  /*schema_type_id=*/0, /*section_id=*/6),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 
   // Conversation (section id -> section property path):
   //   0 -> emails.recipientIds
   //   1 -> emails.recipients
   //   2 -> emails.subject
-  //   3 -> emails.timestamp
-  //   4 -> name
+  //   3 -> emails.subjectEmbedding
+  //   4 -> subjectEmbeddingQuantized
+  //   5 -> emails.timestamp
+  //   6 -> name
   EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
                   /*schema_type_id=*/1, /*section_id=*/-1),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
-                  /*schema_type_id=*/1, /*section_id=*/5),
+                  /*schema_type_id=*/1, /*section_id=*/7),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
@@ -699,10 +825,11 @@ TEST_F(SectionManagerTest,
       TOKENIZER_PLAIN);
 
   // Setup classes to create the section manager
-  SchemaUtil::TypeConfigMap type_config_map;
-  type_config_map.emplace(type_with_non_string_properties.schema_type(),
-                          type_with_non_string_properties);
-  type_config_map.emplace(empty_type.schema_type(), empty_type);
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  type_config_info_cache.AddTypeConfig(type_with_non_string_properties);
+  type_config_info_cache.AddTypeConfig(empty_type);
 
   // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each one
   // 128KiB so the total DynamicTrieKeyMapper should get 384KiB
@@ -720,7 +847,8 @@ TEST_F(SectionManagerTest,
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, schema_type_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache,
+                                schema_type_mapper.get()));
 
   // Create an empty document to be nested
   DocumentProto empty_document = DocumentBuilder()
@@ -800,10 +928,11 @@ TEST_F(SectionManagerTest,
       NUMERIC_MATCH_RANGE);
 
   // Setup classes to create the section manager
-  SchemaUtil::TypeConfigMap type_config_map;
-  type_config_map.emplace(type_with_non_integer_properties.schema_type(),
-                          type_with_non_integer_properties);
-  type_config_map.emplace(empty_type.schema_type(), empty_type);
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  type_config_info_cache.AddTypeConfig(type_with_non_integer_properties);
+  type_config_info_cache.AddTypeConfig(empty_type);
 
   // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each one
   // 128KiB so the total DynamicTrieKeyMapper should get 384KiB
@@ -821,7 +950,8 @@ TEST_F(SectionManagerTest,
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, schema_type_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache,
+                                schema_type_mapper.get()));
 
   // Create an empty document to be nested
   DocumentProto empty_document = DocumentBuilder()
@@ -901,9 +1031,11 @@ TEST_F(SectionManagerTest, AssignSectionsRecursivelyForDocumentFields) {
           .Build();
 
   // Setup classes to create the section manager
-  SchemaUtil::TypeConfigMap type_config_map;
-  type_config_map.emplace(type.schema_type(), type);
-  type_config_map.emplace(document_type.schema_type(), document_type);
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  type_config_info_cache.AddTypeConfig(type);
+  type_config_info_cache.AddTypeConfig(document_type);
 
   // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each one
   // 128KiB so the total DynamicTrieKeyMapper should get 384KiB
@@ -923,7 +1055,8 @@ TEST_F(SectionManagerTest, AssignSectionsRecursivelyForDocumentFields) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, schema_type_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache,
+                                schema_type_mapper.get()));
 
   // Extracts sections from 'Schema' document; there should be the 1 string
   // property and 1 integer property inside the document.
@@ -986,9 +1119,11 @@ TEST_F(SectionManagerTest, DontAssignSectionsRecursivelyForDocumentFields) {
           .Build();
 
   // Setup classes to create the section manager
-  SchemaUtil::TypeConfigMap type_config_map;
-  type_config_map.emplace(type.schema_type(), type);
-  type_config_map.emplace(document_type.schema_type(), document_type);
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  type_config_info_cache.AddTypeConfig(type);
+  type_config_info_cache.AddTypeConfig(document_type);
 
   // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each one
   // 128KiB so the total DynamicTrieKeyMapper should get 384KiB
@@ -1008,7 +1143,8 @@ TEST_F(SectionManagerTest, DontAssignSectionsRecursivelyForDocumentFields) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, schema_type_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache,
+                                schema_type_mapper.get()));
 
   // Extracts sections from 'Schema' document; there won't be any since we
   // didn't recurse into the document to see the inner string property

@@ -20,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -65,7 +66,7 @@ class IntegerIndex : public NumericIndex<int64_t> {
     DocumentId last_added_document_id;
     int32_t num_data_threshold_for_bucket_split;
 
-    Crc32 ComputeChecksum() const {
+    Crc32 GetChecksum() const {
       return Crc32(
           std::string_view(reinterpret_cast<const char*>(this), sizeof(Info)));
     }
@@ -122,8 +123,6 @@ class IntegerIndex : public NumericIndex<int64_t> {
 
   ~IntegerIndex() override;
 
-  // Returns an Editor instance for adding new records into integer index for a
-  // given property, DocumentId and SectionId. See Editor for more details.
   std::unique_ptr<typename NumericIndex<int64_t>::Editor> Edit(
       std::string_view property_path, DocumentId document_id,
       SectionId section_id) override {
@@ -132,46 +131,15 @@ class IntegerIndex : public NumericIndex<int64_t> {
                                     pre_mapping_fbv_);
   }
 
-  // Returns a DocHitInfoIterator for iterating through all docs which have the
-  // specified (integer) property contents in range [query_key_lower,
-  // query_key_upper].
-  // When iterating through all relevant doc hits, it:
-  // - Merges multiple SectionIds of doc hits with same DocumentId into a single
-  //   SectionIdMask and constructs DocHitInfo.
-  // - Returns DocHitInfo in descending DocumentId order.
-  //
-  // Returns:
-  //   - On success: a DocHitInfoIterator instance
-  //   - NOT_FOUND_ERROR if the given property_path doesn't exist
-  //   - Any IntegerIndexStorage errors
   libtextclassifier3::StatusOr<std::unique_ptr<DocHitInfoIterator>> GetIterator(
       std::string_view property_path, int64_t key_lower, int64_t key_upper,
       const DocumentStore& document_store, const SchemaStore& schema_store,
       int64_t current_time_ms) const override;
 
-  // Reduces internal file sizes by reclaiming space and ids of deleted
-  // documents. Integer index will convert all data (hits) to the new document
-  // ids and regenerate all index files. If all data in a property path are
-  // completely deleted, then the underlying storage will be discarded as well.
-  //
-  // - document_id_old_to_new: a map for converting old document id to new
-  //   document id.
-  // - new_last_added_document_id: will be used to update the last added
-  //                               document id in the integer index.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on IO error
   libtextclassifier3::Status Optimize(
       const std::vector<DocumentId>& document_id_old_to_new,
       DocumentId new_last_added_document_id) override;
 
-  // Clears all integer index data by discarding all existing storages, and set
-  // last_added_document_id to kInvalidDocumentId.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
   libtextclassifier3::Status Clear() override;
 
   DocumentId last_added_document_id() const override {
@@ -275,7 +243,7 @@ class IntegerIndex : public NumericIndex<int64_t> {
   //   - INTERNAL_ERROR if unable to successfully persist updated properties
   //     list in wildcard_property_storage_.
   libtextclassifier3::Status AddPropertyToWildcardStorage(
-      const std::string& property_path);
+      const std::string& new_property_path);
 
   // Transfers integer index data from the current integer index to
   // new_integer_index.
@@ -312,35 +280,21 @@ class IntegerIndex : public NumericIndex<int64_t> {
   libtextclassifier3::Status TransferWildcardStorage(
       IntegerIndex* new_integer_index) const;
 
-  // Flushes contents of all storages to underlying files.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistStoragesToDisk(bool force) override;
+  libtextclassifier3::Status PersistStoragesToDisk() override;
 
-  // Flushes contents of metadata file.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status PersistMetadataToDisk(bool force) override;
+  libtextclassifier3::Status PersistMetadataToDisk() override;
 
-  // Computes and returns Info checksum.
-  //
-  // Returns:
-  //   - Crc of the Info on success
-  libtextclassifier3::StatusOr<Crc32> ComputeInfoChecksum(bool force) override;
+  libtextclassifier3::Status WriteMetadata() override {
+    // IntegerIndex::Header is mmapped. Therefore, writes occur when the
+    // metadata is modified. So just return OK.
+    return libtextclassifier3::Status::OK;
+  }
 
-  // Computes and returns all storages checksum. Checksums of (storage_crc,
-  // property_path) for all existing property paths will be combined together by
-  // XOR.
-  //
-  // Returns:
-  //   - Crc of all storages on success
-  //   - INTERNAL_ERROR if any data inconsistency
-  libtextclassifier3::StatusOr<Crc32> ComputeStoragesChecksum(
-      bool force) override;
+  libtextclassifier3::StatusOr<Crc32> UpdateStoragesChecksum() override;
+
+  libtextclassifier3::StatusOr<Crc32> GetInfoChecksum() const override;
+
+  libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum() const override;
 
   Crcs& crcs() override {
     return *reinterpret_cast<Crcs*>(metadata_mmapped_file_->mutable_region() +
@@ -363,10 +317,11 @@ class IntegerIndex : public NumericIndex<int64_t> {
   }
 
   void SetInfoDirty() { is_info_dirty_ = true; }
-  // When storage is dirty, we have to set info dirty as well. So just expose
-  // SetDirty to set both.
+
+  // When the storage is dirty, then the checksum in the info is invalid and
+  // must be recalculated. Therefore, also mark the info as dirty.
   void SetDirty() {
-    is_info_dirty_ = true;
+    SetInfoDirty();
     is_storage_dirty_ = true;
   }
 
@@ -391,6 +346,10 @@ class IntegerIndex : public NumericIndex<int64_t> {
 
   // The index storage that is used once we have already created
   // kMaxPropertyStorages in property_to_storage_map.
+  //
+  // Note: this instance can be nullptr if we have not yet reached
+  //   kMaxPropertyStorages. In this case, wildcard_properties_set_ MUST be
+  //   empty.
   std::unique_ptr<icing::lib::IntegerIndexStorage> wildcard_index_storage_;
 
   int32_t num_data_threshold_for_bucket_split_;

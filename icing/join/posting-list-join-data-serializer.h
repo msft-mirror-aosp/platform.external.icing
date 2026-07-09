@@ -33,7 +33,7 @@ namespace icing {
 namespace lib {
 
 // A serializer class to serialize JoinDataType to PostingListUsed. Usually
-// JoinDataType is DocumentIdToJoinInfo<NamespaceFingerprintIdentifier>,
+// JoinDataType is DocumentIdToJoinInfo<NamespaceIdFingerprint>,
 // DocumentIdToJoinInfo<TermId>, or DocumentIdToJoinInfo<int64_t>.
 //
 // REQUIRES:

@@ -17,7 +17,9 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -29,10 +31,12 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/mutex.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/mock-filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/portable/equals-proto.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
@@ -50,14 +54,17 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
+#include "icing/util/document-util.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -76,17 +83,18 @@ using ::testing::Return;
 using ::testing::SizeIs;
 using EntryIdMap = std::unordered_map<int32_t, int>;
 
-// Mock the behavior of GroupResultLimiter::ShouldBeRemoved.
+// Mock the behavior of GroupResultLimiter::GetGroupResultLimitsIndex: get
+// -1 to avoid excluding documents.
 class MockGroupResultLimiter : public GroupResultLimiterV2 {
  public:
   MockGroupResultLimiter() : GroupResultLimiterV2() {
-    ON_CALL(*this, ShouldBeRemoved).WillByDefault(Return(false));
+    ON_CALL(*this, GetGroupResultLimitsIndex).WillByDefault(Return(-1));
   }
 
-  MOCK_METHOD(bool, ShouldBeRemoved,
+  MOCK_METHOD(std::optional<int>, GetGroupResultLimitsIndex,
               (const ScoredDocumentHit&, const EntryIdMap&,
-               const DocumentStore&, std::vector<int>&,
-               ResultSpecProto::ResultGroupingType, int64_t),
+               const DocumentStore&, ResultSpecProto::ResultGroupingType,
+               int64_t),
               (const, override));
 };
 
@@ -97,10 +105,12 @@ class ResultRetrieverV2Test : public ::testing::Test {
   }
 
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
     language_segmenter_factory::SegmenterOptions options(ULOC_US);
@@ -109,10 +119,13 @@ class ResultRetrieverV2Test : public ::testing::Test {
         language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, test_dir_, &fake_clock_));
-    ICING_ASSERT_OK_AND_ASSIGN(normalizer_, normalizer_factory::Create(
-                                                /*max_term_byte_size=*/10000));
+        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+                                           &fake_clock_, feature_flags_.get()));
+
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
 
     SchemaProto schema =
         SchemaBuilder()
@@ -149,8 +162,7 @@ class ResultRetrieverV2Test : public ::testing::Test {
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ASSERT_THAT(schema_store_->SetSchema(
-                    schema, /*ignore_errors_and_delete_documents=*/false,
-                    /*allow_circular_schema_definitions=*/false),
+                    schema, /*ignore_errors_and_delete_documents=*/false),
                 IsOk());
 
     num_total_hits_ = 0;
@@ -179,6 +191,7 @@ class ResultRetrieverV2Test : public ::testing::Test {
     return kInvalidSectionId;
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   const Filesystem filesystem_;
   const std::string test_dir_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
@@ -216,40 +229,57 @@ ResultSpecProto CreateResultSpec(
 
 libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
     const Filesystem* filesystem, const std::string& base_dir,
-    const Clock* clock, const SchemaStore* schema_store) {
+    const Clock* clock, const SchemaStore* schema_store,
+    const FeatureFlags& feature_flags) {
   return DocumentStore::Create(
-      filesystem, base_dir, clock, schema_store,
+      filesystem, base_dir, clock, schema_store, &feature_flags,
       /*force_recovery_and_revalidate_documents=*/false,
-      /*namespace_id_fingerprint=*/false, /*pre_mapping_fbv=*/false,
-      /*use_persistent_hash_map=*/false,
-      PortableFileBackedProtoLog<DocumentWrapper>::kDeflateCompressionLevel,
+      /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
+      PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
+      PortableFileBackedProtoLog<
+          DocumentWrapper>::kDefaultCompressionThresholdBytes,
+      protobuf_ports::kDefaultMemLevel,
       /*initialize_stats=*/nullptr);
 }
 
 TEST_F(ResultRetrieverV2Test, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(
-      ResultRetrieverV2::Create(/*doc_store=*/nullptr, schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()),
+      ResultRetrieverV2::Create(
+          /*doc_store=*/nullptr, schema_store_.get(), language_segmenter_.get(),
+          normalizer_.get(), feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
   EXPECT_THAT(
       ResultRetrieverV2::Create(doc_store.get(), /*schema_store=*/nullptr,
-                                language_segmenter_.get(), normalizer_.get()),
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                /*language_segmenter=*/nullptr,
+                                normalizer_.get(), feature_flags_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                language_segmenter_.get(),
+                                /*normalizer=*/nullptr, feature_flags_.get()),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get(),
+                                /*feature_flags=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                        /*language_segmenter=*/nullptr,
-                                        normalizer_.get()),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
                                         language_segmenter_.get(),
-                                        /*normalizer=*/nullptr),
+                                        normalizer_.get(), feature_flags_.get(),
+                                        /*group_result_limiter=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
@@ -257,20 +287,35 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             doc_store->Put(CreateDocument(/*id=*/3)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id4,
-                             doc_store->Put(CreateDocument(/*id=*/4)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id5,
-                             doc_store->Put(CreateDocument(/*id=*/5)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
+  DocumentId document_id3 = put_result3.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
+  DocumentId document_id4 = put_result4.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
+  DocumentId document_id5 = put_result5.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
                                             GetSectionId("Email", "body")};
@@ -284,7 +329,8 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = CreateDocument(/*id=*/1);
@@ -312,7 +358,8 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
 
   // First page, 2 results
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result1.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
   // num_results_with_snippets is 0 when there is no snippet.
@@ -324,7 +371,8 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
 
   // Second page, 2 results
   auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result2.results,
               ElementsAre(EqualsProto(result3), EqualsProto(result4)));
   // num_results_with_snippets is 0 when there is no snippet.
@@ -336,7 +384,8 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
 
   // Third page, 1 result
   auto [page_result3, has_more_results3] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result3.results, ElementsAre(EqualsProto(result5)));
   // num_results_with_snippets is 0 when there is no snippet.
   EXPECT_THAT(page_result3.num_results_with_snippets, Eq(0));
@@ -350,14 +399,20 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   DocumentId invalid_document_id = -1;
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
@@ -371,6 +426,7 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get(),
                                 std::make_unique<MockGroupResultLimiter>()));
 
   SearchResultProto::ResultProto result1;
@@ -390,8 +446,10 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
       *doc_store);
   PageResult page_result1 =
       result_retriever
-          ->RetrieveNextPage(result_state1,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state1,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   EXPECT_THAT(page_result1.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
@@ -411,8 +469,10 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
       *doc_store);
   PageResult page_result2 =
       result_retriever
-          ->RetrieveNextPage(result_state2,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state2,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   EXPECT_THAT(page_result2.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
@@ -423,7 +483,7 @@ TEST_F(ResultRetrieverV2Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -436,8 +496,10 @@ TEST_F(ResultRetrieverV2Test,
           .AddStringProperty("name", "Joe Fox")
           .AddStringProperty("emailAddress", "ny152@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId person_document_id1,
-                             doc_store->Put(person_document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(document_util::CreateDocumentWrapper(person_document1)));
+  DocumentId person_document_id1 = put_result1.new_document_id;
 
   DocumentProto person_document2 =
       DocumentBuilder()
@@ -447,8 +509,10 @@ TEST_F(ResultRetrieverV2Test,
           .AddStringProperty("name", "Meg Ryan")
           .AddStringProperty("emailAddress", "shopgirl@aol.com")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId person_document_id2,
-                             doc_store->Put(person_document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(document_util::CreateDocumentWrapper(person_document2)));
+  DocumentId person_document_id2 = put_result2.new_document_id;
 
   // 2. Add 4 Email documents
   DocumentProto email_document1 = DocumentBuilder()
@@ -458,8 +522,10 @@ TEST_F(ResultRetrieverV2Test,
                                       .AddStringProperty("name", "Test 1")
                                       .AddStringProperty("body", "Test 1")
                                       .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id1,
-                             doc_store->Put(email_document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result1,
+      doc_store->Put(document_util::CreateDocumentWrapper(email_document1)));
+  DocumentId email_document_id1 = put_result1.new_document_id;
 
   DocumentProto email_document2 = DocumentBuilder()
                                       .SetKey("namespace", "Email/2")
@@ -468,8 +534,10 @@ TEST_F(ResultRetrieverV2Test,
                                       .AddStringProperty("name", "Test 2")
                                       .AddStringProperty("body", "Test 2")
                                       .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id2,
-                             doc_store->Put(email_document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      put_result2,
+      doc_store->Put(document_util::CreateDocumentWrapper(email_document2)));
+  DocumentId email_document_id2 = put_result2.new_document_id;
 
   DocumentProto email_document3 = DocumentBuilder()
                                       .SetKey("namespace", "Email/3")
@@ -478,8 +546,10 @@ TEST_F(ResultRetrieverV2Test,
                                       .AddStringProperty("name", "Test 3")
                                       .AddStringProperty("body", "Test 3")
                                       .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id3,
-                             doc_store->Put(email_document3));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      doc_store->Put(document_util::CreateDocumentWrapper(email_document3)));
+  DocumentId email_document_id3 = put_result3.new_document_id;
 
   DocumentProto email_document4 = DocumentBuilder()
                                       .SetKey("namespace", "Email/4")
@@ -488,8 +558,10 @@ TEST_F(ResultRetrieverV2Test,
                                       .AddStringProperty("name", "Test 4")
                                       .AddStringProperty("body", "Test 4")
                                       .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId email_document_id4,
-                             doc_store->Put(email_document4));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      doc_store->Put(document_util::CreateDocumentWrapper(email_document4)));
+  DocumentId email_document_id4 = put_result4.new_document_id;
 
   // 3. Setup the joined scored results.
   std::vector<SectionId> person_hit_section_ids = {
@@ -536,7 +608,8 @@ TEST_F(ResultRetrieverV2Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
   ResultStateV2 result_state(
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<JoinedScoredDocumentHit>>(
@@ -564,7 +637,8 @@ TEST_F(ResultRetrieverV2Test,
   child3->set_score(3);
 
   auto [page_result, has_more_results] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result.results,
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
   // No more results.
@@ -581,14 +655,20 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&mock_filesystem, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
                                             GetSectionId("Email", "body")};
@@ -601,6 +681,7 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get(),
                                 std::make_unique<MockGroupResultLimiter>()));
 
   SearchResultProto::ResultProto result1;
@@ -617,8 +698,10 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
       *doc_store);
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   // We mocked mock_filesystem to return an internal error when retrieving doc2,
   // so doc2 should be skipped and doc1 should still be returned.
@@ -629,20 +712,35 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             doc_store->Put(CreateDocument(/*id=*/3)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id4,
-                             doc_store->Put(CreateDocument(/*id=*/4)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id5,
-                             doc_store->Put(CreateDocument(/*id=*/5)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
+  DocumentId document_id3 = put_result3.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
+  DocumentId document_id4 = put_result4.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
+  DocumentId document_id5 = put_result5.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
                                             GetSectionId("Email", "body")};
@@ -656,7 +754,8 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   ResultStateV2 result_state(
       std::make_unique<
@@ -670,8 +769,10 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
   // First page, 2 results
   PageResult page_result1 =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result1.results, SizeIs(2));
   {
@@ -687,8 +788,10 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
   // Second page, 2 results
   PageResult page_result2 =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result2.results, SizeIs(2));
   {
@@ -704,8 +807,10 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
   // Third page, 1 result
   PageResult page_result3 =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result3.results, SizeIs(1));
   {
@@ -723,7 +828,7 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
@@ -731,10 +836,16 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits1 = {
       {document_id1, hit_section_id_mask, /*score=*/0},
       {document_id2, hit_section_id_mask, /*score=*/0}};
@@ -754,12 +865,21 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
     ASSERT_THAT(num_total_hits_, Eq(2));
   }
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id3,
-                             doc_store->Put(CreateDocument(/*id=*/3)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id4,
-                             doc_store->Put(CreateDocument(/*id=*/4)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id5,
-                             doc_store->Put(CreateDocument(/*id=*/5)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
+  DocumentId document_id3 = put_result3.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
+  DocumentId document_id4 = put_result4.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
+  DocumentId document_id5 = put_result5.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits2 = {
       {document_id3, hit_section_id_mask, /*score=*/0},
       {document_id4, hit_section_id_mask, /*score=*/0},
@@ -783,14 +903,17 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   // Should get 1 doc in the first page of result_state1, and num_total_hits
   // should be decremented by 1.
   PageResult page_result1 =
       result_retriever
-          ->RetrieveNextPage(*result_state1,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              *result_state1,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result1.results, SizeIs(1));
   EXPECT_THAT(num_total_hits_, Eq(4));
@@ -799,8 +922,10 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   // should be decremented by 2.
   PageResult page_result2 =
       result_retriever
-          ->RetrieveNextPage(*result_state2,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              *result_state2,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result2.results, SizeIs(2));
   EXPECT_THAT(num_total_hits_, Eq(2));
@@ -810,8 +935,10 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   // by 1.
   PageResult page_result3 =
       result_retriever
-          ->RetrieveNextPage(*result_state2,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              *result_state2,
+              /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result3.results, SizeIs(1));
   EXPECT_THAT(num_total_hits_, Eq(1));
@@ -831,14 +958,20 @@ TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
                                             GetSectionId("Email", "body")};
@@ -849,7 +982,8 @@ TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = CreateDocument(/*id=*/1);
@@ -873,14 +1007,16 @@ TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   // num_total_bytes_per_page_threshold and ResultRetriever should terminate
   // early even though # of results is still below num_per_page.
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
   // Has more results.
   EXPECT_TRUE(has_more_results1);
 
   // Second page, result2.
   auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
   // No more results.
   EXPECT_FALSE(has_more_results2);
@@ -891,14 +1027,20 @@ TEST_F(ResultRetrieverV2Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
                                             GetSectionId("Email", "body")};
@@ -909,7 +1051,8 @@ TEST_F(ResultRetrieverV2Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = CreateDocument(/*id=*/1);
@@ -935,32 +1078,40 @@ TEST_F(ResultRetrieverV2Test,
   // First page. Should return single result1 even though its byte size exceeds
   // num_total_bytes_per_page_threshold.
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
   // Has more results.
   EXPECT_TRUE(has_more_results1);
 
   // Second page, result2.
   auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
   // No more results.
   EXPECT_FALSE(has_more_results2);
 }
 
 TEST_F(ResultRetrieverV2Test,
-       ShouldRetrieveNextResultWhenBelowNumTotalBytesPerPageThreshold) {
+       ShouldNotIncludeNextResultIfExceedingNumTotalBytesPerPageThreshold) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get()));
+                          schema_store_.get(), *feature_flags_));
   std::unique_ptr<DocumentStore> doc_store =
       std::move(create_result.document_store);
 
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id1,
-                             doc_store->Put(CreateDocument(/*id=*/1)));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentId document_id2,
-                             doc_store->Put(CreateDocument(/*id=*/2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
                                             GetSectionId("Email", "body")};
@@ -971,7 +1122,8 @@ TEST_F(ResultRetrieverV2Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get()));
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
 
   SearchResultProto::ResultProto result1;
   *result1.mutable_document() = CreateDocument(/*id=*/1);
@@ -980,6 +1132,8 @@ TEST_F(ResultRetrieverV2Test,
   *result2.mutable_document() = CreateDocument(/*id=*/2);
   result2.set_score(0);
 
+  // result1.ByteSizeLong() < threshold < result1.ByteSizeLong() +
+  //                                      result2.ByteSizeLong().
   int threshold = result1.ByteSizeLong() + 1;
   ASSERT_THAT(result1.ByteSizeLong() + result2.ByteSizeLong(), Gt(threshold));
 
@@ -996,14 +1150,103 @@ TEST_F(ResultRetrieverV2Test,
 
   // After retrieving result1, total bytes are still below the threshold and #
   // of results is still below num_per_page, so ResultRetriever should continue
-  // the retrieval process and thus include result2 into this page, even though
-  // finally total bytes of result1 + result2 exceed the threshold.
-  auto [page_result, has_more_results] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
-  EXPECT_THAT(page_result.results,
-              ElementsAre(EqualsProto(result1), EqualsProto(result2)));
+  // the retrieval process. But when serializing result2, the byte size exceeds
+  // the threshold, so result2 should not be included.
+  auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
+  // More results.
+  EXPECT_TRUE(has_more_results1);
+
+  // Second page. Even though result2 was evaluated in the previous round but
+  // excluded, it should not be popped from the ranker and thus should be
+  // included in the second page.
+  auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
   // No more results.
-  EXPECT_FALSE(has_more_results);
+  EXPECT_FALSE(has_more_results2);
+}
+
+TEST_F(ResultRetrieverV2Test,
+       ResultGroupingShouldDecrementOnlyWhenResultIsIncludedInThePage) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
+                          schema_store_.get(), *feature_flags_));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      doc_store->Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
+
+  std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
+                                            GetSectionId("Email", "body")};
+  SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
+  std::vector<ScoredDocumentHit> scored_document_hits = {
+      {document_id1, hit_section_id_mask, /*score=*/5},
+      {document_id2, hit_section_id_mask, /*score=*/0}};
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<ResultRetrieverV2> result_retriever,
+      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get()));
+
+  SearchResultProto::ResultProto result1;
+  *result1.mutable_document() = CreateDocument(/*id=*/1);
+  result1.set_score(5);
+  SearchResultProto::ResultProto result2;
+  *result2.mutable_document() = CreateDocument(/*id=*/2);
+  result2.set_score(0);
+
+  // Create a ResultSpec that limits namespace "icing" to 10 results and the
+  // total bytes per page to result1.ByteSizeLong() + 1. This will force the
+  // result retriever to move result2 to the next page.
+  ResultSpecProto result_spec =
+      CreateResultSpec(/*num_per_page=*/10, ResultSpecProto::NAMESPACE);
+  result_spec.set_num_total_bytes_per_page_threshold(result1.ByteSizeLong() +
+                                                     1);
+
+  ResultSpecProto::ResultGrouping* result_grouping =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping->add_entry_groupings();
+  result_grouping->set_max_results(2);
+  entry->set_namespace_("icing");
+
+  // Creates a ResultState with 2 ScoredDocumentHits.
+  ResultStateV2 result_state(
+      std::make_unique<
+          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+          std::move(scored_document_hits), /*is_descending=*/true),
+      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      result_spec, *doc_store);
+
+  // First page: result1 should be returned.
+  auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(page_result1.results, ElementsAre(EqualsProto(result1)));
+  // Has more results.
+  EXPECT_TRUE(has_more_results1);
+
+  // Second page: result2 should be returned.
+  auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
+  EXPECT_THAT(page_result2.results, ElementsAre(EqualsProto(result2)));
+  // No more results.
+  EXPECT_FALSE(has_more_results2);
 }
 
 }  // namespace

@@ -17,6 +17,7 @@
 #include "icing/file/file-backed-vector.h"
 #include "icing/proto/usage.pb.h"
 #include "icing/store/document-id.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -213,8 +214,12 @@ libtextclassifier3::Status UsageStore::PersistToDisk() {
   return usage_score_cache_->PersistToDisk();
 }
 
-libtextclassifier3::StatusOr<Crc32> UsageStore::ComputeChecksum() {
-  return usage_score_cache_->ComputeChecksum();
+libtextclassifier3::StatusOr<Crc32> UsageStore::UpdateChecksum() {
+  return usage_score_cache_->UpdateChecksum();
+}
+
+Crc32 UsageStore::GetChecksum() const {
+  return usage_score_cache_->GetChecksum();
 }
 
 libtextclassifier3::StatusOr<int64_t> UsageStore::GetElementsFileSize() const {

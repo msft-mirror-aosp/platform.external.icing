@@ -15,15 +15,21 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TEST_UTIL_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_TEST_UTIL_H_
 
+#include <array>
 #include <cinttypes>
+#include <cstdint>
+#include <cstring>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/index/hit/doc-hit-info.h"
+#include "icing/index/hit/hit.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/schema/section.h"
@@ -61,6 +67,14 @@ class DocHitInfoTermFrequencyPair {
     return hit_term_frequency_[section_id];
   }
 
+  bool operator==(const DocHitInfoTermFrequencyPair& other) const {
+    if (!(doc_hit_info() == other.doc_hit_info())) {
+      return false;
+    }
+    return memcmp(&hit_term_frequency_, &other.hit_term_frequency_,
+                  kTotalNumSections) == 0;
+  }
+
  private:
   DocHitInfo doc_hit_info_;
   Hit::TermFrequencyArray hit_term_frequency_;
@@ -71,7 +85,7 @@ class DocHitInfoTermFrequencyPair {
 // will then proceed to return the doc_hit_infos in order as Advance's are
 // called. After all doc_hit_infos are returned, Advance will return a NotFound
 // error (also like normal DocHitInfoIterators).
-class DocHitInfoIteratorDummy : public DocHitInfoLeafIterator {
+class DocHitInfoIteratorDummy : public DocHitInfoIterator {
  public:
   DocHitInfoIteratorDummy() = default;
   explicit DocHitInfoIteratorDummy(
@@ -98,14 +112,17 @@ class DocHitInfoIteratorDummy : public DocHitInfoLeafIterator {
       return libtextclassifier3::Status::OK;
     }
 
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override {
     DocHitInfoIterator::TrimmedNode node = {nullptr, term_, term_start_index_,
                                             unnormalized_term_length_};
     return node;
+  }
+
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {};
   }
 
   // Imitates behavior of DocHitInfoIteratorTermMain/DocHitInfoIteratorTermLite

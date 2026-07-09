@@ -81,12 +81,20 @@ class DynamicTrieKeyMapper : public KeyMapper<T, Formatter> {
 
   libtextclassifier3::StatusOr<T> Get(std::string_view key) const override;
 
-  bool Delete(std::string_view key) override;
+  libtextclassifier3::Status Delete(std::string_view key) override;
 
   std::unique_ptr<typename KeyMapper<T, Formatter>::Iterator> GetIterator()
       const override;
 
-  int32_t num_keys() const override { return trie_.size(); }
+  int32_t num_keys() const override {
+    auto size_or = trie_.size();
+    if (!size_or.ok()) {
+      ICING_LOG(ERROR) << "Failed to get size of DynamicTrieKeyMapper: "
+                       << size_or.status().error_message();
+      return 0;
+    }
+    return static_cast<int32_t>(size_or.ValueOrDie());
+  }
 
   libtextclassifier3::Status PersistToDisk() override;
 
@@ -94,7 +102,9 @@ class DynamicTrieKeyMapper : public KeyMapper<T, Formatter> {
 
   libtextclassifier3::StatusOr<int64_t> GetElementsSize() const override;
 
-  libtextclassifier3::StatusOr<Crc32> ComputeChecksum() override;
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum() override;
+
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const override;
 
  private:
   class Iterator : public KeyMapper<T, Formatter>::Iterator {
@@ -112,10 +122,7 @@ class DynamicTrieKeyMapper : public KeyMapper<T, Formatter> {
       return itr_.Advance();
     }
 
-    std::string_view GetKey() const override {
-      const char* key = itr_.GetKey();
-      return std::string_view(key);
-    }
+    std::string_view GetKey() const override { return itr_.GetKey(); }
 
     T GetValue() const override {
       T value;
@@ -215,27 +222,19 @@ libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Initialize(
       sizeof(IcingDynamicTrie::Node) * options.max_nodes;
   options.value_size = sizeof(T);
 
-  if (!trie_.CreateIfNotExist(options)) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Failed to create DynamicTrieKeyMapper file: ", file_prefix_));
-  }
-  if (!trie_.Init()) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Failed to init DynamicTrieKeyMapper file: ", file_prefix_));
-  }
-  return libtextclassifier3::Status::OK;
+  ICING_RETURN_IF_ERROR(trie_.CreateIfNotExist(options));
+  return trie_.Init();
 }
 
 template <typename T, typename Formatter>
 libtextclassifier3::StatusOr<T> DynamicTrieKeyMapper<T, Formatter>::GetOrPut(
     std::string_view key, T next_value) {
-  std::string string_key(key);
   uint32_t value_index;
   libtextclassifier3::Status status =
-      trie_.Insert(string_key.c_str(), &next_value, &value_index,
+      trie_.Insert(key, &next_value, &value_index,
                    /*replace=*/false);
   if (!status.ok()) {
-    ICING_LOG(DBG) << "Unable to insert key " << string_key
+    ICING_LOG(DBG) << "Unable to insert key " << key
                    << " into DynamicTrieKeyMapper " << file_prefix_ << ".\n"
                    << status.error_message();
     return status;
@@ -243,8 +242,8 @@ libtextclassifier3::StatusOr<T> DynamicTrieKeyMapper<T, Formatter>::GetOrPut(
   // This memory address could be unaligned since we're just grabbing the value
   // from somewhere in the trie's suffix array. The suffix array is filled with
   // chars, so the address might not be aligned to T values.
-  const T* unaligned_value =
-      static_cast<const T*>(trie_.GetValueAtIndex(value_index));
+  ICING_ASSIGN_OR_RETURN(const void* unaligned_value,
+                         trie_.GetValueAtIndex(value_index));
 
   // memcpy the value to ensure that the returned value here is in a T-aligned
   // address
@@ -256,10 +255,9 @@ libtextclassifier3::StatusOr<T> DynamicTrieKeyMapper<T, Formatter>::GetOrPut(
 template <typename T, typename Formatter>
 libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Put(
     std::string_view key, T value) {
-  std::string string_key(key);
-  libtextclassifier3::Status status = trie_.Insert(string_key.c_str(), &value);
+  libtextclassifier3::Status status = trie_.Insert(key, &value);
   if (!status.ok()) {
-    ICING_LOG(DBG) << "Unable to insert key " << string_key
+    ICING_LOG(DBG) << "Unable to insert key " << key
                    << " into DynamicTrieKeyMapper " << file_prefix_ << ".\n"
                    << status.error_message();
     return status;
@@ -270,18 +268,18 @@ libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Put(
 template <typename T, typename Formatter>
 libtextclassifier3::StatusOr<T> DynamicTrieKeyMapper<T, Formatter>::Get(
     std::string_view key) const {
-  std::string string_key(key);
   T value;
-  if (!trie_.Find(string_key.c_str(), &value)) {
+  if (!trie_.Find(key, &value)) {
     return absl_ports::NotFoundError(
-        absl_ports::StrCat("Key not found ", Formatter()(string_key),
+        absl_ports::StrCat("Key not found ", Formatter()(key),
                            " in DynamicTrieKeyMapper ", file_prefix_, "."));
   }
   return value;
 }
 
 template <typename T, typename Formatter>
-bool DynamicTrieKeyMapper<T, Formatter>::Delete(std::string_view key) {
+libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Delete(
+    std::string_view key) {
   return trie_.Delete(key);
 }
 
@@ -293,12 +291,7 @@ DynamicTrieKeyMapper<T, Formatter>::GetIterator() const {
 
 template <typename T, typename Formatter>
 libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::PersistToDisk() {
-  if (!trie_.Sync()) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Failed to sync DynamicTrieKeyMapper file: ", file_prefix_));
-  }
-
-  return libtextclassifier3::Status::OK;
+  return trie_.Sync();
 }
 
 template <typename T, typename Formatter>
@@ -324,8 +317,14 @@ DynamicTrieKeyMapper<T, Formatter>::GetElementsSize() const {
 
 template <typename T, typename Formatter>
 libtextclassifier3::StatusOr<Crc32>
-DynamicTrieKeyMapper<T, Formatter>::ComputeChecksum() {
-  return Crc32(trie_.UpdateCrc());
+DynamicTrieKeyMapper<T, Formatter>::UpdateChecksum() {
+  return trie_.UpdateCrc();
+}
+
+template <typename T, typename Formatter>
+libtextclassifier3::StatusOr<Crc32>
+DynamicTrieKeyMapper<T, Formatter>::GetChecksum() const {
+  return trie_.GetCrc();
 }
 
 }  // namespace lib

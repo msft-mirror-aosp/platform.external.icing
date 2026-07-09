@@ -13,25 +13,43 @@
 // limitations under the License.
 #include "icing/index/main/main-index.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <memory>
 #include <string>
-#include <unordered_set>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/feature-flags.h"
 #include "icing/file/destructible-directory.h"
+#include "icing/file/filesystem.h"
 #include "icing/file/posting_list/flash-index-storage.h"
+#include "icing/file/posting_list/posting-list-accessor.h"
 #include "icing/file/posting_list/posting-list-common.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
+#include "icing/index/hit/hit.h"
+#include "icing/index/lite/term-id-hit-pair.h"
+#include "icing/index/main/posting-list-hit-accessor.h"
 #include "icing/index/main/posting-list-hit-serializer.h"
 #include "icing/index/term-id-codec.h"
+#include "icing/index/term-metadata.h"
 #include "icing/index/term-property-id.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
+#include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/debug.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/store/document-id.h"
+#include "icing/store/namespace-id.h"
+#include "icing/store/suggestion-result-checker.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
@@ -66,7 +84,7 @@ FindTermResult FindShortestValidTermWithPrefixHits(
   uint32_t tvi = 0;
   bool found = false;
   bool exact = false;
-  for (IcingDynamicTrie::Iterator it(*lexicon, prefix.c_str()); it.IsValid();
+  for (IcingDynamicTrie::Iterator it(*lexicon, prefix); it.IsValid();
        it.Advance()) {
     PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
     memcpy(&posting_list_id, it.GetValue(), sizeof(posting_list_id));
@@ -80,7 +98,7 @@ FindTermResult FindShortestValidTermWithPrefixHits(
     // "fo" will have an invalid posting_list_id because it hasn't been
     // backfilled yet, so we need to continue iterating to "foo".
     if (posting_list_id.is_valid()) {
-      exact = (prefix.size() == strlen(it.GetKey()));
+      exact = (prefix.size() == it.GetKey().size());
       tvi = it.GetValueIndex();
       // Found it. Does it have prefix hits?
       found = exact || hits_in_prefix_section.HasProperty(tvi);
@@ -99,20 +117,23 @@ std::string MakeFlashIndexFilename(const std::string& base_dir) {
 
 MainIndex::MainIndex(const std::string& index_directory,
                      const Filesystem* filesystem,
-                     const IcingFilesystem* icing_filesystem)
+                     const IcingFilesystem* icing_filesystem,
+                     const FeatureFlags* feature_flags)
     : base_dir_(index_directory),
       filesystem_(filesystem),
       icing_filesystem_(icing_filesystem),
       posting_list_hit_serializer_(
-          std::make_unique<PostingListHitSerializer>()) {}
+          std::make_unique<PostingListHitSerializer>()),
+      feature_flags_(*feature_flags) {}
 
 libtextclassifier3::StatusOr<std::unique_ptr<MainIndex>> MainIndex::Create(
     const std::string& index_directory, const Filesystem* filesystem,
-    const IcingFilesystem* icing_filesystem) {
+    const IcingFilesystem* icing_filesystem,
+    const FeatureFlags* feature_flags) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(icing_filesystem);
-  std::unique_ptr<MainIndex> main_index(
-      new MainIndex(index_directory, filesystem, icing_filesystem));
+  std::unique_ptr<MainIndex> main_index(new MainIndex(
+      index_directory, filesystem, icing_filesystem, feature_flags));
   ICING_RETURN_IF_ERROR(main_index->Init());
   return main_index;
 }
@@ -138,13 +159,15 @@ libtextclassifier3::Status MainIndex::Init() {
 
   std::string lexicon_file = base_dir_ + "/main-lexicon";
   IcingDynamicTrie::RuntimeOptions runtime_options;
+  if (feature_flags_.enable_optimize_improvements()) {
+    runtime_options.set_storage_policy(
+        IcingDynamicTrie::RuntimeOptions::kMapSharedWithCrc);
+  }
   main_lexicon_ = std::make_unique<IcingDynamicTrie>(
       lexicon_file, runtime_options, icing_filesystem_);
   IcingDynamicTrie::Options lexicon_options;
-  if (!main_lexicon_->CreateIfNotExist(lexicon_options) ||
-      !main_lexicon_->Init()) {
-    return absl_ports::InternalError("Failed to initialize lexicon trie");
-  }
+  ICING_RETURN_IF_ERROR(main_lexicon_->CreateIfNotExist(lexicon_options));
+  ICING_RETURN_IF_ERROR(main_lexicon_->Init());
   return libtextclassifier3::Status::OK;
 }
 
@@ -174,7 +197,7 @@ IndexStorageInfoProto MainIndex::GetStorageInfo(
 libtextclassifier3::StatusOr<std::unique_ptr<PostingListHitAccessor>>
 MainIndex::GetAccessorForExactTerm(const std::string& term) {
   PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
-  if (!main_lexicon_->Find(term.c_str(), &posting_list_id)) {
+  if (!main_lexicon_->Find(term, &posting_list_id)) {
     return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
         "Term %s is not present in main lexicon.", term.c_str()));
   }
@@ -195,12 +218,12 @@ MainIndex::GetAccessorForPrefixTerm(const std::string& prefix) {
   // won't have a posting list, but "ba" will suffice.
   IcingDynamicTrie::PropertyReader hits_in_prefix_section(
       *main_lexicon_, GetHasHitsInPrefixSectionPropertyId());
-  IcingDynamicTrie::Iterator main_itr(*main_lexicon_, prefix.c_str());
+  IcingDynamicTrie::Iterator main_itr(*main_lexicon_, prefix);
   if (!main_itr.IsValid()) {
     return absl_ports::NotFoundError(IcingStringUtil::StringPrintf(
         "Term: %s is not present in the main lexicon.", prefix.c_str()));
   }
-  exact = (prefix.length() == strlen(main_itr.GetKey()));
+  exact = (prefix.size() == main_itr.GetKey().size());
 
   if (!exact && !hits_in_prefix_section.HasProperty(main_itr.GetValueIndex())) {
     // Found it, but it doesn't have prefix hits. Exit early. No need to
@@ -240,7 +263,7 @@ MainIndex::FindTermsByPrefix(
     SuggestionScoringSpecProto::SuggestionRankingStrategy::Code score_by,
     const SuggestionResultChecker* suggestion_result_checker) {
   // Finds all the terms that start with the given prefix in the lexicon.
-  IcingDynamicTrie::Iterator term_iterator(*main_lexicon_, prefix.c_str());
+  IcingDynamicTrie::Iterator term_iterator(*main_lexicon_, prefix);
 
   std::vector<TermMetadata> term_metadata_list;
   while (term_iterator.IsValid()) {
@@ -306,7 +329,8 @@ MainIndex::FindTermsByPrefix(
       ICING_ASSIGN_OR_RETURN(hits, pl_accessor->GetNextHitsBatch());
     }
     if (score > 0) {
-      term_metadata_list.push_back(TermMetadata(term_iterator.GetKey(), score));
+      term_metadata_list.push_back(
+          TermMetadata(std::string(term_iterator.GetKey()), score));
     }
 
     term_iterator.Advance();
@@ -325,12 +349,13 @@ MainIndex::AddBackfillBranchPoints(const IcingDynamicTrie& other_lexicon) {
        other_term_itr.IsValid(); other_term_itr.Advance()) {
     // If term were inserted in the main lexicon, what new branching would it
     // create? (It always creates at most one.)
-    int prefix_len = main_lexicon_->FindNewBranchingPrefixLength(
-        other_term_itr.GetKey(), /*utf8=*/true);
+    ICING_ASSIGN_OR_RETURN(int prefix_len,
+                           main_lexicon_->FindNewBranchingPrefixLength(
+                               other_term_itr.GetKey(), /*utf8=*/true));
     if (prefix_len <= 0) {
       continue;
     }
-    prefix.assign(other_term_itr.GetKey(), prefix_len);
+    prefix.assign(other_term_itr.GetKey().substr(0, prefix_len));
 
     // Figure out backfill tvi. Might not exist since all children terms could
     // only contain hits from non-prefix sections.
@@ -351,9 +376,9 @@ MainIndex::AddBackfillBranchPoints(const IcingDynamicTrie& other_lexicon) {
     uint32_t branching_prefix_tvi;
     bool new_key;
     PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
-    libtextclassifier3::Status status = main_lexicon_->Insert(
-        prefix.c_str(), &posting_list_id, &branching_prefix_tvi,
-        /*replace=*/false, &new_key);
+    libtextclassifier3::Status status =
+        main_lexicon_->Insert(prefix, &posting_list_id, &branching_prefix_tvi,
+                              /*replace=*/false, &new_key);
     if (!status.ok()) {
       ICING_LOG(DBG) << "Could not insert branching prefix\n"
                      << status.error_message();
@@ -403,8 +428,9 @@ MainIndex::AddTerms(const IcingDynamicTrie& other_lexicon,
     // Add other to main mapping.
     outputs.other_tvi_to_main_tvi.emplace(other_tvi, new_main_tvi);
 
-    memcpy(&posting_list_id, main_lexicon_->GetValueAtIndex(new_main_tvi),
-           sizeof(posting_list_id));
+    ICING_ASSIGN_OR_RETURN(const void* posting_list_id_ptr,
+                           main_lexicon_->GetValueAtIndex(new_main_tvi));
+    memcpy(&posting_list_id, posting_list_id_ptr, sizeof(posting_list_id));
     if (posting_list_id.block_index() != kInvalidBlockIndex) {
       outputs.main_tvi_to_block_index[new_main_tvi] =
           posting_list_id.block_index();
@@ -431,8 +457,9 @@ MainIndex::AddBranchPoints(const IcingDynamicTrie& other_lexicon,
 
     // Get prefixes where there is already a branching point in the main
     // lexicon. We skip prefixes which don't already have a branching point.
-    std::vector<int> prefix_lengths = main_lexicon_->FindBranchingPrefixLengths(
-        other_term_itr.GetKey(), /*utf8=*/true);
+    ICING_ASSIGN_OR_RETURN(std::vector<int> prefix_lengths,
+                           main_lexicon_->FindBranchingPrefixLengths(
+                               other_term_itr.GetKey(), /*utf8=*/true));
 
     int buf_start = outputs.prefix_tvis_buf.size();
     // Add prefixes.
@@ -441,12 +468,12 @@ MainIndex::AddBranchPoints(const IcingDynamicTrie& other_lexicon,
         continue;
       }
 
-      prefix.assign(other_term_itr.GetKey(), prefix_length);
+      prefix.assign(other_term_itr.GetKey().substr(0, prefix_length));
       uint32_t prefix_tvi;
       bool new_key;
       PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
       libtextclassifier3::Status status =
-          main_lexicon_->Insert(prefix.c_str(), &posting_list_id, &prefix_tvi,
+          main_lexicon_->Insert(prefix, &posting_list_id, &prefix_tvi,
                                 /*replace=*/false, &new_key);
       if (!status.ok()) {
         ICING_LOG(DBG) << "Could not insert prefix: " << prefix << "\n"
@@ -470,8 +497,9 @@ MainIndex::AddBranchPoints(const IcingDynamicTrie& other_lexicon,
 
       outputs.prefix_tvis_buf.push_back(prefix_tvi);
 
-      memcpy(&posting_list_id, main_lexicon_->GetValueAtIndex(prefix_tvi),
-             sizeof(posting_list_id));
+      ICING_ASSIGN_OR_RETURN(const void* posting_list_id_ptr,
+                             main_lexicon_->GetValueAtIndex(prefix_tvi));
+      memcpy(&posting_list_id, posting_list_id_ptr, sizeof(posting_list_id));
       if (posting_list_id.block_index() != kInvalidBlockIndex) {
         outputs.main_tvi_to_block_index[prefix_tvi] =
             posting_list_id.block_index();
@@ -543,7 +571,8 @@ libtextclassifier3::Status MainIndex::AddHits(
         PostingListIdentifier::kInvalid;
     auto itr = backfill_map.find(cur_decoded_term.tvi);
     if (itr != backfill_map.end()) {
-      const void* value = main_lexicon_->GetValueAtIndex(itr->second);
+      ICING_ASSIGN_OR_RETURN(const void* value,
+                             main_lexicon_->GetValueAtIndex(itr->second));
       memcpy(&backfill_posting_list_id, value,
              sizeof(backfill_posting_list_id));
       backfill_map.erase(itr);
@@ -562,8 +591,10 @@ libtextclassifier3::Status MainIndex::AddHits(
   for (auto other_tvi_main_tvi_pair : backfill_map) {
     PostingListIdentifier backfill_posting_list_id =
         PostingListIdentifier::kInvalid;
-    memcpy(&backfill_posting_list_id,
-           main_lexicon_->GetValueAtIndex(other_tvi_main_tvi_pair.second),
+    ICING_ASSIGN_OR_RETURN(
+        const void* backfill_posting_list_id_ptr,
+        main_lexicon_->GetValueAtIndex(other_tvi_main_tvi_pair.second));
+    memcpy(&backfill_posting_list_id, backfill_posting_list_id_ptr,
            sizeof(backfill_posting_list_id));
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<PostingListHitAccessor> hit_accum,
@@ -574,7 +605,8 @@ libtextclassifier3::Status MainIndex::AddHits(
     PostingListAccessor::FinalizeResult result =
         std::move(*hit_accum).Finalize();
     if (result.id.is_valid()) {
-      main_lexicon_->SetValueAtIndex(other_tvi_main_tvi_pair.first, &result.id);
+      ICING_RETURN_IF_ERROR(main_lexicon_->SetValueAtIndex(
+          other_tvi_main_tvi_pair.first, &result.id));
     }
   }
   flash_index_storage_->set_last_indexed_docid(last_added_document_id);
@@ -587,8 +619,9 @@ libtextclassifier3::Status MainIndex::AddHitsForTerm(
   // 1. Create a PostingListHitAccessor - either from the pre-existing block, if
   // one exists, or from scratch.
   PostingListIdentifier posting_list_id = PostingListIdentifier::kInvalid;
-  memcpy(&posting_list_id, main_lexicon_->GetValueAtIndex(tvi),
-         sizeof(posting_list_id));
+  ICING_ASSIGN_OR_RETURN(const void* posting_list_id_ptr,
+                         main_lexicon_->GetValueAtIndex(tvi));
+  memcpy(&posting_list_id, posting_list_id_ptr, sizeof(posting_list_id));
   std::unique_ptr<PostingListHitAccessor> pl_accessor;
   if (posting_list_id.is_valid()) {
     if (posting_list_id.block_index() >= flash_index_storage_->num_blocks()) {
@@ -630,7 +663,7 @@ libtextclassifier3::Status MainIndex::AddHitsForTerm(
   PostingListAccessor::FinalizeResult result =
       std::move(*pl_accessor).Finalize();
   if (result.id.is_valid()) {
-    main_lexicon_->SetValueAtIndex(tvi, &result.id);
+    ICING_RETURN_IF_ERROR(main_lexicon_->SetValueAtIndex(tvi, &result.id));
   }
   return libtextclassifier3::Status::OK;
 }
@@ -651,7 +684,8 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
     ICING_ASSIGN_OR_RETURN(tmp, backfill_accessor->GetNextHitsBatch());
   }
 
-  Hit last_added_hit;
+  Hit::EqualsValueAndFlags hit_equals_value_and_flags_comparator;
+  Hit last_added_hit(Hit::kInvalidValue);
   // The hits in backfill_hits are in the reverse order of how they were added.
   // Iterate in reverse to add them to this new posting list in the correct
   // order.
@@ -666,8 +700,8 @@ libtextclassifier3::Status MainIndex::AddPrefixBackfillHits(
     const Hit backfill_hit(hit.section_id(), hit.document_id(),
                            hit.term_frequency(),
                            /*is_in_prefix_section=*/true,
-                           /*is_prefix_hit=*/true);
-    if (backfill_hit == last_added_hit) {
+                           /*is_prefix_hit=*/true, /*is_stemmed_hit=*/false);
+    if (hit_equals_value_and_flags_comparator(backfill_hit, last_added_hit)) {
       // Skip duplicate values due to overriding of the is_prefix flag.
       continue;
     }
@@ -719,9 +753,10 @@ libtextclassifier3::Status MainIndex::Optimize(
         "Unable to create temp directory to build new index.");
   }
 
-  ICING_ASSIGN_OR_RETURN(std::unique_ptr<MainIndex> new_index,
-                         MainIndex::Create(temporary_index_dir.dir(),
-                                           filesystem_, icing_filesystem_));
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<MainIndex> new_index,
+      MainIndex::Create(temporary_index_dir.dir(), filesystem_,
+                        icing_filesystem_, &feature_flags_));
   ICING_RETURN_IF_ERROR(TransferIndex(document_id_old_to_new, new_index.get()));
   ICING_RETURN_IF_ERROR(new_index->PersistToDisk());
   new_index = nullptr;
@@ -740,8 +775,9 @@ libtextclassifier3::Status MainIndex::Optimize(
 }
 
 libtextclassifier3::StatusOr<DocumentId> MainIndex::TransferAndAddHits(
-    const std::vector<DocumentId>& document_id_old_to_new, const char* term,
-    PostingListHitAccessor& old_pl_accessor, MainIndex* new_index) {
+    const std::vector<DocumentId>& document_id_old_to_new,
+    std::string_view term, PostingListHitAccessor& old_pl_accessor,
+    MainIndex* new_index) {
   std::vector<Hit> new_hits;
   bool has_no_exact_hits = true;
   bool has_hits_in_prefix_section = false;
@@ -751,14 +787,17 @@ libtextclassifier3::StatusOr<DocumentId> MainIndex::TransferAndAddHits(
                          old_pl_accessor.GetNextHitsBatch());
   while (!tmp.empty()) {
     for (const Hit& hit : tmp) {
-      // A safety check to add robustness to the codebase, so to make sure that
-      // we never access invalid memory, in case that hit from the posting list
-      // is corrupted.
-      if (hit.document_id() < 0 ||
-          hit.document_id() >= document_id_old_to_new.size()) {
-        continue;
+      DocumentId old_document_id = hit.document_id();
+      if (old_document_id < 0 ||
+          old_document_id >= document_id_old_to_new.size()) {
+        // If it happens, then the posting list is corrupted. Return error and
+        // let the caller rebuild everything.
+        return absl_ports::InternalError(
+            "Main index hit document id is out of range. The index may have "
+            "been corrupted.");
       }
-      DocumentId new_document_id = document_id_old_to_new[hit.document_id()];
+
+      DocumentId new_document_id = document_id_old_to_new[old_document_id];
       // Transfer the document id of the hit, if the document is not deleted
       // or outdated.
       if (new_document_id != kInvalidDocumentId) {
@@ -780,8 +819,9 @@ libtextclassifier3::StatusOr<DocumentId> MainIndex::TransferAndAddHits(
   // A term without exact hits indicates that it is a purely backfill term. If
   // the term is not branching in the new trie, it means backfilling is no
   // longer necessary, so that we can skip.
-  if (new_hits.empty() ||
-      (has_no_exact_hits && !new_index->main_lexicon_->IsBranchingTerm(term))) {
+  ICING_ASSIGN_OR_RETURN(bool is_branching_term,
+                         new_index->main_lexicon_->IsBranchingTerm(term));
+  if (new_hits.empty() || (has_no_exact_hits && !is_branching_term)) {
     return largest_document_id;
   }
 

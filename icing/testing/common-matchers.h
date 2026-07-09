@@ -16,15 +16,17 @@
 #define ICING_TESTING_COMMON_MATCHERS_H_
 
 #include <algorithm>
+#include <array>
 #include <cinttypes>
 #include <cmath>
 #include <string>
-#include <vector>
+#include <unordered_map>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/status_macros.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
@@ -34,13 +36,22 @@
 #include "icing/portable/equals-proto.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/status.pb.h"
+#include "icing/result/snippet-context.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
+#include "icing/schema/scorable_property_manager.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/scored-document-hit.h"
+#include "icing/util/character-iterator.h"
 
 namespace icing {
 namespace lib {
+
+using ::icing::lib::portable_equals_proto::EqualsProto;
+using ::testing::DoubleNear;
+using ::testing::Matches;
+
+constexpr float kEps = 1e-6;
 
 // Used to match Token(Token::Type type, std::string_view text)
 MATCHER_P2(EqualsToken, type, text, "") {
@@ -49,6 +60,17 @@ MATCHER_P2(EqualsToken, type, text, "") {
     *result_listener << IcingStringUtil::StringPrintf(
         "(Expected: type=%d, text=\"%s\". Actual: type=%d, text=\"%s\")", type,
         text, arg.type, arg_string.c_str());
+    return false;
+  }
+  return true;
+}
+
+MATCHER_P(EqualsNormalizedTerm, text, "") {
+  std::string arg_string(arg.text.data(), arg.text.length());
+  if (arg.text != text) {
+    *result_listener << IcingStringUtil::StringPrintf(
+        "(Expected: text=\"%s\". Actual: text=\"%s\")", text,
+        arg_string.c_str());
     return false;
   }
   return true;
@@ -72,27 +94,49 @@ MATCHER_P2(EqualsDocHitInfo, document_id, section_ids, "") {
 }
 
 // Used to match a DocHitInfoIterator::CallStats
-MATCHER_P5(EqualsDocHitInfoIteratorCallStats, num_leaf_advance_calls_lite_index,
+MATCHER_P6(EqualsDocHitInfoIteratorCallStats, num_leaf_advance_calls_lite_index,
            num_leaf_advance_calls_main_index,
            num_leaf_advance_calls_integer_index,
-           num_leaf_advance_calls_no_index, num_blocks_inspected, "") {
+           num_leaf_advance_calls_no_index, num_blocks_inspected,
+           embedding_stats, "") {
   const DocHitInfoIterator::CallStats& actual = arg;
+  auto embedding_stats_to_string =
+      [](const DocHitInfoIterator::CallStats::EmbeddingStats& stats) {
+        return absl_ports::StrCat(
+            "{num_unquantized_embeddings_scored=",
+            std::to_string(stats.num_unquantized_embeddings_scored),
+            ", num_quantized_embeddings_scored=",
+            std::to_string(stats.num_quantized_embeddings_scored),
+            ", unquantized_shards_read=[",
+            absl_ports::StrJoin(stats.unquantized_shards_read, ",",
+                                absl_ports::NumberFormatter()),
+            "], quantized_shards_read=[",
+            absl_ports::StrJoin(stats.quantized_shards_read, ",",
+                                absl_ports::NumberFormatter()),
+            "], num_embedding_bytes_read=",
+            std::to_string(stats.num_embedding_bytes_read),
+            ", num_ann_embeddings_scored=",
+            std::to_string(stats.num_ann_embeddings_scored), "}");
+      };
   *result_listener << IcingStringUtil::StringPrintf(
       "(actual is {num_leaf_advance_calls_lite_index=%d, "
       "num_leaf_advance_calls_main_index=%d, "
       "num_leaf_advance_calls_integer_index=%d, "
-      "num_leaf_advance_calls_no_index=%d, num_blocks_inspected=%d}, but "
+      "num_leaf_advance_calls_no_index=%d, num_blocks_inspected=%d, "
+      "embedding_stats=%s}, but "
       "expected was {num_leaf_advance_calls_lite_index=%d, "
       "num_leaf_advance_calls_main_index=%d, "
       "num_leaf_advance_calls_integer_index=%d, "
-      "num_leaf_advance_calls_no_index=%d, num_blocks_inspected=%d}.)",
+      "num_leaf_advance_calls_no_index=%d, num_blocks_inspected=%d, "
+      "embedding_stats=%s}.)",
       actual.num_leaf_advance_calls_lite_index,
       actual.num_leaf_advance_calls_main_index,
       actual.num_leaf_advance_calls_integer_index,
       actual.num_leaf_advance_calls_no_index, actual.num_blocks_inspected,
+      embedding_stats_to_string(actual.embedding_stats).c_str(),
       num_leaf_advance_calls_lite_index, num_leaf_advance_calls_main_index,
       num_leaf_advance_calls_integer_index, num_leaf_advance_calls_no_index,
-      num_blocks_inspected);
+      num_blocks_inspected, embedding_stats_to_string(embedding_stats).c_str());
   return actual.num_leaf_advance_calls_lite_index ==
              num_leaf_advance_calls_lite_index &&
          actual.num_leaf_advance_calls_main_index ==
@@ -101,7 +145,44 @@ MATCHER_P5(EqualsDocHitInfoIteratorCallStats, num_leaf_advance_calls_lite_index,
              num_leaf_advance_calls_integer_index &&
          actual.num_leaf_advance_calls_no_index ==
              num_leaf_advance_calls_no_index &&
-         actual.num_blocks_inspected == num_blocks_inspected;
+         actual.num_blocks_inspected == num_blocks_inspected &&
+         actual.embedding_stats == embedding_stats;
+}
+
+// Used to match a DocumentAssociatedScoreData
+MATCHER_P5(EqualsDocumentAssociatedScoreData, corpus_id, document_score,
+           creation_timestamp_ms, length_in_tokens,
+           has_valid_scorable_property_cache_index, "") {
+  bool expected_has_valid_scorable_property_cache_index =
+      arg.scorable_property_cache_index() != -1;
+  return arg.corpus_id() == corpus_id &&
+         arg.document_score() == document_score &&
+         arg.creation_timestamp_ms() == creation_timestamp_ms &&
+         arg.length_in_tokens() == length_in_tokens &&
+         expected_has_valid_scorable_property_cache_index ==
+             has_valid_scorable_property_cache_index;
+}
+
+MATCHER_P2(EqualsDocumentGroupKey, schema_type_name, name_space, "") {
+  return arg.schema_type_name == schema_type_name &&
+         arg.name_space == name_space;
+}
+
+MATCHER_P2(EqualsDocumentUriId, uri, document_id, "") {
+  return arg.uri == uri && arg.document_id == document_id;
+}
+
+MATCHER_P4(EqualsDocumentMetadata, schema_type_name, name_space, uri,
+           document_id, "") {
+  return arg.schema_type_name == schema_type_name &&
+         arg.name_space == name_space && arg.uri == uri &&
+         arg.document_id == document_id;
+}
+
+// Used to match a ScorablePropertyManager::ScorablePropertyInfo
+MATCHER_P2(EqualsScorablePropertyInfo, property_path, data_type, "") {
+  const ScorablePropertyManager::ScorablePropertyInfo& actual = arg;
+  return actual.property_path == property_path && actual.data_type == data_type;
 }
 
 struct ExtractTermFrequenciesResult {
@@ -199,9 +280,19 @@ class ScoredDocumentHitEqualComparator {
  public:
   bool operator()(const ScoredDocumentHit& lhs,
                   const ScoredDocumentHit& rhs) const {
+    bool additional_scores_match = true;
+    if (lhs.additional_scores() != nullptr &&
+        rhs.additional_scores() != nullptr) {
+      additional_scores_match =
+          *lhs.additional_scores() == *rhs.additional_scores();
+    } else {
+      additional_scores_match =
+          lhs.additional_scores() == rhs.additional_scores();
+    }
     return lhs.document_id() == rhs.document_id() &&
            lhs.hit_section_id_mask() == rhs.hit_section_id_mask() &&
-           std::fabs(lhs.score() - rhs.score()) < 1e-6;
+           std::fabs(lhs.score() - rhs.score()) < 1e-6 &&
+           additional_scores_match;
   }
 };
 
@@ -257,7 +348,7 @@ MATCHER_P(EqualsJoinedScoredDocumentHit, expected_joined_scored_document_hit,
   return true;
 }
 
-MATCHER_P(EqualsSetSchemaResult, expected, "") {
+MATCHER_P(EqualsSetSchemaResultIgnoringStats, expected, "") {
   const SchemaStore::SetSchemaResult& actual = arg;
 
   if (actual.success == expected.success &&
@@ -277,7 +368,9 @@ MATCHER_P(EqualsSetSchemaResult, expected, "") {
       actual.schema_types_index_incompatible_by_name ==
           expected.schema_types_index_incompatible_by_name &&
       actual.schema_types_join_incompatible_by_name ==
-          expected.schema_types_join_incompatible_by_name) {
+          expected.schema_types_join_incompatible_by_name &&
+      actual.schema_types_scorable_property_inconsistent_by_id ==
+          expected.schema_types_scorable_property_inconsistent_by_id) {
     return true;
   }
 
@@ -448,7 +541,13 @@ MATCHER_P3(EqualsSectionMetadata, expected_id, expected_property_path,
                  .term_match_type() &&
          actual.numeric_match_type ==
              expected_property_config_proto.integer_indexing_config()
-                 .numeric_match_type();
+                 .numeric_match_type() &&
+         actual.embedding_indexing_type ==
+             expected_property_config_proto.embedding_indexing_config()
+                 .embedding_indexing_type() &&
+         actual.quantization_type ==
+             expected_property_config_proto.embedding_indexing_config()
+                 .quantization_type();
 }
 
 MATCHER_P3(EqualsJoinablePropertyMetadata, expected_id, expected_property_path,
@@ -457,7 +556,10 @@ MATCHER_P3(EqualsJoinablePropertyMetadata, expected_id, expected_property_path,
   return actual.id == expected_id && actual.path == expected_property_path &&
          actual.data_type == expected_property_config_proto.data_type() &&
          actual.value_type ==
-             expected_property_config_proto.joinable_config().value_type();
+             expected_property_config_proto.joinable_config().value_type() &&
+         actual.delete_propagation_type ==
+             expected_property_config_proto.joinable_config()
+                 .delete_propagation_type();
 }
 
 std::string StatusCodeToString(libtextclassifier3::StatusCode code);
@@ -550,6 +652,7 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   SearchResultProto actual_copy = arg;
   actual_copy.clear_query_stats();
   actual_copy.clear_debug_info();
+  actual_copy.clear_vm_binder_transaction_latency_start_time_ms();
   for (SearchResultProto::ResultProto& result :
        *actual_copy.mutable_results()) {
     // Joined results
@@ -563,6 +666,7 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   SearchResultProto expected_copy = expected;
   expected_copy.clear_query_stats();
   expected_copy.clear_debug_info();
+  actual_copy.clear_vm_binder_transaction_latency_start_time_ms();
   for (SearchResultProto::ResultProto& result :
        *expected_copy.mutable_results()) {
     // Joined results
@@ -574,6 +678,104 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
   }
   return ExplainMatchResult(portable_equals_proto::EqualsProto(expected_copy),
                             actual_copy, result_listener);
+}
+
+MATCHER_P(EqualsSchemaProtoIgnorePropertiesDigest, expected, "") {
+  SchemaProto actual_copy = arg;
+  for (SchemaTypeConfigProto& type_config : *actual_copy.mutable_types()) {
+    type_config.clear_properties_digest();
+  }
+
+  SchemaProto expected_copy = expected;
+  for (SchemaTypeConfigProto& type_config : *expected_copy.mutable_types()) {
+    type_config.clear_properties_digest();
+  }
+
+  return ExplainMatchResult(portable_equals_proto::EqualsProto(expected_copy),
+                            actual_copy, result_listener);
+}
+
+MATCHER_P4(EqualsCharacterIterator, expected_text, expected_utf8_index,
+           expected_utf16_index, expected_utf32_index, "") {
+  const CharacterIterator& actual = arg;
+  return actual.text() == expected_text &&
+         actual.utf8_index() == expected_utf8_index &&
+         actual.utf16_index() == expected_utf16_index &&
+         actual.utf32_index() == expected_utf32_index;
+}
+
+MATCHER_P(EqualsHit, expected_hit, "") {
+  const Hit& actual = arg;
+  return actual.value() == expected_hit.value() &&
+         actual.flags() == expected_hit.flags() &&
+         actual.term_frequency() == expected_hit.term_frequency();
+}
+
+MATCHER(EqualsHit, "") {
+  return ExplainMatchResult(EqualsHit(std::get<1>(arg)), std::get<0>(arg),
+                            result_listener);
+}
+
+MATCHER_P(EqualsEmbeddingMatchInfoEntry, expected, "") {
+  const SnippetContext::EmbeddingMatchInfoEntry& actual = arg;
+
+  *result_listener << IcingStringUtil::StringPrintf(
+      "Expected: {score=%f, metric_type=%d, position=%d, "
+      "query_vector_index=%d, section_id=%d}, but got: {score=%f, "
+      "metric_type=%d, "
+      "position=%d, query_vector_index=%d, section_id=%d}",
+      expected.score, expected.metric_type, expected.position,
+      expected.query_vector_index, expected.section_id, actual.score,
+      actual.metric_type, actual.position, actual.query_vector_index,
+      expected.section_id);
+
+  return Matches(DoubleNear(expected.score, kEps))(actual.score) &&
+         actual.metric_type == expected.metric_type &&
+         actual.query_vector_index == expected.query_vector_index &&
+         actual.position == expected.position &&
+         actual.section_id == expected.section_id;
+}
+
+MATCHER_P(EqualsEmbeddingMatchSnippetProto, expected, "") {
+  const EmbeddingMatchSnippetProto& actual = arg;
+
+  *result_listener << IcingStringUtil::StringPrintf(
+      "Expected: {semantic_score=%f, embedding_query_vector_index=%d, "
+      "embedding_query_metric_type=%d}, but got: {semantic_score=%f, "
+      "embedding_query_vector_index=%d, embedding_query_metric_type=%d}",
+      expected.semantic_score(), expected.embedding_query_vector_index(),
+      expected.embedding_query_metric_type(), actual.semantic_score(),
+      actual.embedding_query_vector_index(),
+      actual.embedding_query_metric_type());
+
+  return Matches(DoubleNear(expected.semantic_score(), kEps))(
+             actual.semantic_score()) &&
+         actual.embedding_query_vector_index() ==
+             expected.embedding_query_vector_index() &&
+         actual.embedding_query_metric_type() ==
+             expected.embedding_query_metric_type();
+}
+
+// Used for matching SchemaUtil::TypeConfigInfoCache::TypeConfigHolder to a
+// SchemaTypeConfigProto.
+MATCHER_P(TypeConfigHolderEqualsProto, expected_proto, "") {
+  SchemaTypeConfigProto actual_proto = arg.base_type_config();
+  actual_proto.mutable_properties()->Clear();
+  for (const auto& property : arg.properties()) {
+    *actual_proto.add_properties() = property;
+  }
+  return Matches(EqualsProto(expected_proto))(actual_proto);
+}
+
+MATCHER_P(TypeConfigHolderEqualsProtoIgnorePropertiesDigest, expected_proto,
+          "") {
+  SchemaTypeConfigProto actual_proto = arg.base_type_config();
+  actual_proto.clear_properties_digest();
+  actual_proto.mutable_properties()->Clear();
+  for (const auto& property : arg.properties()) {
+    *actual_proto.add_properties() = property;
+  }
+  return Matches(EqualsProto(expected_proto))(actual_proto);
 }
 
 // TODO(tjbarron) Remove this once icing has switched to depend on TC3 Status
