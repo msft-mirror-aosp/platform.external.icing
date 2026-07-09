@@ -264,8 +264,8 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_embedding_index_num_shards(32);
   icing_options.set_enable_non_existent_qualified_id_join(true);
   icing_options.set_enable_database_stableness_log(true);
-  icing_options.set_enable_schema_type_id_optimization(true);
   icing_options.set_enable_schema_definition_deduping(true);
+  icing_options.set_schema_store_release_cached_proto_after_use(true);
   return icing_options;
 }
 
@@ -1055,6 +1055,34 @@ TEST_F(IcingSearchEngineInitializationTest, UnableToRecoverFromCorruptSchema) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   EXPECT_THAT(icing.Initialize().status(),
               ProtoStatusIs(StatusProto::INTERNAL));
+}
+
+TEST_F(IcingSearchEngineInitializationTest, MissingSchemaWipesOutDatabase) {
+  DocumentProto email =
+      CreateEmailDocument("namespace", "uri", 100, "subject", "body");
+  {
+    // Set schema and add the email document
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateEmailSchema()).status(), ProtoIsOk());
+    ASSERT_THAT(icing.Put(email).status(), ProtoIsOk());
+  }  // Engine shuts down and persists to disk.
+
+  // Delete ONLY the schema directory to simulate losing the schema.
+  ASSERT_TRUE(filesystem()->DeleteDirectoryRecursively(GetSchemaDir().c_str()));
+
+  {
+    IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+    InitializeResultProto init_result = icing.Initialize();
+    EXPECT_THAT(init_result.status(), ProtoIsOk());
+
+    // Verify that the document store was wiped out and we can't retrieve the
+    // document.
+    EXPECT_THAT(
+        icing.Get("namespace", "uri", GetResultSpecProto::default_instance())
+            .status(),
+        ProtoStatusIs(StatusProto::NOT_FOUND));
+  }
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
@@ -6957,8 +6985,6 @@ TEST_F(IcingSearchEngineInitializationTest,
               IsEmpty());
 }
 
-
-
 TEST_F(IcingSearchEngineInitializationTest,
        DeletePropagationFrom_switchFlagOffToOnShouldRevalidateDependency) {
   SchemaProto schema =
@@ -8459,8 +8485,6 @@ INSTANTIATE_TEST_SUITE_P(
                     std::vector<bool>{true, false, false, false, true, false},
                     std::vector<bool>{true, true, true, true},
                     std::vector<bool>{false, false, false, false}));
-
-
 
 }  // namespace
 }  // namespace lib

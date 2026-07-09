@@ -60,6 +60,11 @@ struct MonkeyTokenizedDocument {
     return tokenized_document;
   }
 
+  void Clear() {
+    document.Clear();
+    sections.clear();
+  }
+
   const MonkeySection* GetSectionByPath(std::string_view path) const {
     for (const MonkeySection& section : sections) {
       if (section.path == path) {

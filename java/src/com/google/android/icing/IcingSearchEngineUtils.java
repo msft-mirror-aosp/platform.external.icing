@@ -45,6 +45,7 @@ import com.google.android.icing.proto.StorageInfoResultProto;
 import com.google.android.icing.proto.SuggestionResponse;
 import com.google.protobuf.ExtensionRegistryLite;
 import com.google.protobuf.InvalidProtocolBufferException;
+import com.google.protobuf.MessageLite;
 
 /**
  * Contains utility methods for IcingSearchEngine to convert byte arrays to the corresponding
@@ -65,222 +66,163 @@ public final class IcingSearchEngineUtils {
   @NonNull
   public static InitializeResultProto byteArrayToInitializeResultProto(
       @Nullable byte[] initializeResultBytes) {
-    if (initializeResultBytes == null) {
-      Log.e(TAG, "Received null InitializeResult from native.");
-      return InitializeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+    InitializeResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+            initializeResultBytes,
+            InitializeResultProto.newBuilder(),
+            status -> InitializeResultProto.newBuilder().setStatus(status));
+    if (initializeResultBytes != null) {
+      builder.setResponseBytes(initializeResultBytes.length);
     }
-
-    try {
-      return InitializeResultProto.parseFrom(initializeResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing InitializeResultProto.", e);
-      return InitializeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static SetSchemaResultProto byteArrayToSetSchemaResultProto(
-      @Nullable byte[] setSchemaResultBytes) {
-    if (setSchemaResultBytes == null) {
-      Log.e(TAG, "Received null SetSchemaResultProto from native.");
-      return SetSchemaResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+      @Nullable byte[] setSchemaResultBytes, int requestSize) {
+    SetSchemaResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+                setSchemaResultBytes,
+                SetSchemaResultProto.newBuilder(),
+                status -> SetSchemaResultProto.newBuilder().setStatus(status))
+            .setRequestBytes(requestSize);
+    if (setSchemaResultBytes != null) {
+      builder.setResponseBytes(setSchemaResultBytes.length);
     }
-
-    try {
-      return SetSchemaResultProto.parseFrom(setSchemaResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing SetSchemaResultProto.", e);
-      return SetSchemaResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static GetSchemaResultProto byteArrayToGetSchemaResultProto(
       @Nullable byte[] getSchemaResultBytes) {
-    if (getSchemaResultBytes == null) {
-      Log.e(TAG, "Received null GetSchemaResultProto from native.");
-      return GetSchemaResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+    GetSchemaResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+            getSchemaResultBytes,
+            GetSchemaResultProto.newBuilder(),
+            status -> GetSchemaResultProto.newBuilder().setStatus(status));
+    if (getSchemaResultBytes != null) {
+      builder.setResponseBytes(getSchemaResultBytes.length);
     }
-
-    try {
-      return GetSchemaResultProto.parseFrom(getSchemaResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing GetSchemaResultProto.", e);
-      return GetSchemaResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static GetSchemaTypeResultProto byteArrayToGetSchemaTypeResultProto(
       @Nullable byte[] getSchemaTypeResultBytes) {
-    if (getSchemaTypeResultBytes == null) {
-      Log.e(TAG, "Received null GetSchemaTypeResultProto from native.");
-      return GetSchemaTypeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+    GetSchemaTypeResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+            getSchemaTypeResultBytes,
+            GetSchemaTypeResultProto.newBuilder(),
+            status -> GetSchemaTypeResultProto.newBuilder().setStatus(status));
+    if (getSchemaTypeResultBytes != null) {
+      builder.setResponseBytes(getSchemaTypeResultBytes.length);
     }
-
-    try {
-      return GetSchemaTypeResultProto.parseFrom(getSchemaTypeResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing GetSchemaTypeResultProto.", e);
-      return GetSchemaTypeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
-  public static PutResultProto byteArrayToPutResultProto(@Nullable byte[] putResultBytes) {
-    if (putResultBytes == null) {
-      Log.e(TAG, "Received null PutResultProto from native.");
-      return PutResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+  public static PutResultProto byteArrayToPutResultProto(
+      @Nullable byte[] putResultBytes, int requestSize) {
+    PutResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+                putResultBytes,
+                PutResultProto.newBuilder(),
+                status -> PutResultProto.newBuilder().setStatus(status))
+            .setRequestBytes(requestSize);
+    if (putResultBytes != null) {
+      builder.setResponseBytes(putResultBytes.length);
     }
-
-    try {
-      return PutResultProto.parseFrom(putResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing PutResultProto.", e);
-      return PutResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static BatchPutResultProto byteArrayToBatchPutResultProto(
-      @Nullable byte[] putResultsBytes) {
-    if (putResultsBytes == null) {
-      Log.e(TAG, "Received null PutResultProtos from native.");
-      return BatchPutResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+      @Nullable byte[] putResultsBytes, int requestSize) {
+    BatchPutResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+                putResultsBytes,
+                BatchPutResultProto.newBuilder(),
+                status -> BatchPutResultProto.newBuilder().setStatus(status))
+            .setRequestBytes(requestSize);
+    if (putResultsBytes != null) {
+      builder.setResponseBytes(putResultsBytes.length);
     }
-
-    try {
-      return BatchPutResultProto.parseFrom(putResultsBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing PutResultProtos.", e);
-      return BatchPutResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
-  public static GetResultProto byteArrayToGetResultProto(@Nullable byte[] getResultBytes) {
-    if (getResultBytes == null) {
-      Log.e(TAG, "Received null GetResultProto from native.");
-      return GetResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+  public static GetResultProto byteArrayToGetResultProto(
+      @Nullable byte[] getResultBytes, int requestSize) {
+    GetResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+                getResultBytes,
+                GetResultProto.newBuilder(),
+                status -> GetResultProto.newBuilder().setStatus(status))
+            .setRequestBytes(requestSize);
+    if (getResultBytes != null) {
+      builder.setResponseBytes(getResultBytes.length);
     }
-
-    try {
-      return GetResultProto.parseFrom(getResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing GetResultProto.", e);
-      return GetResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static BatchGetResultProto byteArrayToBatchGetResultProto(
-      @Nullable byte[] batchGetResultBytes) {
-    if (batchGetResultBytes == null) {
-      Log.e(TAG, "Received null BatchGetResultProto from native.");
-      return BatchGetResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+      @Nullable byte[] batchGetResultBytes, int requestSize) {
+    BatchGetResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+                batchGetResultBytes,
+                BatchGetResultProto.newBuilder(),
+                status -> BatchGetResultProto.newBuilder().setStatus(status))
+            .setRequestBytes(requestSize);
+    if (batchGetResultBytes != null) {
+      builder.setResponseBytes(batchGetResultBytes.length);
     }
-
-    try {
-      return BatchGetResultProto.parseFrom(batchGetResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing BatchGetResultProto.", e);
-      return BatchGetResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static ReportUsageResultProto byteArrayToReportUsageResultProto(
-      @Nullable byte[] reportUsageResultBytes) {
-    if (reportUsageResultBytes == null) {
-      Log.e(TAG, "Received null ReportUsageResultProto from native.");
-      return ReportUsageResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+      @Nullable byte[] reportUsageResultBytes, int requestSize) {
+    ReportUsageResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+                reportUsageResultBytes,
+                ReportUsageResultProto.newBuilder(),
+                status -> ReportUsageResultProto.newBuilder().setStatus(status))
+            .setRequestBytes(requestSize);
+    if (reportUsageResultBytes != null) {
+      builder.setResponseBytes(reportUsageResultBytes.length);
     }
-
-    try {
-      return ReportUsageResultProto.parseFrom(reportUsageResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing ReportUsageResultProto.", e);
-      return ReportUsageResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static GetAllNamespacesResultProto byteArrayToGetAllNamespacesResultProto(
       @Nullable byte[] getAllNamespacesResultBytes) {
-    if (getAllNamespacesResultBytes == null) {
-      Log.e(TAG, "Received null GetAllNamespacesResultProto from native.");
-      return GetAllNamespacesResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+    GetAllNamespacesResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+            getAllNamespacesResultBytes,
+            GetAllNamespacesResultProto.newBuilder(),
+            status -> GetAllNamespacesResultProto.newBuilder().setStatus(status));
+    if (getAllNamespacesResultBytes != null) {
+      builder.setResponseBytes(getAllNamespacesResultBytes.length);
     }
-
-    try {
-      return GetAllNamespacesResultProto.parseFrom(
-          getAllNamespacesResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing GetAllNamespacesResultProto.", e);
-      return GetAllNamespacesResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
-  public static SearchResultProto byteArrayToSearchResultProto(@Nullable byte[] searchResultBytes) {
-    if (searchResultBytes == null) {
-      Log.e(TAG, "Received null SearchResultProto from native.");
-      return SearchResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+  public static SearchResultProto byteArrayToSearchResultProto(
+      @Nullable byte[] searchResultBytes, int requestSize) {
+    SearchResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+                searchResultBytes,
+                SearchResultProto.newBuilder(),
+                status -> SearchResultProto.newBuilder().setStatus(status))
+            .setRequestBytes(requestSize);
+    if (searchResultBytes != null) {
+      builder.setResponseBytes(searchResultBytes.length);
+      setNativeToJavaJniLatency(builder);
     }
-
-    try {
-      SearchResultProto.Builder searchResultProtoBuilder =
-          SearchResultProto.newBuilder().mergeFrom(searchResultBytes, EXTENSION_REGISTRY_LITE);
-      setNativeToJavaJniLatency(searchResultProtoBuilder);
-      return searchResultProtoBuilder.build();
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing SearchResultProto.", e);
-      return SearchResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   /**
@@ -292,22 +234,15 @@ public final class IcingSearchEngineUtils {
   @NonNull
   public static HandleExpiredDocumentsResultProto byteArrayToHandleExpiredDocumentsResultProto(
       @Nullable byte[] handleExpiredDocumentsResultBytes) {
-    if (handleExpiredDocumentsResultBytes == null) {
-      Log.e(TAG, "Received null HandleExpiredDocumentsResultProto from native.");
-      return HandleExpiredDocumentsResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+    HandleExpiredDocumentsResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+            handleExpiredDocumentsResultBytes,
+            HandleExpiredDocumentsResultProto.newBuilder(),
+            status -> HandleExpiredDocumentsResultProto.newBuilder().setStatus(status));
+    if (handleExpiredDocumentsResultBytes != null) {
+      builder.setResponseBytes(handleExpiredDocumentsResultBytes.length);
     }
-
-    try {
-      return HandleExpiredDocumentsResultProto.parseFrom(
-          handleExpiredDocumentsResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing HandleExpiredDocumentsResultProto.", e);
-      return HandleExpiredDocumentsResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   /**
@@ -318,23 +253,17 @@ public final class IcingSearchEngineUtils {
    */
   @NonNull
   public static MaintainAnnIndexResultProto byteArrayToMaintainAnnIndexResultProto(
-      @Nullable byte[] maintainAnnIndexResultBytes) {
-    if (maintainAnnIndexResultBytes == null) {
-      Log.e(TAG, "Received null MaintainAnnIndexResultProto from native.");
-      return MaintainAnnIndexResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+      @Nullable byte[] maintainAnnIndexResultBytes, int requestSize) {
+    MaintainAnnIndexResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+                maintainAnnIndexResultBytes,
+                MaintainAnnIndexResultProto.newBuilder(),
+                status -> MaintainAnnIndexResultProto.newBuilder().setStatus(status))
+            .setRequestBytes(requestSize);
+    if (maintainAnnIndexResultBytes != null) {
+      builder.setResponseBytes(maintainAnnIndexResultBytes.length);
     }
-
-    try {
-      return MaintainAnnIndexResultProto.parseFrom(
-          maintainAnnIndexResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing MaintainAnnIndexResultProto.", e);
-      return MaintainAnnIndexResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   /**
@@ -375,222 +304,179 @@ public final class IcingSearchEngineUtils {
 
   @NonNull
   public static DeleteResultProto byteArrayToDeleteResultProto(@Nullable byte[] deleteResultBytes) {
-    if (deleteResultBytes == null) {
-      Log.e(TAG, "Received null DeleteResultProto from native.");
-      return DeleteResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+    DeleteResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+            deleteResultBytes,
+            DeleteResultProto.newBuilder(),
+            status -> DeleteResultProto.newBuilder().setStatus(status));
+    if (deleteResultBytes != null) {
+      builder.setResponseBytes(deleteResultBytes.length);
     }
-
-    try {
-      return DeleteResultProto.parseFrom(deleteResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing DeleteResultProto.", e);
-      return DeleteResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static SuggestionResponse byteArrayToSuggestionResponse(
-      @Nullable byte[] suggestionResponseBytes) {
-    if (suggestionResponseBytes == null) {
-      Log.e(TAG, "Received null suggestionResponseBytes from native.");
-      return SuggestionResponse.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+      @Nullable byte[] suggestionResponseBytes, int requestSize) {
+    SuggestionResponse.Builder builder =
+        getResponseProtoBuilderFromRawData(
+                suggestionResponseBytes,
+                SuggestionResponse.newBuilder(),
+                status -> SuggestionResponse.newBuilder().setStatus(status))
+            .setRequestBytes(requestSize);
+    if (suggestionResponseBytes != null) {
+      builder.setResponseBytes(suggestionResponseBytes.length);
     }
-
-    try {
-      return SuggestionResponse.parseFrom(suggestionResponseBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing suggestionResponseBytes.", e);
-      return SuggestionResponse.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static DeleteByNamespaceResultProto byteArrayToDeleteByNamespaceResultProto(
       @Nullable byte[] deleteByNamespaceResultBytes) {
-    if (deleteByNamespaceResultBytes == null) {
-      Log.e(TAG, "Received null DeleteByNamespaceResultProto from native.");
-      return DeleteByNamespaceResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+    DeleteByNamespaceResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+            deleteByNamespaceResultBytes,
+            DeleteByNamespaceResultProto.newBuilder(),
+            status -> DeleteByNamespaceResultProto.newBuilder().setStatus(status));
+    if (deleteByNamespaceResultBytes != null) {
+      builder.setResponseBytes(deleteByNamespaceResultBytes.length);
     }
-
-    try {
-      return DeleteByNamespaceResultProto.parseFrom(
-          deleteByNamespaceResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing DeleteByNamespaceResultProto.", e);
-      return DeleteByNamespaceResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static DeleteBySchemaTypeResultProto byteArrayToDeleteBySchemaTypeResultProto(
       @Nullable byte[] deleteBySchemaTypeResultBytes) {
-    if (deleteBySchemaTypeResultBytes == null) {
-      Log.e(TAG, "Received null DeleteBySchemaTypeResultProto from native.");
-      return DeleteBySchemaTypeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+    DeleteBySchemaTypeResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+            deleteBySchemaTypeResultBytes,
+            DeleteBySchemaTypeResultProto.newBuilder(),
+            status -> DeleteBySchemaTypeResultProto.newBuilder().setStatus(status));
+    if (deleteBySchemaTypeResultBytes != null) {
+      builder.setResponseBytes(deleteBySchemaTypeResultBytes.length);
     }
-
-    try {
-      return DeleteBySchemaTypeResultProto.parseFrom(
-          deleteBySchemaTypeResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing DeleteBySchemaTypeResultProto.", e);
-      return DeleteBySchemaTypeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static DeleteByQueryResultProto byteArrayToDeleteByQueryResultProto(
-      @Nullable byte[] deleteResultBytes) {
-    if (deleteResultBytes == null) {
-      Log.e(TAG, "Received null DeleteResultProto from native.");
-      return DeleteByQueryResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+      @Nullable byte[] deleteResultBytes, int requestSize) {
+    DeleteByQueryResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+                deleteResultBytes,
+                DeleteByQueryResultProto.newBuilder(),
+                status -> DeleteByQueryResultProto.newBuilder().setStatus(status))
+            .setRequestBytes(requestSize);
+    if (deleteResultBytes != null) {
+      builder.setResponseBytes(deleteResultBytes.length);
     }
-
-    try {
-      return DeleteByQueryResultProto.parseFrom(deleteResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing DeleteResultProto.", e);
-      return DeleteByQueryResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static PersistToDiskResultProto byteArrayToPersistToDiskResultProto(
       @Nullable byte[] persistToDiskResultBytes) {
-    if (persistToDiskResultBytes == null) {
-      Log.e(TAG, "Received null PersistToDiskResultProto from native.");
-      return PersistToDiskResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+    PersistToDiskResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+            persistToDiskResultBytes,
+            PersistToDiskResultProto.newBuilder(),
+            status -> PersistToDiskResultProto.newBuilder().setStatus(status));
+    if (persistToDiskResultBytes != null) {
+      builder.setResponseBytes(persistToDiskResultBytes.length);
     }
-
-    try {
-      return PersistToDiskResultProto.parseFrom(persistToDiskResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing PersistToDiskResultProto.", e);
-      return PersistToDiskResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static OptimizeResultProto byteArrayToOptimizeResultProto(
       @Nullable byte[] optimizeResultBytes) {
-    if (optimizeResultBytes == null) {
-      Log.e(TAG, "Received null OptimizeResultProto from native.");
-      return OptimizeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+    OptimizeResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+            optimizeResultBytes,
+            OptimizeResultProto.newBuilder(),
+            status -> OptimizeResultProto.newBuilder().setStatus(status));
+    if (optimizeResultBytes != null) {
+      builder.setResponseBytes(optimizeResultBytes.length);
     }
-
-    try {
-      return OptimizeResultProto.parseFrom(optimizeResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing OptimizeResultProto.", e);
-      return OptimizeResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static GetOptimizeInfoResultProto byteArrayToGetOptimizeInfoResultProto(
       @Nullable byte[] getOptimizeInfoResultBytes) {
-    if (getOptimizeInfoResultBytes == null) {
-      Log.e(TAG, "Received null GetOptimizeInfoResultProto from native.");
-      return GetOptimizeInfoResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+    GetOptimizeInfoResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+            getOptimizeInfoResultBytes,
+            GetOptimizeInfoResultProto.newBuilder(),
+            status -> GetOptimizeInfoResultProto.newBuilder().setStatus(status));
+    if (getOptimizeInfoResultBytes != null) {
+      builder.setResponseBytes(getOptimizeInfoResultBytes.length);
     }
-
-    try {
-      return GetOptimizeInfoResultProto.parseFrom(
-          getOptimizeInfoResultBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing GetOptimizeInfoResultProto.", e);
-      return GetOptimizeInfoResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static StorageInfoResultProto byteArrayToStorageInfoResultProto(
       @Nullable byte[] storageInfoResultProtoBytes) {
-    if (storageInfoResultProtoBytes == null) {
-      Log.e(TAG, "Received null StorageInfoResultProto from native.");
-      return StorageInfoResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+    StorageInfoResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+            storageInfoResultProtoBytes,
+            StorageInfoResultProto.newBuilder(),
+            status -> StorageInfoResultProto.newBuilder().setStatus(status));
+    if (storageInfoResultProtoBytes != null) {
+      builder.setResponseBytes(storageInfoResultProtoBytes.length);
     }
-
-    try {
-      return StorageInfoResultProto.parseFrom(storageInfoResultProtoBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing GetOptimizeInfoResultProto.", e);
-      return StorageInfoResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static DebugInfoResultProto byteArrayToDebugInfoResultProto(
       @Nullable byte[] debugInfoResultProtoBytes) {
-    if (debugInfoResultProtoBytes == null) {
-      Log.e(TAG, "Received null DebugInfoResultProto from native.");
-      return DebugInfoResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+    DebugInfoResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+            debugInfoResultProtoBytes,
+            DebugInfoResultProto.newBuilder(),
+            status -> DebugInfoResultProto.newBuilder().setStatus(status));
+    if (debugInfoResultProtoBytes != null) {
+      builder.setResponseBytes(debugInfoResultProtoBytes.length);
     }
-
-    try {
-      return DebugInfoResultProto.parseFrom(debugInfoResultProtoBytes, EXTENSION_REGISTRY_LITE);
-    } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing DebugInfoResultProto.", e);
-      return DebugInfoResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
-    }
+    return builder.build();
   }
 
   @NonNull
   public static ResetResultProto byteArrayToResetResultProto(@Nullable byte[] resetResultBytes) {
-    if (resetResultBytes == null) {
-      Log.e(TAG, "Received null ResetResultProto from native.");
-      return ResetResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+    ResetResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
+            resetResultBytes,
+            ResetResultProto.newBuilder(),
+            status -> ResetResultProto.newBuilder().setStatus(status));
+    if (resetResultBytes != null) {
+      builder.setResponseBytes(resetResultBytes.length);
+    }
+    return builder.build();
+  }
+
+  private interface StatusResponseFactory<B> {
+    B create(StatusProto status);
+  }
+
+  @NonNull
+  private static <B extends MessageLite.Builder> B getResponseProtoBuilderFromRawData(
+      @Nullable byte[] result,
+      @NonNull B builder,
+      @NonNull StatusResponseFactory<B> createResponseWithStatus) {
+    if (result == null) {
+      return createResponseWithStatus.create(
+          StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL).build());
     }
 
     try {
-      return ResetResultProto.parseFrom(resetResultBytes, EXTENSION_REGISTRY_LITE);
+      builder.mergeFrom(result, EXTENSION_REGISTRY_LITE);
     } catch (InvalidProtocolBufferException e) {
-      Log.e(TAG, "Error parsing ResetResultProto.", e);
-      return ResetResultProto.newBuilder()
-          .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL))
-          .build();
+      return createResponseWithStatus.create(
+          StatusProto.newBuilder().setCode(StatusProto.Code.INTERNAL).build());
     }
+
+    return builder;
   }
 }
