@@ -1132,17 +1132,26 @@ class IcingDynamicTrie::Dumper {
     struct StackFrame {
       uint32_t node_index;
       int level;
-      std::string prefix;
+      int prefix_len;
       int val;  // character to print, or -1 for none
     };
     std::vector<StackFrame> stack;
-    stack.push_back({storage_->GetNodeIndex(&node), level, prefix, -1});
+    stack.push_back({storage_->GetNodeIndex(&node), level,
+                     static_cast<int>(prefix.size()), -1});
+
+    std::string current_prefix = prefix;
+    current_prefix.reserve(
+        std::max(current_prefix.size() + 256, static_cast<size_t>(256)));
 
     while (!stack.empty()) {
       StackFrame frame = stack.back();
       stack.pop_back();
 
       if (frame.val != -1) {
+        current_prefix.resize(frame.prefix_len);
+        if (frame.val != 0) {
+          current_prefix.push_back(frame.val);
+        }
         for (int j = 0; j < frame.level - 1; j++) {
           *ret << ' ';
         }
@@ -1158,15 +1167,15 @@ class IcingDynamicTrie::Dumper {
 
       if (cur_node.is_leaf()) {
         // Dump suffix and value.
+        const char* suffix = storage_->GetSuffix(cur_node.next_index());
         for (int i = 0; i < frame.level; i++) {
           *ret << ' ';
         }
-        const char* suffix = storage_->GetSuffix(cur_node.next_index());
         *ret << suffix;
         *ret << ' ';
         *ret << SuffixToValueAsString(suffix);
         *ret << '\n';
-        keys->push_back(frame.prefix + suffix);
+        keys->push_back(current_prefix + suffix);
       } else {
         // Find count of valid children.
         uint32_t count = 0;
@@ -1176,14 +1185,11 @@ class IcingDynamicTrie::Dumper {
         }
 
         // Push children in reverse order.
+        int next_prefix_len = static_cast<int>(current_prefix.size());
         for (int i = static_cast<int>(count) - 1; i >= 0; i--) {
           const Next& next = *storage_->GetNext(cur_node.next_index(), i);
-          std::string new_prefix = frame.prefix;
-          if (next.val() != 0u) {
-            new_prefix += next.val();
-          }
-          stack.push_back(
-              {next.node_index(), frame.level + 1, new_prefix, next.val()});
+          stack.push_back({next.node_index(), frame.level + 1, next_prefix_len,
+                           next.val()});
         }
       }
     }

@@ -152,6 +152,8 @@ class MonkeyDocumentGenerator {
 
   const SchemaProto* schema() const { return schema_; }
 
+  int num_namespaces() const { return config_->num_namespaces; }
+
  private:
   MonkeyTestRandomEngine* random_;                    // Does not own.
   const SchemaProto* schema_;                         // Does not own.
