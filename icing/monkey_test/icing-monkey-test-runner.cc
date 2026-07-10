@@ -33,8 +33,14 @@
 #include "icing/icing-search-engine.h"
 #include "icing/join/join-processor.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-abstract-leaf-node.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-abstract-nary-node.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-abstract-query-node.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-and-query-node.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-has-property-query-node.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-not-query-node.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-numeric-query-node.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-or-query-node.h"
+#include "icing/monkey_test/abstract_query_tree/monkey-property-defined-query-node.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-semantic-query-node.h"
 #include "icing/monkey_test/abstract_query_tree/monkey-term-query-node.h"
 #include "icing/monkey_test/in-memory-icing-search-engine.h"
@@ -51,6 +57,7 @@
 #include "icing/proto/term.pb.h"
 #include "icing/query/query-features.h"
 #include "icing/result/result-state-manager.h"
+#include "icing/store/document-group-info.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/logging.h"
@@ -76,6 +83,32 @@ bool GetRandomBoolean(MonkeyTestRandomEngine* random) {
 int GetRandomInt(MonkeyTestRandomEngine* random, int min, int max) {
   std::uniform_int_distribution<> dist(min, max);
   return dist(*random);
+}
+
+// Selects a random element from weighted_elements, where selection is weighted
+// by pair::second.
+// It is assumed that weighted_elements is non-empty and that the sum of
+// weights is positive.
+template <typename T>
+const T& GetRandomWeightedElement(
+    MonkeyTestRandomEngine* random,
+    const std::vector<std::pair<T, int>>& weighted_elements) {
+  int frequency_sum = 0;
+  for (const auto& element : weighted_elements) {
+    frequency_sum += element.second;
+  }
+  std::uniform_int_distribution<> dist(0, frequency_sum - 1);
+  int p = dist(*random);
+  for (const auto& element : weighted_elements) {
+    if (p < element.second) {
+      return element.first;
+    }
+    p -= element.second;
+  }
+  // This won't be reached if sum of weights > 0, which is assumed.
+  ICING_LOG(FATAL)
+      << "GetRandomWeightedElement called with empty list or only 0 weights.";
+  return weighted_elements[0].first;  // Unreachable.
 }
 
 std::string PickRandomPropertyPathForNumericQuery(
@@ -115,15 +148,23 @@ std::string PickRandomPropertyPathForNumericQuery(
   }
 }
 
+std::string GetRandomPropertyPath(MonkeyTestRandomEngine* random,
+                                  MonkeyDocumentGenerator* document_generator) {
+  const SchemaTypeConfigProto& type_config = document_generator->GetType();
+  if (!type_config.properties().empty()) {
+    std::uniform_int_distribution<> prop_dist(
+        0, type_config.properties_size() - 1);
+    return type_config.properties(prop_dist(*random)).property_name();
+  }
+  return "";
+}
+
 void GetRandomPropertyRestricts(
     MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
     std::unordered_set<std::string>& property_restricts) {
-  const SchemaTypeConfigProto& type_config = document_generator->GetType();
-  if (type_config.properties_size() > 0) {
-    std::uniform_int_distribution<> prop_dist(
-        0, type_config.properties_size() - 1);
-    property_restricts.insert(
-        type_config.properties(prop_dist(*random)).property_name());
+  std::string property_path = GetRandomPropertyPath(random, document_generator);
+  if (!property_path.empty()) {
+    property_restricts.insert(property_path);
   }
 }
 
@@ -132,12 +173,27 @@ void GetRandomPropertyRestricts(
 struct MonkeyQueryPair {
   SearchSpecProto search_spec;
   std::unique_ptr<MonkeyAbstractQueryNode> query_node;
-  bool is_numeric = false;
+  struct PresentOperators {
+    bool is_embedding_query = false;
+    bool is_numeric_query = false;
+    bool is_property_defined_query = false;
+    bool is_has_property_query = false;
+    bool is_negation_query = false;
+  } present_operators;
 };
+
+// Forward declaration to allow for recursive generation of the query tree.
+libtextclassifier3::StatusOr<std::unique_ptr<MonkeyAbstractQueryNode>>
+GenerateRandomQueryTree(MonkeyTestRandomEngine* random,
+                        MonkeyDocumentGenerator* document_generator,
+                        SearchSpecProto& search_spec, int depth,
+                        int num_children_per_nary_node,
+                        MonkeyQueryPair::PresentOperators& present_operators);
 
 std::unique_ptr<MonkeyTermQueryNode> GenerateRandomTermNode(
     MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
-    SearchSpecProto& search_spec) {
+    SearchSpecProto& search_spec,
+    MonkeyQueryPair::PresentOperators& present_operators) {
   // 50% chance of getting a property restrict.
   std::unordered_set<std::string> property_restricts;
   if (GetRandomBoolean(random)) {
@@ -146,20 +202,20 @@ std::unique_ptr<MonkeyTermQueryNode> GenerateRandomTermNode(
 
   // Get a random token from the language set as a single term query.
   std::string term = std::string(document_generator->GetToken());
-  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
-  if (GetRandomBoolean(random)) {
-    term_match_type = TermMatchType::PREFIX;
+  bool is_prefix = search_spec.term_match_type() == TermMatchType::PREFIX;
+  if (is_prefix) {
     // Randomly drop a suffix of query to test prefix query.
     std::uniform_int_distribution<> size_dist(1, term.size());
     term.resize(size_dist(*random));
   }
   // TODO(b/491571627) - Decide on how to support queries with different match
   // types.
-  search_spec.set_term_match_type(term_match_type);
-
   auto query_node = std::make_unique<MonkeyTermQueryNode>(
-      term, /*is_prefix=*/false, /*is_verbatim=*/false, term_match_type,
-      /*document_namespaces=*/std::vector<std::string>(),
+      term, /*is_prefix=*/false, /*is_verbatim=*/false,
+      search_spec.term_match_type(),
+      /*document_namespaces=*/
+      std::vector<std::string>(search_spec.namespace_filters().begin(),
+                               search_spec.namespace_filters().end()),
       /*document_schema_types=*/
       std::vector<std::string>(search_spec.schema_type_filters().begin(),
                                search_spec.schema_type_filters().end()),
@@ -170,7 +226,8 @@ std::unique_ptr<MonkeyTermQueryNode> GenerateRandomTermNode(
 
 std::unique_ptr<MonkeySemanticQueryNode> GenerateRandomSemanticNode(
     MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
-    SearchSpecProto& search_spec) {
+    SearchSpecProto& search_spec,
+    MonkeyQueryPair::PresentOperators& present_operators) {
   // 50% chance of getting a property restrict.
   std::unordered_set<std::string> property_restricts;
   if (GetRandomBoolean(random)) {
@@ -187,40 +244,59 @@ std::unique_ptr<MonkeySemanticQueryNode> GenerateRandomSemanticNode(
     std::swap(low, high);
   }
 
+  static constexpr std::array<SearchSpecProto::EmbeddingQueryMetricType::Code,
+                              3>
+      kMetrics = {SearchSpecProto::EmbeddingQueryMetricType::COSINE,
+                  SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
+                  SearchSpecProto::EmbeddingQueryMetricType::EUCLIDEAN};
+  std::uniform_int_distribution<> metric_dist(0, kMetrics.size() - 1);
   SearchSpecProto::EmbeddingQueryMetricType::Code metric_type =
-      SearchSpecProto::EmbeddingQueryMetricType::COSINE;
+      kMetrics[metric_dist(*random)];
   PropertyProto::VectorProto vector =
       document_generator->GetRandomVector(/*allow_quantized_value=*/true);
 
-  search_spec.set_embedding_query_metric_type(metric_type);
-
   *search_spec.add_embedding_query_vectors() = vector;
-
-  // 0 means ANN is not enabled. >0 means ANN is enabled and still includes
-  // the linear search part. The in-memory Icing search engine cannot truly
-  // verify the behavior of the ANN index algorithmically, as IVF-based ANN
-  // is an approximate non-deterministic mapping. As a result, we set a wildly
-  // large nprobe to let ANN degenerate into linear search, granting exact
-  // matching for verification.
-  int nprobe = GetRandomBoolean(random) ? 0 : 100000000;
-  search_spec.set_embedding_query_nprobe(nprobe);
+  int vector_index = search_spec.embedding_query_vectors_size() - 1;
 
   // TODO(b/491571627) - Add support for multiple embedding query vectors.
   auto query_node = std::make_unique<MonkeySemanticQueryNode>(
-      /*vector_index=*/0, low, high, metric_type, nprobe, std::move(vector),
+      /*vector_index=*/vector_index, low, high, metric_type,
+      search_spec.embedding_query_nprobe(), std::move(vector),
       /*property_restricts=*/std::move(property_restricts),
-      /*document_namespaces=*/std::vector<std::string>(),
+      /*document_namespaces=*/
+      std::vector<std::string>(search_spec.namespace_filters().begin(),
+                               search_spec.namespace_filters().end()),
       /*document_schema_types=*/
       std::vector<std::string>(search_spec.schema_type_filters().begin(),
                                search_spec.schema_type_filters().end()));
   search_spec.add_enabled_features(
       std::string(kListFilterQueryLanguageFeature));
+  present_operators.is_embedding_query = true;
   return query_node;
+}
+
+std::unique_ptr<MonkeyPropertyDefinedQueryNode>
+GenerateRandomPropertyDefinedNode(
+    MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
+    SearchSpecProto& search_spec,
+    MonkeyQueryPair::PresentOperators& present_operators) {
+  std::string property_path = GetRandomPropertyPath(random, document_generator);
+  search_spec.add_enabled_features(kListFilterQueryLanguageFeature);
+  present_operators.is_property_defined_query = true;
+  return std::make_unique<MonkeyPropertyDefinedQueryNode>(
+      property_path,
+      /*document_namespaces=*/
+      std::vector<std::string>(search_spec.namespace_filters().begin(),
+                               search_spec.namespace_filters().end()),
+      /*document_schema_types=*/
+      std::vector<std::string>(search_spec.schema_type_filters().begin(),
+                               search_spec.schema_type_filters().end()));
 }
 
 std::unique_ptr<MonkeyAbstractLeafQueryNode> GenerateRandomNumericNode(
     MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
-    SearchSpecProto& search_spec) {
+    SearchSpecProto& search_spec,
+    MonkeyQueryPair::PresentOperators& present_operators) {
   std::string property_path = PickRandomPropertyPathForNumericQuery(
       random, document_generator->schema());
 
@@ -240,18 +316,117 @@ std::unique_ptr<MonkeyAbstractLeafQueryNode> GenerateRandomNumericNode(
 
   auto query_node = std::make_unique<MonkeyNumericQueryNode>(
       property_path, comparator, value,
-      /*document_namespaces=*/std::vector<std::string>(),
+      /*document_namespaces=*/
+      std::vector<std::string>(search_spec.namespace_filters().begin(),
+                               search_spec.namespace_filters().end()),
       /*document_schema_types=*/
       std::vector<std::string>(search_spec.schema_type_filters().begin(),
                                search_spec.schema_type_filters().end()));
   search_spec.add_enabled_features(std::string(kNumericSearchFeature));
+  present_operators.is_numeric_query = true;
   return query_node;
 }
 
+std::unique_ptr<MonkeyHasPropertyQueryNode> GenerateRandomHasPropertyQueryNode(
+    MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
+    SearchSpecProto& search_spec,
+    MonkeyQueryPair::PresentOperators& present_operators) {
+  std::string property_name = GetRandomPropertyPath(random, document_generator);
+  search_spec.add_enabled_features(kListFilterQueryLanguageFeature);
+  search_spec.add_enabled_features(kHasPropertyFunctionFeature);
+
+  present_operators.is_has_property_query = true;
+  return std::make_unique<MonkeyHasPropertyQueryNode>(
+      property_name,
+      /*document_namespaces=*/
+      std::vector<std::string>(search_spec.namespace_filters().begin(),
+                               search_spec.namespace_filters().end()),
+      /*document_schema_types=*/
+      std::vector<std::string>(search_spec.schema_type_filters().begin(),
+                               search_spec.schema_type_filters().end()));
+}
+
+// Vector of functions that generate a random leaf node. Adding a new leaf node
+// generator to this list will enable the generation of that type of leaf node.
 std::vector<std::function<std::unique_ptr<MonkeyAbstractLeafQueryNode>(
-    MonkeyTestRandomEngine*, MonkeyDocumentGenerator*, SearchSpecProto&)>>
+    MonkeyTestRandomEngine*, MonkeyDocumentGenerator*, SearchSpecProto&,
+    MonkeyQueryPair::PresentOperators&)>>
     leaf_node_generators = {GenerateRandomTermNode, GenerateRandomSemanticNode,
-                            GenerateRandomNumericNode};
+                            GenerateRandomNumericNode,
+                            GenerateRandomPropertyDefinedNode,
+                            GenerateRandomHasPropertyQueryNode};
+
+libtextclassifier3::StatusOr<std::unique_ptr<MonkeyNotQueryNode>>
+GenerateRandomNotNode(MonkeyTestRandomEngine* random,
+                      MonkeyDocumentGenerator* document_generator,
+                      SearchSpecProto& search_spec, int depth,
+                      int num_children_per_nary_node,
+                      MonkeyQueryPair::PresentOperators& present_operators) {
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<MonkeyAbstractQueryNode> child_node,
+                         GenerateRandomQueryTree(
+                             random, document_generator, search_spec, depth - 1,
+                             num_children_per_nary_node, present_operators));
+  present_operators.is_negation_query = true;
+  return std::make_unique<MonkeyNotQueryNode>(
+      std::move(child_node),
+      /*document_namespaces=*/
+      std::vector<std::string>(search_spec.namespace_filters().begin(),
+                               search_spec.namespace_filters().end()),
+      /*document_schema_types=*/
+      std::vector<std::string>(search_spec.schema_type_filters().begin(),
+                               search_spec.schema_type_filters().end()));
+}
+
+libtextclassifier3::StatusOr<std::unique_ptr<MonkeyAbstractNaryQueryNode>>
+GenerateRandomLogicalConjunctionNode(
+    MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
+    SearchSpecProto& search_spec, int depth, int num_children_per_nary_node,
+    bool is_and_node, MonkeyQueryPair::PresentOperators& present_operators) {
+  std::vector<std::unique_ptr<MonkeyAbstractQueryNode>> child_nodes;
+  child_nodes.reserve(num_children_per_nary_node);
+  for (int i = 0; i < num_children_per_nary_node; ++i) {
+    ICING_ASSIGN_OR_RETURN(
+        std::unique_ptr<MonkeyAbstractQueryNode> child_node,
+        GenerateRandomQueryTree(random, document_generator, search_spec,
+                                depth - 1, num_children_per_nary_node,
+                                present_operators));
+    child_nodes.push_back(std::move(child_node));
+  }
+  if (is_and_node) {
+    return std::make_unique<MonkeyAndQueryNode>(std::move(child_nodes));
+  } else {
+    return std::make_unique<MonkeyOrQueryNode>(std::move(child_nodes));
+  }
+}
+
+libtextclassifier3::StatusOr<std::unique_ptr<MonkeyAbstractNaryQueryNode>>
+GenerateRandomAndNode(MonkeyTestRandomEngine* random,
+                      MonkeyDocumentGenerator* document_generator,
+                      SearchSpecProto& search_spec, int depth,
+                      int num_children_per_nary_node,
+                      MonkeyQueryPair::PresentOperators& present_operators) {
+  return GenerateRandomLogicalConjunctionNode(
+      random, document_generator, search_spec, depth,
+      num_children_per_nary_node, /*is_and_node=*/true, present_operators);
+}
+
+libtextclassifier3::StatusOr<std::unique_ptr<MonkeyAbstractNaryQueryNode>>
+GenerateRandomOrNode(MonkeyTestRandomEngine* random,
+                     MonkeyDocumentGenerator* document_generator,
+                     SearchSpecProto& search_spec, int depth,
+                     int num_children_per_nary_node,
+                     MonkeyQueryPair::PresentOperators& present_operators) {
+  return GenerateRandomLogicalConjunctionNode(
+      random, document_generator, search_spec, depth,
+      num_children_per_nary_node, /*is_and_node=*/false, present_operators);
+}
+
+std::vector<std::function<
+    libtextclassifier3::StatusOr<std::unique_ptr<MonkeyAbstractNaryQueryNode>>(
+        MonkeyTestRandomEngine*, MonkeyDocumentGenerator*, SearchSpecProto&,
+        int, int, MonkeyQueryPair::PresentOperators&)>>
+    nary_node_generators = {GenerateRandomAndNode, GenerateRandomOrNode,
+                            GenerateRandomNotNode};
 
 // Generates a random query tree with the given depth.
 // As a part of generating the query tree, the some fields in the
@@ -260,7 +435,9 @@ std::vector<std::function<std::unique_ptr<MonkeyAbstractLeafQueryNode>(
 libtextclassifier3::StatusOr<std::unique_ptr<MonkeyAbstractQueryNode>>
 GenerateRandomQueryTree(MonkeyTestRandomEngine* random,
                         MonkeyDocumentGenerator* document_generator,
-                        SearchSpecProto& search_spec, int depth) {
+                        SearchSpecProto& search_spec, int depth,
+                        int num_children_per_nary_node,
+                        MonkeyQueryPair::PresentOperators& present_operators) {
   if (depth <= 0) {
     return absl_ports::InvalidArgumentError("Depth must be positive.");
   }
@@ -269,18 +446,19 @@ GenerateRandomQueryTree(MonkeyTestRandomEngine* random,
     int leaf_node_generator_index =
         GetRandomInt(random, 0, leaf_node_generators.size() - 1);
     return leaf_node_generators[leaf_node_generator_index](
-        random, document_generator, search_spec);
+        random, document_generator, search_spec, present_operators);
   } else {
-    // TODO(b/491571627): Handle cases where depth > 1 i.e. we have nodes with
-    // children.
-    return absl_ports::UnimplementedError(
-        "Depth > 1 not implemented yet.");  // Not implemented yet.
+    int nary_node_generator_index =
+        GetRandomInt(random, 0, nary_node_generators.size() - 1);
+    return nary_node_generators[nary_node_generator_index](
+        random, document_generator, search_spec, depth,
+        num_children_per_nary_node, present_operators);
   }
 }
 
 libtextclassifier3::StatusOr<MonkeyQueryPair> GenerateRandomMonkeyQueryPair(
     MonkeyTestRandomEngine* random, MonkeyDocumentGenerator* document_generator,
-    int depth = 1) {
+    int depth = 1, int num_children_per_nary_node = 2) {
   SearchSpecProto search_spec;
 
   // %50 chance of getting one type filter
@@ -295,16 +473,53 @@ libtextclassifier3::StatusOr<MonkeyQueryPair> GenerateRandomMonkeyQueryPair(
   search_spec.mutable_schema_type_filters()->Add(type_filters.begin(),
                                                  type_filters.end());
 
+  if (document_generator->num_namespaces() > 0) {
+    // %50 chance of getting one namespace filter
+    // %25 chance of getting two namespace filters
+    // %25 chance of getting no namespace filters
+    std::vector<std::string> namespace_filters;
+    for (int i = 0; i < 2; ++i) {
+      if (GetRandomBoolean(random)) {
+        namespace_filters.push_back(document_generator->GetNamespace());
+      }
+    }
+    search_spec.mutable_namespace_filters()->Add(namespace_filters.begin(),
+                                                 namespace_filters.end());
+  }
+  if (GetRandomBoolean(random)) {
+    search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  } else {
+    search_spec.set_term_match_type(TermMatchType::PREFIX);
+  }
+
+  // 0 means ANN is not enabled. >0 means ANN is enabled and still includes
+  // the linear search part. The in-memory Icing search engine cannot truly
+  // verify the behavior of the ANN index algorithmically, as IVF-based ANN
+  // is an approximate non-deterministic mapping. As a result, we set a wildly
+  // large nprobe to let ANN degenerate into linear search, granting exact
+  // matching for verification.
+  int nprobe = GetRandomBoolean(random) ? 0 : 100000000;
+  search_spec.set_embedding_query_nprobe(nprobe);
+
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+
+  // Set default metric. Semantic nodes generated in this monkey test explicitly
+  // specify their metric in the query string, overriding this.
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::COSINE);
+
+  MonkeyQueryPair::PresentOperators present_operators;
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<MonkeyAbstractQueryNode> query_node,
-      GenerateRandomQueryTree(random, document_generator, search_spec, depth));
+      GenerateRandomQueryTree(random, document_generator, search_spec, depth,
+                              num_children_per_nary_node, present_operators));
 
   search_spec.set_query(query_node->GenerateQueryString());
-  bool is_numeric =
-      dynamic_cast<MonkeyNumericQueryNode*>(query_node.get()) != nullptr;
+
   return MonkeyQueryPair{.search_spec = std::move(search_spec),
                          .query_node = std::move(query_node),
-                         .is_numeric = is_numeric};
+                         .present_operators = std::move(present_operators)};
 }
 
 ScoringSpecProto GenerateRandomScoringSpec(MonkeyTestRandomEngine* random) {
@@ -502,7 +717,8 @@ IcingMonkeyTestRunner::IcingMonkeyTestRunner(
     IcingMonkeyTestRunnerConfiguration config)
     : config_(std::move(config)),
       random_(config_.seed),
-      in_memory_icing_(std::make_unique<InMemoryIcingSearchEngine>(&random_)),
+      in_memory_icing_(std::make_unique<InMemoryIcingSearchEngine>(
+          &random_, config_.enable_join_delete_propagation)),
       schema_generator_(
           std::make_unique<MonkeySchemaGenerator>(&random_, &config_)) {
   ICING_LOG(INFO) << "Monkey test runner started with seed: " << config_.seed;
@@ -514,20 +730,10 @@ void IcingMonkeyTestRunner::Run(uint32_t num) {
       << "Icing search engine has not yet been created. Please call "
          "Initialize() first";
 
-  uint32_t frequency_sum = 0;
-  for (const auto& schedule : config_.monkey_api_schedules) {
-    frequency_sum += schedule.second;
-  }
-  std::uniform_int_distribution<> dist(0, frequency_sum - 1);
   for (uint32_t i = 0; i < num; ++i) {
-    int p = dist(random_);
-    for (const auto& schedule : config_.monkey_api_schedules) {
-      if (p < schedule.second) {
-        ASSERT_NO_FATAL_FAILURE(schedule.first(this));
-        break;
-      }
-      p -= schedule.second;
-    }
+    auto api_to_call =
+        GetRandomWeightedElement(&random_, config_.monkey_api_schedules);
+    ASSERT_NO_FATAL_FAILURE(api_to_call(this));
     ICING_LOG(INFO) << "Completed Run #" << i
                     << ". Documents in the in-memory icing: "
                     << in_memory_icing_->GetNumAliveDocuments();
@@ -543,6 +749,11 @@ SetSchemaResultProto IcingMonkeyTestRunner::SetSchema(SchemaProto&& schema) {
 }
 
 void IcingMonkeyTestRunner::Initialize() {
+  // Check that the configuration is valid for join delete propagation.
+  if (config_.enable_join_delete_propagation) {
+    ASSERT_TRUE(config_.IsJoinEnabled());
+  }
+
   if (config_.initialize_by_existing_data) {
     ICING_LOG(INFO) << "Initializing icing by existing data";
 
@@ -571,6 +782,7 @@ void IcingMonkeyTestRunner::DoUpdateSchema() {
     ASSERT_THAT(set_schema_result.status(), Not(ProtoIsOk()));
     return;
   }
+
   ICING_LOG(DBG) << "Updating schema to: " << result.schema.DebugString();
   SetSchemaResultProto icing_set_schema_result =
       SetSchema(std::move(result.schema));
@@ -582,15 +794,15 @@ void IcingMonkeyTestRunner::DoUpdateSchema() {
   ASSERT_THAT(
       icing_set_schema_result.index_incompatible_changed_schema_types(),
       UnorderedElementsAreArray(result.schema_types_index_incompatible));
+  ASSERT_THAT(icing_set_schema_result.join_incompatible_changed_schema_types(),
+              UnorderedElementsAreArray(result.schema_types_join_incompatible));
 
-  // Update in-memory icing
-  for (const std::string& deleted_type : result.schema_types_deleted) {
-    ICING_ASSERT_OK(in_memory_icing_->DeleteBySchemaType(deleted_type));
-  }
-  for (const std::string& incompatible_type :
-       result.schema_types_incompatible) {
-    ICING_ASSERT_OK(in_memory_icing_->DeleteBySchemaType(incompatible_type));
-  }
+  ICING_ASSERT_OK_AND_ASSIGN(
+      int num_deleted_documents,
+      in_memory_icing_->RevalidateDocuments(result.schema_types_deleted,
+                                            result.schema_types_incompatible));
+  ASSERT_THAT(icing_set_schema_result.deleted_document_count(),
+              Eq(num_deleted_documents));
 }
 
 void IcingMonkeyTestRunner::DoGet() {
@@ -635,8 +847,17 @@ void IcingMonkeyTestRunner::DoPut() {
                   << doc.document.namespace_()
                   << ", uri: " << doc.document.uri();
   ICING_LOG(DBG) << doc.document.DebugString();
-  in_memory_icing_->Put(doc);
-  ASSERT_THAT(icing_->Put(doc.document).status(), ProtoIsOk());
+
+  // Put the document into the in-memory icing. If it fails due to unsatisfied
+  // dependency of delete propagation, then expect the same result from the
+  // Icing search engine.
+  auto status = in_memory_icing_->Put(doc);
+  if (status.ok()) {
+    ASSERT_THAT(icing_->Put(doc.document).status(), ProtoIsOk());
+  } else {
+    ASSERT_THAT(icing_->Put(doc.document).status(),
+                ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
+  }
 }
 
 void IcingMonkeyTestRunner::DoDelete() {
@@ -648,10 +869,21 @@ void IcingMonkeyTestRunner::DoDelete() {
   DeleteResultProto delete_result =
       icing_->Delete(document.name_space, document.uri);
   if (document.document.has_value()) {
-    ICING_ASSERT_OK(
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::vector<DocumentMetadata> deleted_documents,
         in_memory_icing_->Delete(document.name_space, document.uri));
     ASSERT_THAT(delete_result.status(), ProtoIsOk())
         << "Cannot delete an existing document.";
+
+    // Verify # of deleted documents.
+    //
+    // Note:
+    // - If delete propagation is enabled, then the number of deleted documents
+    //   may be larger than 1.
+    // - If delete propagation is not enabled, then the number of deleted
+    //   documents should be exactly 1.
+    ASSERT_THAT(deleted_documents,
+                SizeIs(delete_result.delete_stats().num_documents_deleted()));
   } else {
     // Should expect that no document has been deleted.
     if (delete_result.status().code() != StatusProto::NOT_FOUND) {
@@ -716,20 +948,24 @@ void IcingMonkeyTestRunner::DoDeleteBySchemaType() {
 }
 
 void IcingMonkeyTestRunner::DoDeleteByQuery() {
+  int tree_depth =
+      GetRandomWeightedElement(&random_, config_.possible_query_tree_depths);
   ICING_ASSERT_OK_AND_ASSIGN(
       MonkeyQueryPair query_pair,
-      GenerateRandomMonkeyQueryPair(&random_, document_generator_.get()));
+      GenerateRandomMonkeyQueryPair(&random_, document_generator_.get(),
+                                    tree_depth));
   SearchSpecProto search_spec = query_pair.search_spec;
   ICING_LOG(INFO) << "Monkey deleting by query: " << search_spec.query();
   DeleteByQueryResultProto delete_result = icing_->DeleteByQuery(search_spec);
   ICING_ASSERT_OK_AND_ASSIGN(
-      uint32_t num_docs_deleted,
+      std::vector<DocumentMetadata> deleted_documents,
       in_memory_icing_->DeleteByQuery(query_pair.query_node.get()));
-  if (num_docs_deleted != 0) {
+  if (!deleted_documents.empty()) {
     ASSERT_THAT(delete_result.status(), ProtoIsOk())
         << "Cannot delete documents that matches with the query.";
-    ASSERT_THAT(delete_result.delete_by_query_stats().num_documents_deleted(),
-                Eq(num_docs_deleted));
+    ASSERT_THAT(
+        deleted_documents,
+        SizeIs(delete_result.delete_by_query_stats().num_documents_deleted()));
   } else {
     // Should expect that no document has been deleted.
     if (delete_result.status().code() != StatusProto::NOT_FOUND) {
@@ -756,19 +992,34 @@ void IcingMonkeyTestRunner::DoJoinSearch() {
 }
 
 void IcingMonkeyTestRunner::InternalSearch(bool is_join_search) {
+  int tree_depth =
+      GetRandomWeightedElement(&random_, config_.possible_query_tree_depths);
+  std::uniform_int_distribution<> num_children_dist(
+      0, config_.possible_num_children_per_nary_node.size() - 1);
+  int num_children =
+      config_.possible_num_children_per_nary_node[num_children_dist(random_)];
   // Top level search spec.
   ICING_ASSERT_OK_AND_ASSIGN(
       MonkeyQueryPair query_pair,
-      GenerateRandomMonkeyQueryPair(&random_, document_generator_.get()));
-  auto search_spec = std::make_unique<SearchSpecProto>(query_pair.search_spec);
-  auto scoring_spec =
+      GenerateRandomMonkeyQueryPair(&random_, document_generator_.get(),
+                                    tree_depth, num_children));
+  std::unique_ptr<SearchSpecProto> search_spec =
+      std::make_unique<SearchSpecProto>(query_pair.search_spec);
+  std::unique_ptr<ScoringSpecProto> scoring_spec =
       std::make_unique<ScoringSpecProto>(GenerateRandomScoringSpec(&random_));
   auto result_spec =
       std::make_unique<ResultSpecProto>(GenerateRandomResultSpecProto(
           &random_, in_memory_icing_->GetSchema(), /*is_nested=*/false));
   ResultSpecProto::SnippetSpecProto snippet_spec = result_spec->snippet_spec();
   bool is_projection_enabled = !result_spec->type_property_masks().empty();
-  bool is_embedding_query = !search_spec->embedding_query_vectors().empty();
+
+  bool is_snippetable_query =
+      snippet_spec.num_matches_per_property() > 0 && !is_projection_enabled &&
+      !query_pair.present_operators.is_embedding_query &&
+      !query_pair.present_operators.is_has_property_query &&
+      !query_pair.present_operators.is_property_defined_query &&
+      !query_pair.present_operators.is_numeric_query &&
+      !query_pair.present_operators.is_negation_query;
 
   ICING_LOG(INFO) << "Monkey searching by query: " << search_spec->query()
                   << ", term_match_type: " << search_spec->term_match_type()
@@ -863,8 +1114,8 @@ void IcingMonkeyTestRunner::InternalSearch(bool is_join_search) {
     search_result = icing_->GetNextPage(search_result.next_page_token());
     ASSERT_THAT(search_result.status(), ProtoIsOk());
   }
-  if (snippet_spec.num_matches_per_property() > 0 && !is_projection_enabled &&
-      !is_embedding_query && !query_pair.is_numeric) {
+
+  if (is_snippetable_query) {
     ASSERT_THAT(num_snippeted,
                 Eq(std::min<uint32_t>(exp_results.size(),
                                       snippet_spec.num_to_snippet())));
@@ -949,7 +1200,14 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   icing_options.set_enable_manual_persist_to_disk(true);
   icing_options.set_enable_repeated_field_joins(true);
   icing_options.set_enable_non_existent_qualified_id_join(true);
+  icing_options.set_enable_background_task_scheduler(true);
+  icing_options.set_enable_delete_propagation_from(
+      config_.enable_join_delete_propagation);
+
   icing_options.set_enable_schema_definition_deduping(true);
+  icing_options.set_build_property_existence_metadata_hits(true);
+  icing_options.set_schema_store_release_cached_proto_after_use(
+      GetRandomBoolean(&random_));
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());
 }
