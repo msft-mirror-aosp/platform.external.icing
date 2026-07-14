@@ -477,7 +477,7 @@ message SetSchemaRequestProto {
 }
 
 // Result of a call to IcingSearchEngine.SetSchema
-// Next tag: 19
+// Next tag: 21
 message SetSchemaResultProto {
   // Status code can be one of:
   //   OK
@@ -563,6 +563,16 @@ message SetSchemaResultProto {
   // The start time of the binder transaction latency. This is used to measure
   // the latency of passing data from the VM via the binder.
   optional int64 vm_binder_transaction_latency_start_time_ms = 18;
+
+  // Size of the SchemaProto or SetSchemaRequestProto request in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 request_bytes = 19;
+
+  // Size of the SetSchemaResultProto response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 20;
 }
 
 // Stats and latencies for IcingSearchEngine::SetSchema.
@@ -599,7 +609,7 @@ message SetSchemaStatsProto {
 }
 
 // Result of a call to IcingSearchEngine.GetSchema
-// Next tag: 4
+// Next tag: 5
 message GetSchemaResultProto {
   // Status code can be one of:
   //   OK
@@ -619,10 +629,15 @@ message GetSchemaResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 3;
+
+  // Size of the GetSchemaResultProto response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 4;
 }
 
 // Result of a call to IcingSearchEngine.GetSchemaType
-// Next tag: 5
+// Next tag: 6
 message GetSchemaTypeResultProto {
   // Status code can be one of:
   //   OK
@@ -647,4 +662,9 @@ message GetSchemaTypeResultProto {
   // The start time of the binder transaction latency. This is used to measure
   // the latency of passing data from the VM via the binder.
   optional int64 vm_binder_transaction_latency_start_time_ms = 4;
+
+  // Size of the GetSchemaTypeResultProto response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 5;
 }

@@ -32,7 +32,8 @@ class FeatureFlags {
                         bool enable_skip_set_schema_type_equality_check,
                         bool enable_schema_definition_deduping,
                         bool enable_delete_propagation_from,
-                        bool enable_account_property_incompatibility_check)
+                        bool enable_account_property_incompatibility_check,
+                        bool schema_store_release_cached_proto_after_use)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_repeated_field_joins_(enable_repeated_field_joins),
         enable_embedding_backup_generation_(enable_embedding_backup_generation),
@@ -46,7 +47,9 @@ class FeatureFlags {
         enable_schema_definition_deduping_(enable_schema_definition_deduping),
         enable_delete_propagation_from_(enable_delete_propagation_from),
         enable_account_property_incompatibility_check_(
-            enable_account_property_incompatibility_check) {}
+            enable_account_property_incompatibility_check),
+        schema_store_release_cached_proto_after_use_(
+            schema_store_release_cached_proto_after_use) {}
 
   bool allow_circular_schema_definitions() const {
     return allow_circular_schema_definitions_;
@@ -86,6 +89,10 @@ class FeatureFlags {
 
   bool enable_account_property_incompatibility_check() const {
     return enable_account_property_incompatibility_check_;
+  }
+
+  bool schema_store_release_cached_proto_after_use() const {
+    return schema_store_release_cached_proto_after_use_;
   }
 
  private:
@@ -148,6 +155,9 @@ class FeatureFlags {
 
   // Whether to enable the account property incompatibility check.
   bool enable_account_property_incompatibility_check_ = false;
+
+  // Whether to release schema-store's cached proto instances after use.
+  bool schema_store_release_cached_proto_after_use_ = false;
 };
 
 class FeatureFlagsBuilder {
@@ -222,6 +232,13 @@ class FeatureFlagsBuilder {
       bool enable_account_property_incompatibility_check) {
     feature_flags_.enable_account_property_incompatibility_check_ =
         enable_account_property_incompatibility_check;
+    return *this;
+  }
+
+  FeatureFlagsBuilder& set_schema_store_release_cached_proto_after_use(
+      bool schema_store_release_cached_proto_after_use) {
+    feature_flags_.schema_store_release_cached_proto_after_use_ =
+        schema_store_release_cached_proto_after_use;
     return *this;
   }
 
