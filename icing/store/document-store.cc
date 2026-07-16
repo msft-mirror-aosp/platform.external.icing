@@ -2667,18 +2667,20 @@ libtextclassifier3::StatusOr<
     google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
 DocumentStore::CollectCorpusInfo() const {
   google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo> corpus_info;
-  // Ok to use GetFileBackedSchemaProto() here because we don't need the schema
-  // property definitions.
-  libtextclassifier3::StatusOr<const SchemaProto*> schema_proto_or =
-      schema_store_->GetFileBackedSchemaProto();
-  if (!schema_proto_or.ok()) {
-    return corpus_info;
+  const SchemaProto* schema_proto = nullptr;
+  if (!feature_flags_.schema_store_release_cached_proto_after_use()) {
+    libtextclassifier3::StatusOr<const SchemaProto*> schema_proto_or =
+        schema_store_->GetFileBackedSchemaProto();
+    if (!schema_proto_or.ok()) {
+      return corpus_info;
+    }
+    schema_proto = schema_proto_or.ValueOrDie();
   }
+
   // Maps from CorpusId to the corresponding protocol buffer in the result.
   std::unordered_map<CorpusId, DocumentDebugInfoProto::CorpusInfo*> info_map;
   std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
       GetNamespaceIdsToNamespaces(namespace_mapper_.get());
-  const SchemaProto* schema_proto = schema_proto_or.ValueOrDie();
   int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
        ++document_id) {
@@ -2697,21 +2699,38 @@ DocumentStore::CollectCorpusInfo() const {
           << " type id for document id: "
           << document_id;
       continue;
-    } else if (filter_data->schema_type_id() >= schema_proto->types().size()) {
-      ICING_LOG(WARNING)
-          << "Encountered out of range schema type id for document id: "
-          << document_id << ". Schema type id: "
-          << filter_data->schema_type_id() << ", max schema type id: "
-          << schema_proto->types().size();
-      continue;
     }
-    const std::string& schema =
-        schema_proto->types()[filter_data->schema_type_id()].schema_type();
+
+    const std::string* schema = nullptr;
+    if (feature_flags_.schema_store_release_cached_proto_after_use()) {
+      libtextclassifier3::StatusOr<const std::string*> schema_type_or =
+          schema_store_->GetSchemaType(filter_data->schema_type_id());
+      if (!schema_type_or.ok()) {
+        ICING_LOG(WARNING)
+            << "Encountered out of range schema type id for document id: "
+            << document_id
+            << ". Schema type id: " << filter_data->schema_type_id();
+        continue;
+      }
+      schema = schema_type_or.ValueOrDie();
+    } else {
+      if (filter_data->schema_type_id() >= schema_proto->types().size()) {
+        ICING_LOG(WARNING)
+            << "Encountered out of range schema type id for document id: "
+            << document_id
+            << ". Schema type id: " << filter_data->schema_type_id()
+            << ", max schema type id: " << schema_proto->types().size();
+        continue;
+      }
+      schema =
+          &schema_proto->types()[filter_data->schema_type_id()].schema_type();
+    }
+
     auto iter = info_map.find(score_data->corpus_id());
     if (iter == info_map.end()) {
       DocumentDebugInfoProto::CorpusInfo* entry = corpus_info.Add();
       entry->set_namespace_(name_space);
-      entry->set_schema(schema);
+      entry->set_schema(*schema);
       iter = info_map.insert({score_data->corpus_id(), entry}).first;
     }
     iter->second->set_total_documents(iter->second->total_documents() + 1);
