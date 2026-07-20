@@ -70,6 +70,8 @@ class JoinChildrenFetcherImplV3Test : public ::testing::Test {
  protected:
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+    fake_clock_.SetSystemTimeMilliseconds(123);
+
     base_dir_ = GetTestTempDir() + "/icing_test";
     ASSERT_THAT(filesystem_.CreateDirectoryRecursively(base_dir_.c_str()),
                 IsTrue());
@@ -163,17 +165,21 @@ class JoinChildrenFetcherImplV3Test : public ::testing::Test {
 
   libtextclassifier3::StatusOr<DocumentId> PutAndIndexDocument(
       const DocumentProto& document) {
-    ICING_ASSIGN_OR_RETURN(DocumentStore::PutResult put_result,
-                           doc_store_->Put(document));
     ICING_ASSIGN_OR_RETURN(
         TokenizedDocument tokenized_document,
-        TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                  document));
+        TokenizedDocument::Create(
+            schema_store_.get(), lang_segmenter_.get(),
+            /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+            std::move(document)));
+    ICING_ASSIGN_OR_RETURN(
+        DocumentStore::PutResult put_result,
+        doc_store_->Put(tokenized_document.document_wrapper()));
 
     ICING_ASSIGN_OR_RETURN(
         std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
         QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                               qualified_id_join_index_.get()));
+                                               qualified_id_join_index_.get(),
+                                               feature_flags_.get()));
     ICING_RETURN_IF_ERROR(
         handler->Handle(tokenized_document, put_result.new_document_id,
                         put_result.old_document_id, /*recovery_mode=*/false,
@@ -494,12 +500,14 @@ TEST_F(JoinChildrenFetcherImplV3Test,
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId message3_id,
                              PutAndIndexDocument(message3));
   // Sanity check for the join index.
-  ASSERT_THAT(qualified_id_join_index_->Get(person1_id),
-              IsOkAndHolds(ElementsAre(DocumentJoinIdPair(message1_id, 0),
-                                       DocumentJoinIdPair(message2_id, 1),
-                                       DocumentJoinIdPair(message3_id, 0))));
-  ASSERT_THAT(qualified_id_join_index_->Get(person2_id),
-              IsOkAndHolds(ElementsAre(DocumentJoinIdPair(message2_id, 0))));
+  ASSERT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(person1_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(message1_id, 0),
+                               DocumentJoinIdPair(message2_id, 1),
+                               DocumentJoinIdPair(message3_id, 0))));
+  ASSERT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(person2_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(message2_id, 0))));
 
   ScoredDocumentHit scored_doc_hit_message1(message1_id, kSectionIdMaskNone,
                                             /*score=*/1.0);
@@ -601,13 +609,16 @@ TEST_F(JoinChildrenFetcherImplV3Test,
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId email3_id, PutAndIndexDocument(email3));
   ICING_ASSERT_OK_AND_ASSIGN(DocumentId email4_id, PutAndIndexDocument(email4));
   // Sanity check for the join index.
-  ASSERT_THAT(qualified_id_join_index_->Get(person1_id),
-              IsOkAndHolds(ElementsAre(DocumentJoinIdPair(email1_id, 0),
-                                       DocumentJoinIdPair(email2_id, 0))));
-  ASSERT_THAT(qualified_id_join_index_->Get(person2_id),
-              IsOkAndHolds(ElementsAre(DocumentJoinIdPair(email3_id, 0))));
-  ASSERT_THAT(qualified_id_join_index_->Get(person3_id),
-              IsOkAndHolds(ElementsAre(DocumentJoinIdPair(email4_id, 0))));
+  ASSERT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(person1_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(email1_id, 0),
+                               DocumentJoinIdPair(email2_id, 0))));
+  ASSERT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(person2_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(email3_id, 0))));
+  ASSERT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(person3_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(email4_id, 0))));
 
   ScoredDocumentHit scored_doc_hit_email1(email1_id, kSectionIdMaskNone,
                                           /*score=*/1.0);

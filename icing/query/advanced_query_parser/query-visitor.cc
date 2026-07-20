@@ -33,7 +33,8 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/absl_ports/str_join.h"
-#include "icing/index/embed/doc-hit-info-iterator-embedding.h"
+#include "icing/index/embed/doc-hit-info-iterator-embedding-v2.h"
+#include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/iterator/doc-hit-info-iterator-all-document-id.h"
 #include "icing/index/iterator/doc-hit-info-iterator-and.h"
@@ -50,6 +51,7 @@
 #include "icing/query/advanced_query_parser/abstract-syntax-tree.h"
 #include "icing/query/advanced_query_parser/function.h"
 #include "icing/query/advanced_query_parser/lexer.h"
+#include "icing/query/advanced_query_parser/optimizer/query-optimization-util.h"
 #include "icing/query/advanced_query_parser/param.h"
 #include "icing/query/advanced_query_parser/parser.h"
 #include "icing/query/advanced_query_parser/pending-value.h"
@@ -197,12 +199,10 @@ QueryVisitor::CreateTermIterator(const QueryTerm& query_term) {
           std::unique_ptr<DocHitInfoIterator> term_iterator,
           index_.GetIterator(query_term.term, unnormalized_term_start,
                              query_term.raw_term.length(), kSectionIdMaskAll,
-                             search_spec_.term_match_type(),
-                             needs_term_frequency_info_));
+                             match_type, needs_term_frequency_info_));
       query_term_iterators_[query_term.term] =
-          std::make_unique<DocHitInfoIteratorFilter>(
-              std::move(term_iterator), &document_store_, &schema_store_,
-              filter_options_, current_time_ms_);
+          DocHitInfoIteratorFilter::ApplyFilter(
+              std::move(term_iterator), filter_predicate_);
     }
   }
 
@@ -351,7 +351,7 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SearchFunction(
     QueryVisitor query_visitor(
         &index_, &numeric_index_, &embedding_index_, &document_store_,
         &schema_store_, &normalizer_, &tokenizer_, join_children_fetcher_,
-        search_spec_, filter_options_, needs_term_frequency_info_,
+        search_spec_, filter_predicate_, needs_term_frequency_info_,
         get_embedding_match_info_, &feature_flags_, pending_property_restricts_,
         processing_not_, current_time_ms_);
     tree_root->Accept(&query_visitor);
@@ -462,14 +462,35 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
   }
 
   // Create and return iterator.
-  EmbeddingQueryResults::EmbeddingQueryMatchInfoMap* info_map =
-      &embedding_query_results_.result_infos[vector_index][metric_type];
   ICING_ASSIGN_OR_RETURN(
-      std::unique_ptr<DocHitInfoIterator> iterator,
-      DocHitInfoIteratorEmbedding::Create(
-          &search_spec_.embedding_query_vectors(vector_index), metric_type, low,
-          high, get_embedding_match_info_, info_map, &embedding_index_,
-          &document_store_, &schema_store_, current_time_ms_));
+      EmbeddingQueryResults::EmbeddingQueryMatchInfoMap * info_map,
+      embedding_query_results_.GetOrCreateMatchInfoMap(
+          static_cast<int>(vector_index), metric_type));
+  const PropertyProto::VectorProto& query_vector =
+      search_spec_.embedding_query_vectors(static_cast<int>(vector_index));
+  std::unique_ptr<DocHitInfoIterator> iterator;
+  std::vector<uint32_t> cluster_ids;
+  int32_t nprobe = search_spec_.embedding_query_nprobe();
+  if (nprobe > 0) {
+    // Positive nprobe value indicates that IVF search should be performed.
+    ICING_ASSIGN_OR_RETURN(
+        EmbeddingIndex::IvfContextManager ivf_context_manager,
+        EmbeddingIndex::IvfContextManager::Create(query_vector));
+    ICING_ASSIGN_OR_RETURN(cluster_ids,
+                           ivf_context_manager.GetClosestClusterIdsByDistance(
+                               &embedding_index_, query_vector, nprobe));
+    cluster_ids.push_back(embedding_util::kIvfDeltaStoreClusterId);
+  }
+  cluster_ids.push_back(embedding_util::kLinearSearchClusterId);
+  ICING_ASSIGN_OR_RETURN(
+      iterator, DocHitInfoIteratorEmbeddingV2::Create(
+                    &query_vector, metric_type, low, high, info_map,
+                    embedding_query_results_.global_scores.get(),
+                    get_embedding_match_info_
+                        ? embedding_query_results_.global_section_infos.get()
+                        : nullptr,
+                    cluster_ids, &embedding_index_, &document_store_,
+                    &schema_store_, current_time_ms_));
   return PendingValue(std::move(iterator));
 }
 
@@ -565,15 +586,16 @@ QueryVisitor::ProduceTextTokenIterators(QueryTerm text_value) {
   std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
   // raw_text is the portion of text_value.raw_term that hasn't yet been
   // matched to any of the tokens that we've processed. escaped_token will
-  // hold the portion of raw_text that corresponds to the current token that
+  // holds the portion of raw_text that corresponds to the current token that
   // is being processed.
   std::string_view raw_text = text_value.raw_term;
+  std::vector<Token> tokens;
   std::string_view raw_token;
   bool reached_final_token = !token_itr->Advance();
   // If the term is different then the raw_term, then there must have been some
   // escaped characters that we will need to handle.
   while (!reached_final_token) {
-    std::vector<Token> tokens = token_itr->GetTokens();
+    token_itr->GetTokens(&tokens);
     if (tokens.size() > 1) {
       // The tokenizer iterator iterates between token groups. In practice,
       // the tokenizer used with QueryVisitor (PlainTokenizer) will always
@@ -717,7 +739,8 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::ProcessAndOperator(
   ICING_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<DocHitInfoIterator>> iterators,
       PopAllPendingIterators());
-  return PendingValue(CreateAndIterator(std::move(iterators)));
+  return PendingValue(query_optimization_util::OptimizeAndIteratorsIfPossible(
+      std::move(iterators)));
 }
 
 libtextclassifier3::StatusOr<PendingValue> QueryVisitor::ProcessOrOperator(

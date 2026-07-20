@@ -250,11 +250,11 @@ std::vector<DocHitInfoTermFrequencyPair> GetHitsWithTermFrequency(
 
 TEST_F(TermIndexingHandlerTest, HandleBothStringSectionAndPropertyExistence) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   DocumentProto document =
       DocumentBuilder()
@@ -266,12 +266,14 @@ TEST_F(TermIndexingHandlerTest, HandleBothStringSectionAndPropertyExistence) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
   DocumentId document_id = put_result.new_document_id;
 
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
@@ -315,11 +317,11 @@ TEST_F(TermIndexingHandlerTest, HandleBothStringSectionAndPropertyExistence) {
 TEST_F(TermIndexingHandlerTest,
        HandleIntoLiteIndex_sortInIndexingNotTriggered) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   DocumentProto document =
       DocumentBuilder()
@@ -331,12 +333,14 @@ TEST_F(TermIndexingHandlerTest,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result,
-      document_store_->Put(tokenized_document.document()));
+      document_store_->Put(tokenized_document.document_wrapper()));
   DocumentId document_id = put_result.new_document_id;
 
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
@@ -379,11 +383,11 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_sortInIndexingTriggered) {
   // HitBuffer after inserting 8 hits
   Index::Options options(index_dir_,
                          /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   DocumentProto document0 =
       DocumentBuilder()
@@ -410,29 +414,35 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_sortInIndexingTriggered) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document0,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document0)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document0)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result0,
-      document_store_->Put(tokenized_document0.document()));
+      document_store_->Put(tokenized_document0.document_wrapper()));
   DocumentId document_id0 = put_result0.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document1,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document1)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document1)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(tokenized_document1.document()));
+      document_store_->Put(tokenized_document1.document_wrapper()));
   DocumentId document_id1 = put_result1.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document2,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document2)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document2)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(tokenized_document2.document()));
+      document_store_->Put(tokenized_document2.document_wrapper()));
   DocumentId document_id2 = put_result2.new_document_id;
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
 
@@ -527,11 +537,11 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_enableSortInIndexing) {
   // HitBuffer after inserting 8 hits
   Index::Options options(index_dir_,
                          /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/false,
                          /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   DocumentProto document0 =
       DocumentBuilder()
@@ -558,29 +568,35 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_enableSortInIndexing) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document0,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document0)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document0)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result0,
-      document_store_->Put(tokenized_document0.document()));
+      document_store_->Put(tokenized_document0.document_wrapper()));
   DocumentId document_id0 = put_result0.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document1,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document1)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document1)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      document_store_->Put(tokenized_document1.document()));
+      document_store_->Put(tokenized_document1.document_wrapper()));
   DocumentId document_id1 = put_result1.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document2,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document2)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document2)));
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      document_store_->Put(tokenized_document2.document()));
+      document_store_->Put(tokenized_document2.document_wrapper()));
   DocumentId document_id2 = put_result2.new_document_id;
   EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
 
@@ -614,10 +630,10 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_enableSortInIndexing) {
   ASSERT_THAT(index->PersistToDisk(), IsOk());
   options = Index::Options(index_dir_,
                            /*index_merge_size=*/1024 * 1024,
-                           /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
-      index, Index::Create(options, &filesystem_, &icing_filesystem_));
+      index, Index::Create(options, &filesystem_, &icing_filesystem_,
+                           feature_flags_.get()));
 
   // Verify that the HitBuffer has been sorted after initializing with
   // sort_at_indexing enabled.

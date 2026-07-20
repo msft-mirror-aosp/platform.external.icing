@@ -78,10 +78,14 @@ static constexpr std::string_view kNestedType = "NestedType";
 static constexpr std::string_view kPropertyNestedDoc = "nested";
 static constexpr std::string_view kPropertyQualifiedId2 = "qualifiedId2";
 
-class QualifiedIdJoinIndexingHandlerV3Test : public ::testing::Test {
+class QualifiedIdJoinIndexingHandlerV3Test
+    : public ::testing::TestWithParam<bool> {
  protected:
   void SetUp() override {
-    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+    feature_flags_ = std::make_unique<FeatureFlags>(
+        FeatureFlagsBuilder(GetTestFeatureFlags())
+            .set_enable_non_existent_qualified_id_join(GetParam())
+            .Build());
 
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
@@ -128,7 +132,7 @@ class QualifiedIdJoinIndexingHandlerV3Test : public ::testing::Test {
                 PropertyConfigBuilder()
                     .SetName(kPropertyQualifiedId)
                     .SetDataTypeJoinableString(JOINABLE_VALUE_TYPE_QUALIFIED_ID)
-                    .SetCardinality(CARDINALITY_OPTIONAL)))
+                    .SetCardinality(CARDINALITY_REPEATED)))
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType(kNestedType)
@@ -225,25 +229,30 @@ class QualifiedIdJoinIndexingHandlerV3Test : public ::testing::Test {
   JoinablePropertyId nested_type_joinable_property_id_;
 };
 
-TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test,
        CreationWithNullPointerShouldFail) {
-  EXPECT_THAT(
-      QualifiedIdJoinIndexingHandler::Create(
-          /*clock=*/nullptr, doc_store_.get(), qualified_id_join_index_.get()),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QualifiedIdJoinIndexingHandler::Create(
+                  /*clock=*/nullptr, doc_store_.get(),
+                  qualified_id_join_index_.get(), feature_flags_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
-  EXPECT_THAT(
-      QualifiedIdJoinIndexingHandler::Create(
-          &fake_clock_, /*doc_store=*/nullptr, qualified_id_join_index_.get()),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QualifiedIdJoinIndexingHandler::Create(
+                  &fake_clock_, /*doc_store=*/nullptr,
+                  qualified_id_join_index_.get(), feature_flags_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
-  EXPECT_THAT(
-      QualifiedIdJoinIndexingHandler::Create(
-          &fake_clock_, doc_store_.get(), /*qualified_id_join_index=*/nullptr),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QualifiedIdJoinIndexingHandler::Create(
+                  &fake_clock_, doc_store_.get(),
+                  /*qualified_id_join_index=*/nullptr, feature_flags_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+
+  EXPECT_THAT(QualifiedIdJoinIndexingHandler::Create(
+                  &fake_clock_, doc_store_.get(),
+                  qualified_id_join_index_.get(), /*feature_flags=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleJoinableProperty) {
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test, HandleJoinableProperty) {
   // Create and put parent document.
   DocumentProto parent_document =
       DocumentBuilder()
@@ -251,8 +260,15 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleJoinableProperty) {
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult parent_put_result,
-                             doc_store_->Put(parent_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument parent_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(parent_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult parent_put_result,
+      doc_store_->Put(parent_tokenized_document.document_wrapper()));
 
   // Create and put child document. Also tokenize it.
   DocumentProto child_document =
@@ -262,12 +278,15 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleJoinableProperty) {
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult child_put_result,
-                             doc_store_->Put(child_document));
   ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(child_document)));
+      TokenizedDocument child_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(child_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult child_put_result,
+      doc_store_->Put(child_tokenized_document.document_wrapper()));
 
   // Handle document.
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
@@ -275,24 +294,26 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleJoinableProperty) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, child_put_result.new_document_id,
-                      child_put_result.old_document_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
-      IsOk());
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
+  EXPECT_THAT(handler->Handle(
+                  child_tokenized_document, child_put_result.new_document_id,
+                  child_put_result.old_document_id, /*recovery_mode=*/false,
+                  /*put_document_stats=*/nullptr),
+              IsOk());
 
   // Verify the state of qualified_id_join_index_ after Handle().
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id));
   EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(1)));
   EXPECT_THAT(
-      qualified_id_join_index_->Get(parent_put_result.new_document_id),
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+          parent_put_result.new_document_id),
       IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
           child_put_result.new_document_id, fake_type_joinable_property_id_))));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleNestedJoinableProperty) {
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test, HandleNestedJoinableProperty) {
   // Create and put parent document1. Get its document id and namespace id.
   DocumentProto parent_document1 =
       DocumentBuilder()
@@ -300,8 +321,15 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleNestedJoinableProperty) {
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult parent_put_result1,
-                             doc_store_->Put(parent_document1));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument parent_tokenized_document1,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(parent_document1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult parent_put_result1,
+      doc_store_->Put(parent_tokenized_document1.document_wrapper()));
 
   // Create and put parent document2.
   DocumentProto parent_document2 =
@@ -310,8 +338,15 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleNestedJoinableProperty) {
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "two")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult parent_put_result2,
-                             doc_store_->Put(parent_document2));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument parent_tokenized_document2,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(parent_document2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult parent_put_result2,
+      doc_store_->Put(parent_tokenized_document2.document_wrapper()));
 
   // Create and put child document:
   // - kPropertyNestedDoc.kPropertyQualifiedId refers to parent_document2.
@@ -333,12 +368,15 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleNestedJoinableProperty) {
           .AddStringProperty(std::string(kPropertyQualifiedId2),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult child_put_result,
-                             doc_store_->Put(child_document));
   ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                child_document));
+      TokenizedDocument child_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(child_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult child_put_result,
+      doc_store_->Put(child_tokenized_document.document_wrapper()));
 
   // Handle nested_document.
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
@@ -346,28 +384,31 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleNestedJoinableProperty) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, child_put_result.new_document_id,
-                      child_put_result.old_document_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
-      IsOk());
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
+  EXPECT_THAT(handler->Handle(
+                  child_tokenized_document, child_put_result.new_document_id,
+                  child_put_result.old_document_id, /*recovery_mode=*/false,
+                  /*put_document_stats=*/nullptr),
+              IsOk());
 
   // Verify the state of qualified_id_join_index_ after Handle().
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id));
   EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(2)));
-  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result1.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  parent_put_result1.new_document_id),
               IsOkAndHolds(ElementsAre(
                   DocumentJoinIdPair(child_put_result.new_document_id,
                                      nested_type_joinable_property_id_))));
-  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result2.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  parent_put_result2.new_document_id),
               IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
                   child_put_result.new_document_id,
                   nested_type_nested_joinable_property_id_))));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test,
        HandleShouldSkipInvalidFormatQualifiedId) {
   static constexpr std::string_view kInvalidFormatQualifiedId =
       "invalid_format_qualified_id";
@@ -383,12 +424,15 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              std::string(kInvalidFormatQualifiedId))
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult child_put_result,
-                             doc_store_->Put(document));
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult child_put_result,
+      doc_store_->Put(tokenized_document.document_wrapper()));
 
   // Handle document. Should ignore invalid format qualified id.
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
@@ -396,7 +440,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
   EXPECT_THAT(
       handler->Handle(tokenized_document, child_put_result.new_document_id,
                       child_put_result.old_document_id, /*recovery_mode=*/false,
@@ -411,19 +456,22 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
   EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleShouldSkipEmptyQualifiedId) {
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test, HandleShouldSkipEmptyQualifiedId) {
   // Create and put child document without any qualified id. Also tokenize it.
   DocumentProto document = DocumentBuilder()
                                .SetKey("icing", "fake_type/1")
                                .SetSchema(std::string(kFakeType))
                                .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult child_put_result,
-                             doc_store_->Put(document));
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                document));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document)));
   ASSERT_THAT(tokenized_document.qualified_id_join_properties(), IsEmpty());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult child_put_result,
+      doc_store_->Put(tokenized_document.document_wrapper()));
 
   // Handle document.
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
@@ -431,7 +479,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleShouldSkipEmptyQualifiedId) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
   EXPECT_THAT(
       handler->Handle(tokenized_document, child_put_result.new_document_id,
                       child_put_result.old_document_id,
@@ -446,7 +495,7 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleShouldSkipEmptyQualifiedId) {
   EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleShouldMigrateParent) {
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test, HandleShouldMigrateParent) {
   // Create and put parent document.
   DocumentProto parent_document =
       DocumentBuilder()
@@ -454,8 +503,15 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleShouldMigrateParent) {
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult parent_put_result,
-                             doc_store_->Put(parent_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument parent_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(parent_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult parent_put_result,
+      doc_store_->Put(parent_tokenized_document.document_wrapper()));
 
   // Create and put child and grandchild document with relations:
   // parent_document <- child_document <- grandchild_document
@@ -474,33 +530,43 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleShouldMigrateParent) {
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "icing#fake_type/1")
           .Build();
+  DocumentProto child_document_replaced = child_document;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
 
   // Put and index child document.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult child_put_result,
-                             doc_store_->Put(child_document));
-  ASSERT_THAT(child_put_result.old_document_id, Eq(kInvalidDocumentId));
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument child_tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                child_document));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(child_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult child_put_result,
+      doc_store_->Put(child_tokenized_document.document_wrapper()));
+  ASSERT_THAT(child_put_result.old_document_id, Eq(kInvalidDocumentId));
+
   ICING_ASSERT_OK(handler->Handle(
       child_tokenized_document, child_put_result.new_document_id,
       child_put_result.old_document_id,
       /*recovery_mode=*/false, /*put_document_stats=*/nullptr));
 
   // Put and index grandchild document.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult grandchild_put_result,
-                             doc_store_->Put(grandchild_document));
-  ASSERT_THAT(grandchild_put_result.old_document_id, Eq(kInvalidDocumentId));
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument grandchild_tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(grandchild_document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(grandchild_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult grandchild_put_result,
+      doc_store_->Put(grandchild_tokenized_document.document_wrapper()));
+  ASSERT_THAT(grandchild_put_result.old_document_id, Eq(kInvalidDocumentId));
+
   ICING_ASSERT_OK(handler->Handle(
       grandchild_tokenized_document, grandchild_put_result.new_document_id,
       grandchild_put_result.old_document_id,
@@ -512,46 +578,59 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test, HandleShouldMigrateParent) {
               Eq(grandchild_put_result.new_document_id));
   ASSERT_THAT(qualified_id_join_index_, Pointee(SizeIs(2)));
   ASSERT_THAT(
-      qualified_id_join_index_->Get(parent_put_result.new_document_id),
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+          parent_put_result.new_document_id),
       IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
           child_put_result.new_document_id, fake_type_joinable_property_id_))));
-  ASSERT_THAT(qualified_id_join_index_->Get(child_put_result.new_document_id),
+  ASSERT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  child_put_result.new_document_id),
               IsOkAndHolds(ElementsAre(
                   DocumentJoinIdPair(grandchild_put_result.new_document_id,
                                      fake_type_joinable_property_id_))));
 
   // Update the child document and index it again.
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult child_put_result2,
-                             doc_store_->Put(child_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument child_tokenized_document_replaced,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(child_document_replaced)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult child_put_result2,
+      doc_store_->Put(child_tokenized_document_replaced.document_wrapper()));
   ASSERT_THAT(child_put_result2.old_document_id,
               Eq(child_put_result.new_document_id));
 
   // Handle should migrate.
-  EXPECT_THAT(handler->Handle(
-                  child_tokenized_document, child_put_result2.new_document_id,
-                  child_put_result2.old_document_id, /*recovery_mode=*/false,
-                  /*put_document_stats=*/nullptr),
-              IsOk());
+  EXPECT_THAT(
+      handler->Handle(child_tokenized_document_replaced,
+                      child_put_result2.new_document_id,
+                      child_put_result2.old_document_id,
+                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+      IsOk());
   EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(3)));
   // Get() with parent document id should return DocumentJoinIdPairs for both
   // old and new child document id.
-  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  parent_put_result.new_document_id),
               IsOkAndHolds(ElementsAre(
                   DocumentJoinIdPair(child_put_result.new_document_id,
                                      fake_type_joinable_property_id_),
                   DocumentJoinIdPair(child_put_result2.new_document_id,
                                      fake_type_joinable_property_id_))));
   // Get() with old child document id should return empty list.
-  EXPECT_THAT(qualified_id_join_index_->Get(child_put_result.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  child_put_result.new_document_id),
               IsOkAndHolds(IsEmpty()));
   // Get() with new child document id should return grandchild join id pair.
-  EXPECT_THAT(qualified_id_join_index_->Get(child_put_result2.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  child_put_result2.new_document_id),
               IsOkAndHolds(ElementsAre(
                   DocumentJoinIdPair(grandchild_put_result.new_document_id,
                                      fake_type_joinable_property_id_))));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test,
        HandleInvalidNewDocumentIdShouldReturnInvalidArgumentError) {
   // Create and put parent document.
   DocumentProto parent_document =
@@ -560,23 +639,33 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult parent_put_result,
-                             doc_store_->Put(parent_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument parent_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(parent_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult parent_put_result,
+      doc_store_->Put(parent_tokenized_document.document_wrapper()));
 
   // Create and put child document. Also tokenize it.
-  DocumentProto document =
+  DocumentProto child_document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult child_put_result,
-                             doc_store_->Put(document));
   ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument child_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(child_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult child_put_result,
+      doc_store_->Put(child_tokenized_document.document_wrapper()));
 
   qualified_id_join_index_->set_last_added_document_id(
       parent_put_result.new_document_id);
@@ -586,11 +675,12 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
 
   // Handling document with kInvalidDocumentId should cause a failure.
   EXPECT_THAT(
-      handler->Handle(tokenized_document, kInvalidDocumentId,
+      handler->Handle(child_tokenized_document, kInvalidDocumentId,
                       child_put_result.old_document_id, /*recovery_mode=*/false,
                       /*put_document_stats=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
@@ -602,18 +692,19 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
 
   // Recovery mode should get the same result.
   EXPECT_THAT(
-      handler->Handle(tokenized_document, kInvalidDocumentId,
+      handler->Handle(child_tokenized_document, kInvalidDocumentId,
                       child_put_result.old_document_id, /*recovery_mode=*/true,
                       /*put_document_stats=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(parent_put_result.new_document_id));
   EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
-  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  parent_put_result.new_document_id),
               IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test,
        HandleOutOfOrderDocumentIdShouldReturnInvalidArgumentError) {
   // Create and put parent document.
   DocumentProto parent_document =
@@ -622,28 +713,39 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult parent_put_result,
-                             doc_store_->Put(parent_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument parent_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(parent_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult parent_put_result,
+      doc_store_->Put(parent_tokenized_document.document_wrapper()));
 
   // Create and put child document. Also tokenize it.
-  DocumentProto document =
+  DocumentProto child_document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult child_put_result,
-                             doc_store_->Put(document));
   ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument child_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(child_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult child_put_result,
+      doc_store_->Put(child_tokenized_document.document_wrapper()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
 
   // Handling document with document_id == last_added_document_id should cause a
   // failure.
@@ -651,17 +753,18 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
       child_put_result.new_document_id);
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, child_put_result.new_document_id,
-                      child_put_result.old_document_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(handler->Handle(
+                  child_tokenized_document, child_put_result.new_document_id,
+                  child_put_result.old_document_id, /*recovery_mode=*/false,
+                  /*put_document_stats=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   // Verify the state of qualified_id_join_index_ after Handle(). Both index
   // data and last_added_document_id should remain unchanged.
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id));
   EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
-  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  parent_put_result.new_document_id),
               IsOkAndHolds(IsEmpty()));
 
   // Handling document with document_id < last_added_document_id should cause a
@@ -670,21 +773,22 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
       child_put_result.new_document_id + 1);
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id + 1));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, child_put_result.new_document_id,
-                      child_put_result.old_document_id, /*recovery_mode=*/false,
-                      /*put_document_stats=*/nullptr),
-      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(handler->Handle(
+                  child_tokenized_document, child_put_result.new_document_id,
+                  child_put_result.old_document_id, /*recovery_mode=*/false,
+                  /*put_document_stats=*/nullptr),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
   // Verify the state of qualified_id_join_index_ after Handle(). Both index
   // data and last_added_document_id should remain unchanged.
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id + 1));
   EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
-  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  parent_put_result.new_document_id),
               IsOkAndHolds(IsEmpty()));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test,
        HandleRecoveryModeShouldIndexDocsGtLastAddedDocId) {
   // Create and put parent document.
   DocumentProto parent_document =
@@ -693,28 +797,39 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult parent_put_result,
-                             doc_store_->Put(parent_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument parent_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(parent_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult parent_put_result,
+      doc_store_->Put(parent_tokenized_document.document_wrapper()));
 
   // Create and put child document. Also tokenize it.
-  DocumentProto document =
+  DocumentProto child_document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult child_put_result,
-                             doc_store_->Put(document));
   ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument child_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(child_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult child_put_result,
+      doc_store_->Put(child_tokenized_document.document_wrapper()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
 
   // Handle document with document_id > last_added_document_id in recovery mode.
   // The handler should index this document and update last_added_document_id.
@@ -722,21 +837,22 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
       child_put_result.new_document_id - 1);
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id - 1));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, child_put_result.new_document_id,
-                      child_put_result.old_document_id, /*recovery_mode=*/true,
-                      /*put_document_stats=*/nullptr),
-      IsOk());
+  EXPECT_THAT(handler->Handle(
+                  child_tokenized_document, child_put_result.new_document_id,
+                  child_put_result.old_document_id, /*recovery_mode=*/true,
+                  /*put_document_stats=*/nullptr),
+              IsOk());
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id));
   EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(1)));
   EXPECT_THAT(
-      qualified_id_join_index_->Get(parent_put_result.new_document_id),
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+          parent_put_result.new_document_id),
       IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
           child_put_result.new_document_id, fake_type_joinable_property_id_))));
 }
 
-TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test,
        HandleRecoveryModeShouldIgnoreDocsLeLastAddedDocId) {
   // Create and put parent document.
   DocumentProto parent_document =
@@ -745,28 +861,39 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
           .SetSchema(std::string(kReferencedType))
           .AddStringProperty(std::string(kPropertyName), "one")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult parent_put_result,
-                             doc_store_->Put(parent_document));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument parent_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(parent_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult parent_put_result,
+      doc_store_->Put(parent_tokenized_document.document_wrapper()));
 
   // Create and put child document. Also tokenize it.
-  DocumentProto document =
+  DocumentProto child_document =
       DocumentBuilder()
           .SetKey("icing", "fake_type/1")
           .SetSchema(std::string(kFakeType))
           .AddStringProperty(std::string(kPropertyQualifiedId),
                              "pkg$db/ns#ref_type/1")
           .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentStore::PutResult child_put_result,
-                             doc_store_->Put(document));
   ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document)));
+      TokenizedDocument child_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(child_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult child_put_result,
+      doc_store_->Put(child_tokenized_document.document_wrapper()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
 
   // Handle document with document_id == last_added_document_id in recovery
   // mode. We should not get any error, but the handler should ignore the
@@ -776,15 +903,16 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
       child_put_result.new_document_id);
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, child_put_result.new_document_id,
-                      child_put_result.old_document_id, /*recovery_mode=*/true,
-                      /*put_document_stats=*/nullptr),
-      IsOk());
+  EXPECT_THAT(handler->Handle(
+                  child_tokenized_document, child_put_result.new_document_id,
+                  child_put_result.old_document_id, /*recovery_mode=*/true,
+                  /*put_document_stats=*/nullptr),
+              IsOk());
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id));
   EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
-  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  parent_put_result.new_document_id),
               IsOkAndHolds(IsEmpty()));
 
   // Handle document with document_id < last_added_document_id in recovery mode.
@@ -794,18 +922,427 @@ TEST_F(QualifiedIdJoinIndexingHandlerV3Test,
       child_put_result.new_document_id + 1);
   ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id + 1));
-  EXPECT_THAT(
-      handler->Handle(tokenized_document, child_put_result.new_document_id,
-                      child_put_result.old_document_id, /*recovery_mode=*/true,
-                      /*put_document_stats=*/nullptr),
-      IsOk());
+  EXPECT_THAT(handler->Handle(
+                  child_tokenized_document, child_put_result.new_document_id,
+                  child_put_result.old_document_id, /*recovery_mode=*/true,
+                  /*put_document_stats=*/nullptr),
+              IsOk());
   EXPECT_THAT(qualified_id_join_index_->last_added_document_id(),
               Eq(child_put_result.new_document_id + 1));
   EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
-  EXPECT_THAT(qualified_id_join_index_->Get(parent_put_result.new_document_id),
+  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  parent_put_result.new_document_id),
               IsOkAndHolds(IsEmpty()));
 }
 
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test, HandleJoinWithMissingParent) {
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    return;
+  }
+
+  // Create and index a child document that refers to a non-existent parent.
+  DocumentProto child_document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kPropertyQualifiedId),
+                             "pkg$db/ns#ref_type/1")  // This parent doesn't
+                                                      // exist yet
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument child_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(child_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult child_put_result,
+      doc_store_->Put(child_tokenized_document.document_wrapper()));
+
+  // Handle the child document.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
+      QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
+  EXPECT_THAT(handler->Handle(
+                  child_tokenized_document, child_put_result.new_document_id,
+                  child_put_result.old_document_id, /*recovery_mode=*/false,
+                  /*put_document_stats=*/nullptr),
+              IsOk());
+
+  // At this point, there's no parent document, so no entry in the doc id map.
+  // The qualified id map should have an entry, and the index size should be 1.
+  EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(1)));
+
+  // Now, create and index the parent document.
+  DocumentProto parent_document =
+      DocumentBuilder()
+          .SetKey("pkg$db/ns", "ref_type/1")
+          .SetSchema(std::string(kReferencedType))
+          .AddStringProperty(std::string(kPropertyName), "one")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument parent_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(parent_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult parent_put_result,
+      doc_store_->Put(parent_tokenized_document.document_wrapper()));
+
+  // Handle the parent document. This should trigger migration.
+  EXPECT_THAT(handler->Handle(
+                  parent_tokenized_document, parent_put_result.new_document_id,
+                  parent_put_result.old_document_id, /*recovery_mode=*/false,
+                  /*put_document_stats=*/nullptr),
+              IsOk());
+
+  // Verify that the join is now established.
+  EXPECT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+          parent_put_result.new_document_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
+          child_put_result.new_document_id, fake_type_joinable_property_id_))));
+
+  // The index size should still be 1.
+  EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(1)));
+
+  // Update the parent document and index it again.
+  DocumentProto parent_document_replaced =
+      DocumentBuilder()
+          .SetKey("pkg$db/ns", "ref_type/1")
+          .SetSchema(std::string(kReferencedType))
+          .AddStringProperty(std::string(kPropertyName), "one_replaced")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument parent_tokenized_document_replaced,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(parent_document_replaced)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult parent_put_result2,
+      doc_store_->Put(parent_tokenized_document_replaced.document_wrapper()));
+  ASSERT_THAT(parent_put_result2.old_document_id,
+              Eq(parent_put_result.new_document_id));
+
+  // Handle the updated parent.
+  EXPECT_THAT(
+      handler->Handle(parent_tokenized_document_replaced,
+                      parent_put_result2.new_document_id,
+                      parent_put_result2.old_document_id,
+                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+      IsOk());
+
+  // Verify migration.
+  // Get() with old parent document id should return empty list.
+  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  parent_put_result.new_document_id),
+              IsOkAndHolds(IsEmpty()));
+  // Get() with new parent document id should return child join id pair.
+  EXPECT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+          parent_put_result2.new_document_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
+          child_put_result.new_document_id, fake_type_joinable_property_id_))));
+  // Index size is still 1.
+  EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(1)));
+}
+
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test,
+       HandleJoinWithMultipleMissingParents) {
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    return;
+  }
+
+  // Create and index a child document that refers to two non-existent parents.
+  DocumentProto child_document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kPropertyQualifiedId),
+                             "pkg$db/ns#ref_type/1", "pkg$db/ns#ref_type/2")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument child_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(child_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult child_put_result,
+      doc_store_->Put(child_tokenized_document.document_wrapper()));
+
+  // Handle the child document.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
+      QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
+  EXPECT_THAT(handler->Handle(
+                  child_tokenized_document, child_put_result.new_document_id,
+                  child_put_result.old_document_id, /*recovery_mode=*/false,
+                  /*put_document_stats=*/nullptr),
+              IsOk());
+
+  // The qualified id map should have two entries, so the index size should be
+  // 2.
+  EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(2)));
+
+  // Now, create and index the parent documents.
+  DocumentProto parent_document1 =
+      DocumentBuilder()
+          .SetKey("pkg$db/ns", "ref_type/1")
+          .SetSchema(std::string(kReferencedType))
+          .AddStringProperty(std::string(kPropertyName), "one")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument parent_tokenized_document1,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(parent_document1)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult parent_put_result1,
+      doc_store_->Put(parent_tokenized_document1.document_wrapper()));
+  DocumentProto parent_document2 =
+      DocumentBuilder()
+          .SetKey("pkg$db/ns", "ref_type/2")
+          .SetSchema(std::string(kReferencedType))
+          .AddStringProperty(std::string(kPropertyName), "two")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument parent_tokenized_document2,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(parent_document2)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult parent_put_result2,
+      doc_store_->Put(parent_tokenized_document2.document_wrapper()));
+
+  // Handle the parent documents.
+  EXPECT_THAT(handler->Handle(parent_tokenized_document1,
+                              parent_put_result1.new_document_id,
+                              parent_put_result1.old_document_id,
+                              /*recovery_mode=*/false,
+                              /*put_document_stats=*/nullptr),
+              IsOk());
+  EXPECT_THAT(handler->Handle(parent_tokenized_document2,
+                              parent_put_result2.new_document_id,
+                              parent_put_result2.old_document_id,
+                              /*recovery_mode=*/false,
+                              /*put_document_stats=*/nullptr),
+              IsOk());
+
+  // Verify that the joins are now established for both parents.
+  EXPECT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+          parent_put_result1.new_document_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
+          child_put_result.new_document_id, fake_type_joinable_property_id_))));
+  EXPECT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+          parent_put_result2.new_document_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
+          child_put_result.new_document_id, fake_type_joinable_property_id_))));
+
+  // Index size should still be 2.
+  EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(2)));
+}
+
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test, HandleJoinWithMixedParents) {
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    return;
+  }
+
+  // Create and index one parent document.
+  DocumentProto existing_parent =
+      DocumentBuilder()
+          .SetKey("pkg$db/ns", "ref_type/1")
+          .SetSchema(std::string(kReferencedType))
+          .AddStringProperty(std::string(kPropertyName), "one")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument existing_parent_tokenized,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(existing_parent)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult existing_parent_put_result,
+      doc_store_->Put(existing_parent_tokenized.document_wrapper()));
+
+  // Create the handler.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
+      QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
+
+  // Create and index a child document that refers to the existing parent and
+  // a missing parent.
+  DocumentProto child_document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kPropertyQualifiedId),
+                             // existing
+                             "pkg$db/ns#ref_type/1",
+                             // missing
+                             "pkg$db/ns#ref_type/2")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument child_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(child_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult child_put_result,
+      doc_store_->Put(child_tokenized_document.document_wrapper()));
+
+  // Handle the child document.
+  EXPECT_THAT(handler->Handle(
+                  child_tokenized_document, child_put_result.new_document_id,
+                  child_put_result.old_document_id, /*recovery_mode=*/false,
+                  /*put_document_stats=*/nullptr),
+              IsOk());
+
+  // Index size should be 2.
+  EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(2)));
+
+  // Verify join for existing parent.
+  EXPECT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+          existing_parent_put_result.new_document_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
+          child_put_result.new_document_id, fake_type_joinable_property_id_))));
+
+  // Index the missing parent.
+  DocumentProto missing_parent =
+      DocumentBuilder()
+          .SetKey("pkg$db/ns", "ref_type/2")
+          .SetSchema(std::string(kReferencedType))
+          .AddStringProperty(std::string(kPropertyName), "two")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument missing_parent_tokenized,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(missing_parent)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult missing_parent_put_result,
+      doc_store_->Put(missing_parent_tokenized.document_wrapper()));
+
+  // Handle the missing parent.
+  EXPECT_THAT(
+      handler->Handle(missing_parent_tokenized,
+                      missing_parent_put_result.new_document_id,
+                      missing_parent_put_result.old_document_id,
+                      /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+      IsOk());
+
+  // Verify join for the now-existing parent.
+  EXPECT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+          missing_parent_put_result.new_document_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
+          child_put_result.new_document_id, fake_type_joinable_property_id_))));
+
+  // Verify join for the existing parent is still there.
+  EXPECT_THAT(
+      qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+          existing_parent_put_result.new_document_id),
+      IsOkAndHolds(ElementsAre(DocumentJoinIdPair(
+          child_put_result.new_document_id, fake_type_joinable_property_id_))));
+
+  // Index size should still be 2.
+  EXPECT_THAT(qualified_id_join_index_, Pointee(SizeIs(2)));
+}
+
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test,
+       HandleJoinWithMissingParent_FeatureDisabled) {
+  if (feature_flags_->enable_non_existent_qualified_id_join()) {
+    return;
+  }
+
+  // Create and index a child document that refers to a non-existent parent.
+  DocumentProto child_document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(
+              std::string(kPropertyQualifiedId),
+              "pkg$db/ns#ref_type/1")  // This parent doesn't exist
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument child_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(child_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult child_put_result,
+      doc_store_->Put(child_tokenized_document.document_wrapper()));
+
+  // Create the handler with the feature flag disabled.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
+      QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
+
+  // Handle the child document.
+  EXPECT_THAT(handler->Handle(
+                  child_tokenized_document, child_put_result.new_document_id,
+                  child_put_result.old_document_id, /*recovery_mode=*/false,
+                  /*put_document_stats=*/nullptr),
+              IsOk());
+
+  // With the feature disabled, no join data should be indexed for a missing
+  // parent.
+  EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
+
+  // Now, create and index the parent document.
+  DocumentProto parent_document =
+      DocumentBuilder()
+          .SetKey("pkg$db/ns", "ref_type/1")
+          .SetSchema(std::string(kReferencedType))
+          .AddStringProperty(std::string(kPropertyName), "one")
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      TokenizedDocument parent_tokenized_document,
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(parent_document)));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult parent_put_result,
+      doc_store_->Put(parent_tokenized_document.document_wrapper()));
+
+  // Handle the parent document.
+  EXPECT_THAT(handler->Handle(
+                  parent_tokenized_document, parent_put_result.new_document_id,
+                  parent_put_result.old_document_id, /*recovery_mode=*/false,
+                  /*put_document_stats=*/nullptr),
+              IsOk());
+
+  // Verify that no join has been established.
+  EXPECT_THAT(qualified_id_join_index_->GetDocumentJoinIdPairArrayView(
+                  parent_put_result.new_document_id),
+              IsOkAndHolds(IsEmpty()));
+
+  EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
+}
+
+INSTANTIATE_TEST_SUITE_P(QualifiedIdJoinIndexingHandlerV3Test,
+                         QualifiedIdJoinIndexingHandlerV3Test,
+                         // Parameter: enable_non_existent_qualified_id_join
+                         testing::Values(true, false));
 }  // namespace
 
 }  // namespace lib
