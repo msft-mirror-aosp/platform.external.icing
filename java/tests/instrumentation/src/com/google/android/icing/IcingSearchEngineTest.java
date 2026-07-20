@@ -28,6 +28,7 @@ import com.google.android.icing.proto.DeleteByNamespaceResultProto;
 import com.google.android.icing.proto.DeleteByQueryResultProto;
 import com.google.android.icing.proto.DeleteBySchemaTypeResultProto;
 import com.google.android.icing.proto.DeleteResultProto;
+import com.google.android.icing.proto.DocumentGroupInfoProto;
 import com.google.android.icing.proto.DocumentProto;
 import com.google.android.icing.proto.GetAllNamespacesResultProto;
 import com.google.android.icing.proto.GetNextPageRequestProto;
@@ -41,6 +42,8 @@ import com.google.android.icing.proto.IcingSearchEngineOptions;
 import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.JoinableConfig;
 import com.google.android.icing.proto.LogSeverity;
+import com.google.android.icing.proto.MaintainAnnIndexOptions;
+import com.google.android.icing.proto.MaintainAnnIndexResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
@@ -70,7 +73,6 @@ import com.google.android.icing.proto.SuggestionSpecProto;
 import com.google.android.icing.proto.TermMatchType;
 import com.google.android.icing.proto.TermMatchType.Code;
 import com.google.android.icing.proto.UsageReport;
-import com.google.common.collect.ImmutableList;
 import com.google.android.icing.protobuf.ByteString;
 import java.io.File;
 import java.io.FileDescriptor;
@@ -179,6 +181,19 @@ public final class IcingSearchEngineTest {
     return messageDigest.digest();
   }
 
+  /** Gets the document group entry by the given schema and namespace. */
+  private static DocumentGroupInfoProto.GroupEntryProto getDocumentGroupEntry(
+      DocumentGroupInfoProto documentGroupInfo, String schema, String namespace) {
+    for (DocumentGroupInfoProto.GroupEntryProto documentGroupEntry :
+        documentGroupInfo.getGroupsList()) {
+      if (documentGroupEntry.getSchema().equals(schema)
+          && documentGroupEntry.getNameSpace().equals(namespace)) {
+        return documentGroupEntry;
+      }
+    }
+    return null;
+  }
+
   @Before
   public void setUp() throws Exception {
     tempDir = temporaryFolder.newFolder();
@@ -221,10 +236,7 @@ public final class IcingSearchEngineTest {
   @Test
   public void setAndGetSchemaWithDatabase_ok() throws Exception {
     IcingSearchEngineOptions options =
-        IcingSearchEngineOptions.newBuilder()
-            .setBaseDir(tempDir.getCanonicalPath())
-            .setEnableSchemaDatabase(true)
-            .build();
+        IcingSearchEngineOptions.newBuilder().setBaseDir(tempDir.getCanonicalPath()).build();
     IcingSearchEngine icingSearchEngine = new IcingSearchEngine(options);
     assertStatusOk(icingSearchEngine.initialize().getStatus());
 
@@ -466,6 +478,8 @@ public final class IcingSearchEngineTest {
     BatchPutResultProto expected =
         BatchPutResultProto.newBuilder()
             .setStatus(StatusProto.newBuilder().setCode(StatusProto.Code.OK))
+            .setRequestBytes(0)
+            .setResponseBytes(11)
             .build();
     assertThat(actualProto).isEqualTo(expected);
 
@@ -751,10 +765,7 @@ public final class IcingSearchEngineTest {
     // 1 Arrange: set up IcingSearchEngine with and blob data
     File tempDir = temporaryFolder.newFolder();
     IcingSearchEngineOptions options =
-        IcingSearchEngineOptions.newBuilder()
-            .setBaseDir(tempDir.getCanonicalPath())
-            .setEnableBlobStore(true)
-            .build();
+        IcingSearchEngineOptions.newBuilder().setBaseDir(tempDir.getCanonicalPath()).build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
     assertStatusOk(icing.initialize().getStatus());
 
@@ -806,10 +817,7 @@ public final class IcingSearchEngineTest {
     // 1 Arrange: set up IcingSearchEngine with and blob data
     File tempDir = temporaryFolder.newFolder();
     IcingSearchEngineOptions options =
-        IcingSearchEngineOptions.newBuilder()
-            .setBaseDir(tempDir.getCanonicalPath())
-            .setEnableBlobStore(true)
-            .build();
+        IcingSearchEngineOptions.newBuilder().setBaseDir(tempDir.getCanonicalPath()).build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
     assertStatusOk(icing.initialize().getStatus());
 
@@ -852,10 +860,7 @@ public final class IcingSearchEngineTest {
     // 1 Arrange: set up IcingSearchEngine with and blob data
     File tempDir = temporaryFolder.newFolder();
     IcingSearchEngineOptions options =
-        IcingSearchEngineOptions.newBuilder()
-            .setBaseDir(tempDir.getCanonicalPath())
-            .setEnableBlobStore(true)
-            .build();
+        IcingSearchEngineOptions.newBuilder().setBaseDir(tempDir.getCanonicalPath()).build();
     IcingSearchEngine icing = new IcingSearchEngine(options);
     assertStatusOk(icing.initialize().getStatus());
 
@@ -896,7 +901,6 @@ public final class IcingSearchEngineTest {
     IcingSearchEngineOptions options2 =
         IcingSearchEngineOptions.newBuilder()
             .setBaseDir(tempDir.getCanonicalPath())
-            .setEnableBlobStore(true)
             .setManageBlobFiles(false)
             .build();
     IcingSearchEngine icing2 = new IcingSearchEngine(options2);

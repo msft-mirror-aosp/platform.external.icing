@@ -62,8 +62,7 @@ libtextclassifier3::Status DocHitInfoIteratorTermLite::Advance() {
             << "Encountered unexpected failure while retrieving  hits "
             << status.error_message();
       }
-      return absl_ports::ResourceExhaustedError(
-          "No more DocHitInfos in iterator");
+      return absl_ports::ResourceExhaustedError("");
     }
   } else {
     ++cached_hits_idx_;
@@ -72,8 +71,7 @@ libtextclassifier3::Status DocHitInfoIteratorTermLite::Advance() {
     // Nothing more for the iterator to return. Set these members to invalid
     // values.
     doc_hit_info_ = DocHitInfo();
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
   ++num_advance_calls_;
   doc_hit_info_ = cached_hits_.at(cached_hits_idx_);

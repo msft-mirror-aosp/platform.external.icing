@@ -139,7 +139,6 @@ class QueryProcessorTest : public ::testing::Test {
 
     Index::Options options(index_dir_,
                            /*index_merge_size=*/1024 * 1024,
-                           /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_,
