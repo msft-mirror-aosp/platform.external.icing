@@ -65,7 +65,8 @@ TermIndexingHandler::Create(const Clock* clock, const Normalizer* normalizer,
 
 libtextclassifier3::Status TermIndexingHandler::Handle(
     const TokenizedDocument& tokenized_document, DocumentId document_id,
-    bool recovery_mode, PutDocumentStatsProto* put_document_stats) {
+    DocumentId old_document_id, bool recovery_mode,
+    PutDocumentStatsProto* put_document_stats) {
   std::unique_ptr<Timer> index_timer = clock_.GetNewTimer();
 
   if (index_.last_added_document_id() != kInvalidDocumentId &&
@@ -84,11 +85,11 @@ libtextclassifier3::Status TermIndexingHandler::Handle(
   libtextclassifier3::Status status = libtextclassifier3::Status::OK;
   if (property_existence_indexing_handler_ != nullptr) {
     status = property_existence_indexing_handler_->Handle(
-        tokenized_document, document_id, put_document_stats);
+        tokenized_document, document_id, old_document_id, put_document_stats);
   }
   if (status.ok()) {
     status = string_section_indexing_handler_->Handle(
-        tokenized_document, document_id, put_document_stats);
+        tokenized_document, document_id, old_document_id, put_document_stats);
   }
 
   if (put_document_stats != nullptr) {

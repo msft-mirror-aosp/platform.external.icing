@@ -41,6 +41,7 @@ sourceSets {
 dependencies {
     compileOnly("androidx.annotation:annotation:1.1.0")
     compileOnly(SdkHelperKt.getSdkDependency(project))
+    compileOnly(libs.jspecify)
     compileOnly(libs.protobufLite)
 }
 
@@ -49,21 +50,6 @@ afterEvaluate {
         lintOptions {
             // protobuf generates unannotated methods
             disable("UnknownNullness")
-        }
-    }
-}
-
-protobuf {
-    protoc {
-        artifact = libs.protobufCompiler.get()
-    }
-    generateProtoTasks {
-        all().each { task ->
-            task.builtins {
-                java {
-                    option 'lite'
-                }
-            }
         }
     }
 }

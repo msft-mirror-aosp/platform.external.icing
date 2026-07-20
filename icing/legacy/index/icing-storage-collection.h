@@ -21,10 +21,14 @@
 #ifndef ICING_LEGACY_INDEX_ICING_STORAGE_COLLECTION_H_
 #define ICING_LEGACY_INDEX_ICING_STORAGE_COLLECTION_H_
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/legacy/index/icing-storage.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -39,12 +43,14 @@ class IcingStorageCollection : public IIcingStorage {
   void Add(IIcingStorage *file, bool remove_if_corrupted);
   void Swap(const IIcingStorage *current_file, IIcingStorage *new_file);
   bool UpgradeTo(int new_version) override;
-  bool Init() override;
+  libtextclassifier3::Status Init() override;
   void Close() override;
   bool Remove() override;
-  bool Sync() override;
+  libtextclassifier3::Status Sync() override;
   uint64_t GetDiskUsage() const override;
-  void OnSleep() override;
+
+  libtextclassifier3::StatusOr<Crc32> UpdateCrc() override;
+
   void GetDebugInfo(int verbosity, std::string *out) const override;
 
  private:

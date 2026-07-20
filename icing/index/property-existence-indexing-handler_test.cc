@@ -28,12 +28,14 @@
 #include "gtest/gtest.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/document-builder.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/index.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/portable/gzip_stream.h"
 #include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
@@ -46,13 +48,15 @@
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
-#include "icing/testing/icu-data-file-helper.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/icu-data-file-helper.h"
 #include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
 
@@ -74,14 +78,17 @@ static constexpr std::string_view kValueType = "Value";
 static constexpr std::string_view kPropertyBody = "body";
 static constexpr std::string_view kPropertyTimestamp = "timestamp";
 static constexpr std::string_view kPropertyScore = "score";
+static constexpr std::string_view kPropertyVector = "vectorValues";
+static constexpr std::string_view kPropertyBlobHandle = "blobHandleValues";
 
 class PropertyExistenceIndexingHandlerTest : public Test {
  protected:
   void SetUp() override {
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
           // File generated via icu_data_file rule in //icing/BUILD.
-          icu_data_file_helper::SetUpICUDataFile(
+          icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
 
@@ -98,17 +105,18 @@ class PropertyExistenceIndexingHandlerTest : public Test {
         lang_segmenter_,
         language_segmenter_factory::Create(std::move(segmenter_options)));
 
-    ICING_ASSERT_OK_AND_ASSIGN(
-        normalizer_,
-        normalizer_factory::Create(
-            /*max_term_byte_size=*/std::numeric_limits<int32_t>::max()));
+    NormalizerOptions normalizer_options(
+        /*max_term_byte_size=*/std::numeric_limits<int32_t>::max());
+    ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
+                               normalizer_factory::Create(normalizer_options));
 
     ASSERT_THAT(
         filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str()),
         IsTrue());
+
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_,
-        SchemaStore::Create(&filesystem_, schema_store_dir_, &fake_clock_));
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
+                                           &fake_clock_, feature_flags_.get()));
     SchemaProto schema =
         SchemaBuilder()
             .AddType(
@@ -146,25 +154,36 @@ class PropertyExistenceIndexingHandlerTest : public Test {
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kPropertyScore)
                                      .SetDataType(TYPE_DOUBLE)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kPropertyVector)
+                            .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kPropertyBlobHandle)
+                                     .SetDataType(TYPE_BLOB_HANDLE)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(
-        schema, /*ignore_errors_and_delete_documents=*/false,
-        /*allow_circular_schema_definitions=*/true));
+        schema, /*ignore_errors_and_delete_documents=*/false));
 
     ASSERT_TRUE(
         filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str()));
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult doc_store_create_result,
-        DocumentStore::Create(&filesystem_, document_store_dir_, &fake_clock_,
-                              schema_store_.get(),
-                              /*force_recovery_and_revalidate_documents=*/false,
-                              /*namespace_id_fingerprint=*/false,
-                              /*pre_mapping_fbv=*/false,
-                              /*use_persistent_hash_map=*/false,
-                              PortableFileBackedProtoLog<
-                                  DocumentWrapper>::kDeflateCompressionLevel,
-                              /*initialize_stats=*/nullptr));
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_,
+            schema_store_.get(), feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
     document_store_ = std::move(doc_store_create_result.document_store);
   }
 
@@ -177,6 +196,7 @@ class PropertyExistenceIndexingHandlerTest : public Test {
     filesystem_.DeleteDirectoryRecursively(base_dir_.c_str());
   }
 
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   IcingFilesystem icing_filesystem_;
   FakeClock fake_clock_;
@@ -211,11 +231,21 @@ std::vector<DocHitInfo> GetHits(std::unique_ptr<DocHitInfoIterator> iterator) {
 
 TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
+
+  PropertyProto::VectorProto vector;
+  vector.add_values(0.1);
+  vector.add_values(0.2);
+  vector.add_values(0.3);
+  vector.set_model_signature("my_model");
+
+  PropertyProto::BlobHandleProto blob_handle;
+  blob_handle.set_digest(std::string(32, ' '));
+  blob_handle.set_namespace_("icing");
 
   // Create a document with every property.
   DocumentProto document0 =
@@ -225,6 +255,8 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
           .AddStringProperty(std::string(kPropertyBody), "foo")
           .AddInt64Property(std::string(kPropertyTimestamp), 123)
           .AddDoubleProperty(std::string(kPropertyScore), 456.789)
+          .AddVectorProperty(std::string(kPropertyVector), vector)
+          .AddBlobHandleProperty(std::string(kPropertyBlobHandle), blob_handle)
           .Build();
   // Create a document with missing body.
   DocumentProto document1 =
@@ -233,6 +265,7 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
           .SetSchema(std::string(kValueType))
           .AddInt64Property(std::string(kPropertyTimestamp), 123)
           .AddDoubleProperty(std::string(kPropertyScore), 456.789)
+          .AddVectorProperty(std::string(kPropertyVector), vector)
           .Build();
   // Create a document with missing timestamp.
   DocumentProto document2 =
@@ -241,29 +274,39 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
           .SetSchema(std::string(kValueType))
           .AddStringProperty(std::string(kPropertyBody), "foo")
           .AddDoubleProperty(std::string(kPropertyScore), 456.789)
+          .AddBlobHandleProperty(std::string(kPropertyBlobHandle), blob_handle)
           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document0,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document0)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document0)));
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document1,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document1)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document1)));
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document2,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document2)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document2)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id0,
-      document_store_->Put(tokenized_document0.document()));
+      DocumentStore::PutResult put_result0,
+      document_store_->Put(tokenized_document0.document_wrapper()));
+  DocumentId document_id0 = put_result0.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
-      document_store_->Put(tokenized_document1.document()));
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(tokenized_document1.document_wrapper()));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
-      document_store_->Put(tokenized_document2.document()));
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(tokenized_document2.document_wrapper()));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PropertyExistenceIndexingHandler> handler,
@@ -271,12 +314,15 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
 
   // Handle all docs
   EXPECT_THAT(handler->Handle(tokenized_document0, document_id0,
+                              put_result0.old_document_id,
                               /*put_document_stats=*/nullptr),
               IsOk());
   EXPECT_THAT(handler->Handle(tokenized_document1, document_id1,
+                              put_result1.old_document_id,
                               /*put_document_stats=*/nullptr),
               IsOk());
   EXPECT_THAT(handler->Handle(tokenized_document2, document_id2,
+                              put_result0.old_document_id,
                               /*put_document_stats=*/nullptr),
               IsOk());
 
@@ -303,15 +349,30 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
       ElementsAre(EqualsDocHitInfo(document_id2, std::vector<SectionId>{0}),
                   EqualsDocHitInfo(document_id1, std::vector<SectionId>{0}),
                   EqualsDocHitInfo(document_id0, std::vector<SectionId>{0})));
+
+  // Get all documents that have "vector".
+  ICING_ASSERT_OK_AND_ASSIGN(itr, QueryExistence(index.get(), kPropertyVector));
+  EXPECT_THAT(
+      GetHits(std::move(itr)),
+      ElementsAre(EqualsDocHitInfo(document_id1, std::vector<SectionId>{0}),
+                  EqualsDocHitInfo(document_id0, std::vector<SectionId>{0})));
+
+  // Get all documents that have "blob_handle".
+  ICING_ASSERT_OK_AND_ASSIGN(itr,
+                             QueryExistence(index.get(), kPropertyBlobHandle));
+  EXPECT_THAT(
+      GetHits(std::move(itr)),
+      ElementsAre(EqualsDocHitInfo(document_id2, std::vector<SectionId>{0}),
+                  EqualsDocHitInfo(document_id0, std::vector<SectionId>{0})));
 }
 
 TEST_F(PropertyExistenceIndexingHandlerTest, HandleNestedPropertyExistence) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   // Create a complex nested root_document with the following property paths.
   // - name
@@ -370,15 +431,19 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandleNestedPropertyExistence) {
   // Handle root_document
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_root_document,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(root_document)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(root_document)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id,
-      document_store_->Put(tokenized_root_document.document()));
+      DocumentStore::PutResult put_result,
+      document_store_->Put(tokenized_root_document.document_wrapper()));
+  DocumentId document_id = put_result.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PropertyExistenceIndexingHandler> handler,
       PropertyExistenceIndexingHandler::Create(&fake_clock_, index.get()));
   EXPECT_THAT(handler->Handle(tokenized_root_document, document_id,
+                              put_result.old_document_id,
                               /*put_document_stats=*/nullptr),
               IsOk());
 
@@ -444,11 +509,11 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandleNestedPropertyExistence) {
 
 TEST_F(PropertyExistenceIndexingHandlerTest, SingleEmptyStringIsNonExisting) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
-      Index::Create(options, &filesystem_, &icing_filesystem_));
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
 
   // Create a document with one empty body.
   DocumentProto document0 =
@@ -474,25 +539,34 @@ TEST_F(PropertyExistenceIndexingHandlerTest, SingleEmptyStringIsNonExisting) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document0,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document0)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document0)));
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document1,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document1)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document1)));
   ICING_ASSERT_OK_AND_ASSIGN(
       TokenizedDocument tokenized_document2,
-      TokenizedDocument::Create(schema_store_.get(), lang_segmenter_.get(),
-                                std::move(document2)));
+      TokenizedDocument::Create(
+          schema_store_.get(), lang_segmenter_.get(),
+          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
+          std::move(document2)));
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id0,
-      document_store_->Put(tokenized_document0.document()));
+      DocumentStore::PutResult put_result0,
+      document_store_->Put(tokenized_document0.document_wrapper()));
+  DocumentId document_id0 = put_result0.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id1,
-      document_store_->Put(tokenized_document1.document()));
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(tokenized_document1.document_wrapper()));
+  DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentId document_id2,
-      document_store_->Put(tokenized_document2.document()));
+      DocumentStore::PutResult put_result2,
+      document_store_->Put(tokenized_document2.document_wrapper()));
+  DocumentId document_id2 = put_result2.new_document_id;
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PropertyExistenceIndexingHandler> handler,
@@ -500,12 +574,15 @@ TEST_F(PropertyExistenceIndexingHandlerTest, SingleEmptyStringIsNonExisting) {
 
   // Handle all docs
   EXPECT_THAT(handler->Handle(tokenized_document0, document_id0,
+                              put_result0.old_document_id,
                               /*put_document_stats=*/nullptr),
               IsOk());
   EXPECT_THAT(handler->Handle(tokenized_document1, document_id1,
+                              put_result1.old_document_id,
                               /*put_document_stats=*/nullptr),
               IsOk());
   EXPECT_THAT(handler->Handle(tokenized_document2, document_id2,
+                              put_result2.old_document_id,
                               /*put_document_stats=*/nullptr),
               IsOk());
 

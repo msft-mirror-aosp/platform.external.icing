@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -27,6 +28,7 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/file/destructible-directory.h"
+#include "icing/file/file-backed-proto.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
 #include "icing/index/iterator/doc-hit-info-iterator-section-restrict.h"
@@ -35,6 +37,7 @@
 #include "icing/index/numeric/posting-list-integer-index-serializer.h"
 #include "icing/store/document-id.h"
 #include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -53,7 +56,7 @@ std::string GetMetadataFilePath(std::string_view working_path) {
   return absl_ports::StrCat(working_path, "/", GetMetadataFileName());
 }
 
-constexpr std::string_view kWildcardPropertyIndexFileName =
+constexpr std::string_view kWildcardPropertyIndexDirectoryName =
     "wildcard_property_index";
 
 constexpr std::string_view kWildcardPropertyStorageFileName =
@@ -72,8 +75,8 @@ std::string GetPropertyIndexStoragePath(std::string_view working_path,
   return absl_ports::StrCat(working_path, "/", property_path);
 }
 
-// Helper function to get all existing property paths by listing all
-// directories.
+// Helper function to get all existing property paths (including the wildcard
+// property index) by listing all directories.
 libtextclassifier3::StatusOr<std::vector<std::string>>
 GetAllExistingPropertyPaths(const Filesystem& filesystem,
                             const std::string& working_path) {
@@ -97,7 +100,7 @@ GetPropertyIntegerIndexStorageMap(
 
   IntegerIndex::PropertyToStorageMapType property_to_storage_map;
   for (const std::string& property_path : property_paths) {
-    if (property_path == kWildcardPropertyIndexFileName) {
+    if (property_path == kWildcardPropertyIndexDirectoryName) {
       continue;
     }
     std::string storage_working_path =
@@ -164,7 +167,7 @@ libtextclassifier3::Status IntegerIndex::Editor::IndexAllBufferedKeys() && {
           IntegerIndexStorage::Create(
               integer_index_.filesystem_,
               GetPropertyIndexStoragePath(integer_index_.working_path_,
-                                          kWildcardPropertyIndexFileName),
+                                          kWildcardPropertyIndexDirectoryName),
               IntegerIndexStorage::Options(num_data_threshold_for_bucket_split_,
                                            pre_mapping_fbv_),
               integer_index_.posting_list_serializer_.get()));
@@ -247,20 +250,23 @@ IntegerIndex::GetIterator(std::string_view property_path, int64_t key_lower,
 }
 
 libtextclassifier3::Status IntegerIndex::AddPropertyToWildcardStorage(
-    const std::string& property_path) {
+    const std::string& new_property_path) {
   SetDirty();
 
   WildcardPropertyStorage wildcard_properties;
   wildcard_properties.mutable_property_entries()->Reserve(
-      wildcard_properties_set_.size());
+      wildcard_properties_set_.size() + 1);
   for (const std::string& property_path : wildcard_properties_set_) {
     wildcard_properties.add_property_entries(property_path);
   }
+  wildcard_properties.add_property_entries(new_property_path);
   ICING_RETURN_IF_ERROR(wildcard_property_storage_->Write(
       std::make_unique<WildcardPropertyStorage>(
           std::move(wildcard_properties))));
 
-  wildcard_properties_set_.insert(property_path);
+  // Add the new property to the in-memory set AFTER we successfully persist
+  // the updated property list to disk.
+  wildcard_properties_set_.insert(new_property_path);
   return libtextclassifier3::Status::OK;
 }
 
@@ -333,7 +339,7 @@ libtextclassifier3::Status IntegerIndex::Optimize(
         IntegerIndexStorage::Create(
             filesystem_,
             GetPropertyIndexStoragePath(working_path_,
-                                        kWildcardPropertyIndexFileName),
+                                        kWildcardPropertyIndexDirectoryName),
             IntegerIndexStorage::Options(num_data_threshold_for_bucket_split_,
                                          pre_mapping_fbv_),
             posting_list_serializer_.get()));
@@ -352,12 +358,18 @@ libtextclassifier3::Status IntegerIndex::Optimize(
 libtextclassifier3::Status IntegerIndex::Clear() {
   SetDirty();
 
-  // Step 1: clear property_to_storage_map_.
-  property_to_storage_map_.clear();
+  // Step 1: reset and clear all internal data.
   wildcard_index_storage_.reset();
+  wildcard_properties_set_.clear();
+  wildcard_property_storage_.reset();
+  property_to_storage_map_.clear();
 
   // Step 2: delete all IntegerIndexStorages. It is safe because there is no
   //         active IntegerIndexStorage after clearing the map.
+  //
+  // Note: wildcard index storage will also be included by
+  //   GetAllExistingPropertyPaths if it exists, and therefore will be deleted
+  //   together.
   ICING_ASSIGN_OR_RETURN(
       std::vector<std::string> property_paths,
       GetAllExistingPropertyPaths(filesystem_, working_path_));
@@ -367,14 +379,21 @@ libtextclassifier3::Status IntegerIndex::Clear() {
         GetPropertyIndexStoragePath(working_path_, property_path)));
   }
 
-  // Step 3: Delete the wildcard property storage
-  std::string wildcard_property_path =
+  // Step 3: Delete the wildcard property storage and reinitialize it.
+  //
+  // Note: since we erase the wildcard properties set and wildcard property
+  //   storage, wildcard index storage can remain nullptr after clearing, so
+  //   there is no need to re-instantiate the wildcard index storage.
+  std::string wildcard_property_storage_path =
       GetWildcardPropertyStorageFilePath(working_path_);
-  if (filesystem_.FileExists(wildcard_property_path.c_str()) ||
-      !filesystem_.DeleteFile(wildcard_property_path.c_str())) {
+  if (!filesystem_.DeleteFile(wildcard_property_storage_path.c_str())) {
     return absl_ports::InternalError(absl_ports::StrCat(
-        "Unable to delete file at path ", wildcard_property_path));
+        "Unable to delete wildcard property storage file at path ",
+        wildcard_property_storage_path));
   }
+  wildcard_property_storage_ =
+      std::make_unique<FileBackedProto<WildcardPropertyStorage>>(
+          filesystem_, wildcard_property_storage_path);
 
   info().last_added_document_id = kInvalidDocumentId;
   return libtextclassifier3::Status::OK;
@@ -424,6 +443,7 @@ IntegerIndex::InitializeNewFiles(const Filesystem& filesystem,
   info_ref.last_added_document_id = kInvalidDocumentId;
   info_ref.num_data_threshold_for_bucket_split =
       num_data_threshold_for_bucket_split;
+
   // Initialize new PersistentStorage. The initial checksums will be computed
   // and set via InitializeNewStorage.
   ICING_RETURN_IF_ERROR(new_integer_index->InitializeNewStorage());
@@ -474,7 +494,7 @@ IntegerIndex::InitializeExistingFiles(
         IntegerIndexStorage::Create(
             filesystem,
             GetPropertyIndexStoragePath(working_path,
-                                        kWildcardPropertyIndexFileName),
+                                        kWildcardPropertyIndexDirectoryName),
             IntegerIndexStorage::Options(num_data_threshold_for_bucket_split,
                                          pre_mapping_fbv),
             posting_list_serializer.get()));
@@ -487,12 +507,19 @@ IntegerIndex::InitializeExistingFiles(
       std::move(property_to_storage_map), std::move(wildcard_property_storage),
       std::move(wildcard_properties_set), std::move(wildcard_index_storage),
       num_data_threshold_for_bucket_split, pre_mapping_fbv));
+
   // Initialize existing PersistentStorage. Checksums will be validated.
   ICING_RETURN_IF_ERROR(integer_index->InitializeExistingStorage());
 
   // Validate magic.
   if (integer_index->info().magic != Info::kMagic) {
-    return absl_ports::FailedPreconditionError("Incorrect magic value");
+    ICING_LOG(ERROR) << "Invalid header magic for IntegerIndex "
+                     << integer_index->working_path_
+                     << ". Expected: " << Info::kMagic
+                     << ", actual: " << integer_index->info().magic;
+    return absl_ports::FailedPreconditionError(
+        absl_ports::StrCat("Invalid header magic for IntegerIndex: ",
+                           integer_index->working_path_));
   }
 
   // If num_data_threshold_for_bucket_split mismatches, then return error to let
@@ -564,10 +591,10 @@ libtextclassifier3::Status IntegerIndex::TransferIndex(
   }
   if (wildcard_index_storage_ != nullptr) {
     ICING_ASSIGN_OR_RETURN(
-        new_storage,
-        TransferIntegerIndexStorage(
-            document_id_old_to_new, wildcard_index_storage_.get(),
-            std::string(kWildcardPropertyIndexFileName), new_integer_index));
+        new_storage, TransferIntegerIndexStorage(
+                         document_id_old_to_new, wildcard_index_storage_.get(),
+                         std::string(kWildcardPropertyIndexDirectoryName),
+                         new_integer_index));
     if (new_storage != nullptr) {
       new_integer_index->wildcard_index_storage_ = std::move(new_storage);
 
@@ -582,8 +609,8 @@ libtextclassifier3::Status IntegerIndex::TransferIndex(
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IntegerIndex::PersistStoragesToDisk(bool force) {
-  if (!force && !is_storage_dirty()) {
+libtextclassifier3::Status IntegerIndex::PersistStoragesToDisk() {
+  if (is_initialized_ && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
@@ -595,32 +622,25 @@ libtextclassifier3::Status IntegerIndex::PersistStoragesToDisk(bool force) {
   if (wildcard_index_storage_) {
     ICING_RETURN_IF_ERROR(wildcard_index_storage_->PersistToDisk());
   }
+  is_storage_dirty_ = false;
   return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::Status IntegerIndex::PersistMetadataToDisk(bool force) {
-  if (!force && !is_info_dirty() && !is_storage_dirty()) {
+libtextclassifier3::Status IntegerIndex::PersistMetadataToDisk() {
+  if (is_initialized_ && !is_info_dirty() && !is_storage_dirty()) {
     return libtextclassifier3::Status::OK;
   }
 
   // Changes should have been applied to the underlying file when using
   // MemoryMappedFile::Strategy::READ_WRITE_AUTO_SYNC, but call msync() as an
   // extra safety step to ensure they are written out.
-  return metadata_mmapped_file_->PersistToDisk();
+  ICING_RETURN_IF_ERROR(metadata_mmapped_file_->PersistToDisk());
+  is_info_dirty_ = false;
+  return libtextclassifier3::Status::OK;
 }
 
-libtextclassifier3::StatusOr<Crc32> IntegerIndex::ComputeInfoChecksum(
-    bool force) {
-  if (!force && !is_info_dirty()) {
-    return Crc32(crcs().component_crcs.info_crc);
-  }
-
-  return info().ComputeChecksum();
-}
-
-libtextclassifier3::StatusOr<Crc32> IntegerIndex::ComputeStoragesChecksum(
-    bool force) {
-  if (!force && !is_storage_dirty()) {
+libtextclassifier3::StatusOr<Crc32> IntegerIndex::UpdateStoragesChecksum() {
+  if (is_initialized_ && !is_storage_dirty()) {
     return Crc32(crcs().component_crcs.storages_crc);
   }
 
@@ -640,8 +660,45 @@ libtextclassifier3::StatusOr<Crc32> IntegerIndex::ComputeStoragesChecksum(
     storages_checksum ^= storage_crc.Get();
   }
 
+  // FileBackedProto always keeps its checksum up to date. So we just need to
+  // retrieve the checksum.
   ICING_ASSIGN_OR_RETURN(Crc32 wildcard_properties_crc,
-                         wildcard_property_storage_->ComputeChecksum());
+                         wildcard_property_storage_->GetChecksum());
+  storages_checksum ^= wildcard_properties_crc.Get();
+
+  return Crc32(storages_checksum);
+}
+
+libtextclassifier3::StatusOr<Crc32> IntegerIndex::GetInfoChecksum() const {
+  if (is_initialized_ && !is_info_dirty()) {
+    return Crc32(crcs().component_crcs.info_crc);
+  }
+  return info().GetChecksum();
+}
+
+libtextclassifier3::StatusOr<Crc32> IntegerIndex::GetStoragesChecksum() const {
+  if (is_initialized_ && !is_storage_dirty()) {
+    return Crc32(crcs().component_crcs.storages_crc);
+  }
+
+  // XOR all crcs of all storages. Since XOR is commutative and associative,
+  // the order doesn't matter.
+  uint32_t storages_checksum = 0;
+  for (auto& [property_path, storage] : property_to_storage_map_) {
+    ICING_ASSIGN_OR_RETURN(Crc32 storage_crc, storage->GetChecksum());
+    storage_crc.Append(property_path);
+
+    storages_checksum ^= storage_crc.Get();
+  }
+
+  if (wildcard_index_storage_ != nullptr) {
+    ICING_ASSIGN_OR_RETURN(Crc32 storage_crc,
+                           wildcard_index_storage_->GetChecksum());
+    storages_checksum ^= storage_crc.Get();
+  }
+
+  ICING_ASSIGN_OR_RETURN(Crc32 wildcard_properties_crc,
+                         wildcard_property_storage_->GetChecksum());
   storages_checksum ^= wildcard_properties_crc.Get();
 
   return Crc32(storages_checksum);

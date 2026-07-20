@@ -32,8 +32,7 @@ libtextclassifier3::Status DocHitInfoIteratorAllDocumentId::Advance() {
   if (!IsDocumentIdValid(current_document_id_)) {
     // Reached the end, set these to invalid values and return
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
   doc_hit_info_.set_document_id(current_document_id_--);
   return libtextclassifier3::Status::OK;

@@ -23,15 +23,18 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // The type of persistence guarantee that PersistToDisk should provide.
-// Next tag: 3
+// Next tag: 2
 message PersistType {
+  // Next tag: 6
   enum Code {
     // Default. Should never be used.
     UNKNOWN = 0;
 
     // Only persist the ground truth. A successful PersistToDisk(LITE) should
-    // ensure that no data is lost the next time Icing initializes. This
-    // should be called after each batch of mutations.
+    // ensure that no data is lost the next time Icing initializes. However, a
+    // recovery will be required unless a subsequent call to
+    // PersistToDisk(RECOVERY_PROOF) or PersistToDisk(FULL) is made before
+    // shutdown. This should be called after each batch of mutations.
     LITE = 1;
 
     // Persists all data in internal Icing components. A successful
@@ -40,12 +43,35 @@ message PersistType {
     // structures the next time Icing initializes. This should be called at
     // some point before the app terminates.
     FULL = 2;
+
+    // Persists the ground truth and updates the checksums of all internal Icing
+    // components. A successful PersistToDisk(RECOVERY_PROOF) should ensure that
+    // no data is lost and make it unlikely that a recovery is needed the next
+    // time Icing initializes. However, it is not guaranteed that a recovery
+    // will not be needed. This is because changes to index components may or
+    // may not be flushed to disk in the background and if some changes aren't
+    // persisted then we will have a checksum mismatch and a recovery. To
+    // guarantee that recovery won't occur PersistToDisk(FULL) must be called.
+    RECOVERY_PROOF = 3;
+
+    // This call type should be called when the client app is going to terminate
+    // or the OS is going to shutdown.
+    //
+    // By default, it will have the same behavior as RECOVERY_PROOF. It is only
+    // used to differentiate the calling path (especially for Android).
+    SHUTDOWN = 4;
+
+    // This call type should be called only by IcingSearchEngine destructor.
+    //
+    // By default, it will have the same behavior as FULL. It is only used to
+    // differentiate the calling path.
+    DESTRUCTOR = 5;
   }
   optional Code code = 1;
 }
 
 // Result of a call to IcingSearchEngine.Persist
-// Next tag: 2
+// Next tag: 6
 message PersistToDiskResultProto {
   // Status code can be one of:
   //   OK
@@ -54,4 +80,76 @@ message PersistToDiskResultProto {
   //
   // See status.proto for more details.
   optional StatusProto status = 1;
+
+  // Stats about the PersistToDisk call.
+  optional PersistToDiskStatsProto persist_stats = 2;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 3;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 4;
+
+  // Size of the PersistToDiskResultProto response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 5;
+}
+
+// Stats of the top-level function IcingSearchEngine::PersistToDisk.
+// Next tag: 14
+message PersistToDiskStatsProto {
+  // The type of persistence guarantee that PersistToDisk should provide.
+  optional PersistType.Code persist_type = 1;
+
+  // Overall time used for the function call.
+  optional int32 latency_ms = 2;
+
+  // Time used to persist the blob store.
+  optional int32 blob_store_persist_latency_ms = 3;
+
+  // Time used to persist the document store.
+  optional int32 document_store_total_persist_latency_ms = 4;
+
+  // Time used to persist the document store components.
+  optional int32 document_store_components_persist_latency_ms = 5;
+
+  // Time used to update the document store checksum.
+  optional int32 document_store_checksum_update_latency_ms = 6;
+
+  // Time used to update the document log checksum.
+  optional int32 document_log_checksum_update_latency_ms = 7;
+
+  // Time used to sync the document log data to disk.
+  optional int32 document_log_data_sync_latency_ms = 8;
+
+  // Time used to persist the schema store. If the persist type is
+  // RECOVERY_PROOF, this will update the checksums of the schema store. If the
+  // persist type is FULL, this will update the checksums internally and
+  // fdatasync/msync.
+  optional int32 schema_store_persist_latency_ms = 9;
+
+  // Time used to persist the index. If the persist type is RECOVERY_PROOF, this
+  // will update the checksums of the index.  If the persist type is FULL, this
+  // will update the checksums internally and fdatasync/msync.
+  optional int32 index_persist_latency_ms = 10;
+
+  // Time used to persist the integer index. If the persist type is
+  // RECOVERY_PROOF, this will update the checksums of the integer index. If the
+  // persist type is FULL, this will update the checksums internally and
+  // fdatasync/msync.
+  optional int32 integer_index_persist_latency_ms = 11;
+
+  // Time used to persist the qualified id join index.  If the persist type is
+  // RECOVERY_PROOF, this will update the checksums of the qualified id join
+  // index. If the persist type is FULL, this will update the checksums
+  // internally and fdatasync/msync.
+  optional int32 qualified_id_join_index_persist_latency_ms = 12;
+
+  // Time used to persist the embedding index. If the persist type is
+  // RECOVERY_PROOF, this will update the checksums of the embedding index. If
+  // the persist type is FULL, this will update the checksums internally and
+  // fdatasync/msync.
+  optional int32 embedding_index_persist_latency_ms = 13;
 }
