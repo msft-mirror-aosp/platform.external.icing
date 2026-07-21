@@ -66,29 +66,21 @@ std::string StrJoin(Iterator first, Iterator last, std::string_view sep,
   }
   // Create result with enough room to fit all operands.
   std::string result;
-  // __resize_default_init is provided by libc++ >= 8.0 and allows us to
-  // allocate room for the content we're about to copy while avoiding the
-  // unnecessary zero-initialization that the normal std::string::resize will
-  // perform.
-  //
-  // The current absl implementation copies a null char to the character at
-  // previous_size after the call to resize_default_init due to implementation
-  // differences between libstdc++ and libc++. That behavior is NOT copied over
-  // here because the following lines are just about to overwrite that character
-  // anyways.
-  result.__resize_default_init(result_size);
-
-  add_separator_before_element = false;
-  for (char* out = &result[0]; first != last; ++first) {
-    if (add_separator_before_element) {
-      out = Append(out, sep);
+  ResizeAndOverwrite(result, result_size,
+                     [&](char* out, std::string::size_type n) {
+    bool add_sep = false;
+    char* next = out;
+    for (Iterator current = first; current != last; ++current) {
+      if (add_sep) {
+        next = Append(next, sep);
+      }
+      std::string formatted = formatter(*current);
+      next = Append(next, formatted);
+      add_sep = true;
     }
-
-    std::string formatted = formatter(*first);
-    out = Append(out, formatted);
-
-    add_separator_before_element = true;
-  }
+    assert(next == out + n);
+    return n;
+  });
 
   return result;
 }

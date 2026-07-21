@@ -176,10 +176,7 @@ libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
           filesystem, blob_info_proto_file_name,
           PortableFileBackedProtoLog<BlobInfoProto>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize, compression_level,
-              /*compression_threshold_bytes=*/0, compression_mem_level,
-              /*enable_smaller_decompression_buffer_size_in=*/false,
-              /*enable_proto_log_new_header_format_in=*/
-              true, feature_flags->enable_reusable_decompression_buffer())));
+              /*compression_threshold_bytes=*/0, compression_mem_level)));
   // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
   //   It is a remaining task to rollout new header format for proto log.
 
@@ -422,11 +419,11 @@ BlobProto BlobStore::CommitBlob(
   return blob_proto;
 }
 
-BlobProto BlobStore::GetAllBlobInfos() {
+BlobProto BlobStore::GetAllBlobInfos() const {
   BlobProto blob_proto;
   blob_proto.mutable_status()->set_code(StatusProto::OK);
-  for (auto itr = blob_handle_to_offset_.begin();
-       itr != blob_handle_to_offset_.end(); ++itr) {
+  for (auto itr = blob_handle_to_offset_.cbegin();
+       itr != blob_handle_to_offset_.cend(); ++itr) {
     auto blob_info_proto_or = blob_info_log_->ReadProto(itr->second);
     if (!blob_info_proto_or.ok()) {
       continue;
@@ -556,10 +553,7 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
           PortableFileBackedProtoLog<BlobInfoProto>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize,
               compression_level_, /*compression_threshold_bytes=*/0,
-              compression_mem_level_,
-              /*enable_smaller_decompression_buffer_size_in=*/false,
-              /*enable_proto_log_new_header_format=*/true,
-              feature_flags->enable_reusable_decompression_buffer())));
+              compression_mem_level_)));
   // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
   //   It is a remaining task to rollout new header format for proto log.
   std::unique_ptr<PortableFileBackedProtoLog<BlobInfoProto>> new_blob_info_log =
@@ -602,7 +596,7 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
       new_blob_handle_to_offset[blob_handle_str] = new_offset;
     }
   }
-  new_blob_info_log->PersistToDisk();
+  ICING_RETURN_IF_ERROR(new_blob_info_log->PersistToDisk());
   new_blob_info_log.reset();
   blob_info_log_.reset();
   std::string old_blob_info_proto_file_name =
@@ -625,10 +619,7 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
           PortableFileBackedProtoLog<BlobInfoProto>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize,
               compression_level_, /*compression_threshold_bytes=*/0,
-              compression_mem_level_,
-              /*enable_smaller_decompression_buffer_size_in=*/false,
-              /*enable_proto_log_new_header_format=*/true,
-              feature_flags->enable_reusable_decompression_buffer())));
+              compression_mem_level_)));
   // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
   //   It is a remaining task to rollout new header format for proto log.
   blob_info_log_ = std::move(log_create_result.proto_log);

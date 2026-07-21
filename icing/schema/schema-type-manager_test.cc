@@ -25,7 +25,7 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-util.h"
-#include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/dynamic-trie-key-mapper.h"
 #include "icing/store/key-mapper.h"
 #include "icing/testing/common-matchers.h"
@@ -68,6 +68,10 @@ static constexpr char kPropertyName[] = "name";
 static constexpr char kPropertyNestedNonIndexable[] = "nestedNonIndexable";
 static constexpr char kPropertySuperTagQualifiedId[] =
     "superTagQualifiedId";  // QUALIFIED_ID joinable
+
+// type and id of ConversationCopy. The properties are the same as Conversation.
+static constexpr char kTypeConversationCopy[] = "ConversationCopy";
+static constexpr SchemaTypeId kTypeConversationCopySchemaId = 2;
 
 PropertyConfigProto CreateReceipientIdsPropertyConfig() {
   return PropertyConfigBuilder()
@@ -192,6 +196,17 @@ SchemaTypeConfigProto CreateConversationTypeConfig() {
       .Build();
 }
 
+SchemaTypeConfigProto CreateConversationCopyTypeConfig() {
+  // The properties are the same as Conversation.
+  SchemaTypeConfigProto conversation_copy =
+      SchemaTypeConfigBuilder(CreateConversationTypeConfig())
+          .SetType(kTypeConversationCopy)
+          .BuildAndPopulatePropertiesDigest();
+
+  conversation_copy.clear_properties();
+  return conversation_copy;
+}
+
 class SchemaTypeManagerTest : public ::testing::Test {
  protected:
   void SetUp() override { test_dir_ = GetTestTempDir() + "/icing"; }
@@ -205,9 +220,15 @@ class SchemaTypeManagerTest : public ::testing::Test {
 };
 
 TEST_F(SchemaTypeManagerTest, Create) {
-  SchemaUtil::TypeConfigMap type_config_map;
-  type_config_map.emplace(kTypeEmail, CreateEmailTypeConfig());
-  type_config_map.emplace(kTypeConversation, CreateConversationTypeConfig());
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(
+      type_config_info_cache.AddTypeConfig(CreateEmailTypeConfig()));
+  ICING_ASSERT_OK(
+      type_config_info_cache.AddTypeConfig(CreateConversationTypeConfig()));
+  ICING_ASSERT_OK(
+      type_config_info_cache.AddTypeConfig(CreateConversationCopyTypeConfig()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<KeyMapper<SchemaTypeId>> schema_type_mapper,
@@ -217,10 +238,13 @@ TEST_F(SchemaTypeManagerTest, Create) {
   ICING_ASSERT_OK(schema_type_mapper->Put(kTypeEmail, kTypeEmailSchemaId));
   ICING_ASSERT_OK(
       schema_type_mapper->Put(kTypeConversation, kTypeConversationSchemaId));
+  ICING_ASSERT_OK(schema_type_mapper->Put(kTypeConversationCopy,
+                                          kTypeConversationCopySchemaId));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, schema_type_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache,
+                                schema_type_mapper.get()));
 
   // Check SectionManager
   // In the Email type, "recipientIds", "recipients", "senderQualifiedId",
@@ -251,6 +275,35 @@ TEST_F(SchemaTypeManagerTest, Create) {
   // are not indexable.
   EXPECT_THAT(
       schema_type_manager->section_manager().GetMetadataList(kTypeConversation),
+      IsOkAndHolds(Pointee(ElementsAre(
+          EqualsSectionMetadata(
+              /*expected_id=*/0,
+              /*expected_property_path=*/"emails.recipientIds",
+              CreateReceipientIdsPropertyConfig()),
+          EqualsSectionMetadata(/*expected_id=*/1,
+                                /*expected_property_path=*/"emails.recipients",
+                                CreateRecipientsPropertyConfig()),
+          EqualsSectionMetadata(
+              /*expected_id=*/2,
+              /*expected_property_path=*/"emails.senderQualifiedId",
+              CreateSenderQualifiedIdPropertyConfig()),
+          EqualsSectionMetadata(/*expected_id=*/3,
+                                /*expected_property_path=*/"emails.subject",
+                                CreateSubjectPropertyConfig()),
+          EqualsSectionMetadata(/*expected_id=*/4,
+                                /*expected_property_path=*/"emails.timestamp",
+                                CreateTimestampPropertyConfig()),
+          EqualsSectionMetadata(/*expected_id=*/5,
+                                /*expected_property_path=*/"groupQualifiedId",
+                                CreateGroupQualifiedIdPropertyConfig()),
+          EqualsSectionMetadata(/*expected_id=*/6,
+                                /*expected_property_path=*/"name",
+                                CreateNamePropertyConfig())))));
+
+  // SectionManager should contain the same contents for ConversationCopy.
+  EXPECT_THAT(
+      schema_type_manager->section_manager().GetMetadataList(
+          kTypeConversationCopy),
       IsOkAndHolds(Pointee(ElementsAre(
           EqualsSectionMetadata(
               /*expected_id=*/0,
@@ -319,11 +372,43 @@ TEST_F(SchemaTypeManagerTest, Create) {
               /*expected_id=*/5,
               /*expected_property_path=*/"superTagQualifiedId",
               CreateSuperTagQualifiedIdPropertyConfig())))));
+
+  // JoinablePropertyManager should contain the same contents for
+  // ConversationCopy.
+  EXPECT_THAT(
+      schema_type_manager->joinable_property_manager().GetMetadataList(
+          kTypeConversationCopy),
+      IsOkAndHolds(Pointee(ElementsAre(
+          EqualsJoinablePropertyMetadata(
+              /*expected_id=*/0,
+              /*expected_property_path=*/"emails.senderQualifiedId",
+              CreateSenderQualifiedIdPropertyConfig()),
+          EqualsJoinablePropertyMetadata(
+              /*expected_id=*/1,
+              /*expected_property_path=*/"emails.tagQualifiedId",
+              CreateTagQualifiedIdPropertyConfig()),
+          EqualsJoinablePropertyMetadata(
+              /*expected_id=*/2, /*expected_property_path=*/"groupQualifiedId",
+              CreateGroupQualifiedIdPropertyConfig()),
+          EqualsJoinablePropertyMetadata(
+              /*expected_id=*/3,
+              /*expected_property_path=*/"nestedNonIndexable.senderQualifiedId",
+              CreateSenderQualifiedIdPropertyConfig()),
+          EqualsJoinablePropertyMetadata(
+              /*expected_id=*/4,
+              /*expected_property_path=*/"nestedNonIndexable.tagQualifiedId",
+              CreateTagQualifiedIdPropertyConfig()),
+          EqualsJoinablePropertyMetadata(
+              /*expected_id=*/5,
+              /*expected_property_path=*/"superTagQualifiedId",
+              CreateSuperTagQualifiedIdPropertyConfig())))));
 }
 
 TEST_F(SchemaTypeManagerTest, CreateWithNullPointerShouldFail) {
-  SchemaUtil::TypeConfigMap type_config_map;
-  EXPECT_THAT(SchemaTypeManager::Create(type_config_map,
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  EXPECT_THAT(SchemaTypeManager::Create(type_config_info_cache,
                                         /*schema_type_mapper=*/nullptr),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
@@ -339,8 +424,10 @@ TEST_F(SchemaTypeManagerTest, CreateWithSchemaNotInSchemaTypeMapperShouldFail) {
   property->mutable_string_indexing_config()->set_term_match_type(
       TERM_MATCH_EXACT);
 
-  SchemaUtil::TypeConfigMap type_config_map;
-  type_config_map.emplace("type", type_config);
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(type_config));
 
   // Create an empty schema type mapper
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -349,9 +436,9 @@ TEST_F(SchemaTypeManagerTest, CreateWithSchemaNotInSchemaTypeMapperShouldFail) {
           filesystem_, test_dir_ + "/schema_type_mapper",
           /*maximum_size_bytes=*/3 * 128 * 1024));
 
-  EXPECT_THAT(
-      SchemaTypeManager::Create(type_config_map, schema_type_mapper.get()),
-      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(SchemaTypeManager::Create(type_config_info_cache,
+                                        schema_type_mapper.get()),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 }  // namespace

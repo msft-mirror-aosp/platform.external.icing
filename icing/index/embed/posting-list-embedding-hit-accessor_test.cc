@@ -209,9 +209,11 @@ TEST_F(PostingListEmbeddingHitAccessorTest, MultiBlockChainsBlocksProperly) {
       std::unique_ptr<PostingListEmbeddingHitAccessor> pl_accessor,
       PostingListEmbeddingHitAccessor::Create(flash_index_storage_.get(),
                                               serializer_.get()));
-  // Add some hits! Any hits!
+  // Add some hits. This should fit onto the 2nd block.
+  int desired_byte_length = 1;
+  int num_hits = FlashIndexStorage::SelectBlockSize() / desired_byte_length + 1;
   std::vector<EmbeddingHit> hits1 =
-      CreateEmbeddingHits(/*num_hits=*/5000, /*desired_byte_length=*/1);
+      CreateEmbeddingHits(num_hits, desired_byte_length);
   for (const EmbeddingHit& hit : hits1) {
     ICING_ASSERT_OK(pl_accessor->PrependHit(hit));
   }
@@ -253,15 +255,19 @@ TEST_F(PostingListEmbeddingHitAccessorTest, MultiBlockChainsBlocksProperly) {
 
 TEST_F(PostingListEmbeddingHitAccessorTest,
        PreexistingMultiBlockReusesBlocksProperly) {
+  // Add some hits. This should fit onto the 2nd block.
+  int desired_byte_length = 1;
+  int num_hits =
+      FlashIndexStorage::SelectBlockSize() / desired_byte_length + 100;
   std::vector<EmbeddingHit> hits =
-      CreateEmbeddingHits(/*num_hits=*/5050, /*desired_byte_length=*/1);
+      CreateEmbeddingHits(num_hits, desired_byte_length);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<PostingListEmbeddingHitAccessor> pl_accessor,
       PostingListEmbeddingHitAccessor::Create(flash_index_storage_.get(),
                                               serializer_.get()));
   // Add some hits! Any hits!
-  for (int i = 0; i < 5000; ++i) {
+  for (int i = 0; i < num_hits - 50; ++i) {
     ICING_ASSERT_OK(pl_accessor->PrependHit(hits[i]));
   }
   PostingListAccessor::FinalizeResult result1 =
@@ -278,7 +284,7 @@ TEST_F(PostingListEmbeddingHitAccessorTest,
       pl_accessor,
       PostingListEmbeddingHitAccessor::CreateFromExisting(
           flash_index_storage_.get(), serializer_.get(), first_add_id));
-  for (int i = 5000; i < hits.size(); ++i) {
+  for (int i = num_hits - 50; i < num_hits; ++i) {
     ICING_ASSERT_OK(pl_accessor->PrependHit(hits[i]));
   }
   PostingListAccessor::FinalizeResult result2 =
@@ -287,7 +293,7 @@ TEST_F(PostingListEmbeddingHitAccessorTest,
   PostingListIdentifier second_add_id = result2.id;
   EXPECT_THAT(second_add_id, Eq(first_add_id));
 
-  // We should be able to retrieve all 5050 hits.
+  // We should be able to retrieve all hits.
   ICING_ASSERT_OK_AND_ASSIGN(
       PostingListHolder pl_holder,
       flash_index_storage_->GetPostingList(second_add_id));

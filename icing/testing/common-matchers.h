@@ -47,6 +47,7 @@
 namespace icing {
 namespace lib {
 
+using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::DoubleNear;
 using ::testing::Matches;
 
@@ -113,7 +114,9 @@ MATCHER_P6(EqualsDocHitInfoIteratorCallStats, num_leaf_advance_calls_lite_index,
             absl_ports::StrJoin(stats.quantized_shards_read, ",",
                                 absl_ports::NumberFormatter()),
             "], num_embedding_bytes_read=",
-            std::to_string(stats.num_embedding_bytes_read), "}");
+            std::to_string(stats.num_embedding_bytes_read),
+            ", num_ann_embeddings_scored=",
+            std::to_string(stats.num_ann_embeddings_scored), "}");
       };
   *result_listener << IcingStringUtil::StringPrintf(
       "(actual is {num_leaf_advance_calls_lite_index=%d, "
@@ -158,6 +161,15 @@ MATCHER_P5(EqualsDocumentAssociatedScoreData, corpus_id, document_score,
          arg.length_in_tokens() == length_in_tokens &&
          expected_has_valid_scorable_property_cache_index ==
              has_valid_scorable_property_cache_index;
+}
+
+MATCHER_P2(EqualsDocumentGroupKey, schema_type_name, name_space, "") {
+  return arg.schema_type_name == schema_type_name &&
+         arg.name_space == name_space;
+}
+
+MATCHER_P2(EqualsDocumentUriId, uri, document_id, "") {
+  return arg.uri == uri && arg.document_id == document_id;
 }
 
 MATCHER_P4(EqualsDocumentMetadata, schema_type_name, name_space, uri,
@@ -336,7 +348,7 @@ MATCHER_P(EqualsJoinedScoredDocumentHit, expected_joined_scored_document_hit,
   return true;
 }
 
-MATCHER_P(EqualsSetSchemaResult, expected, "") {
+MATCHER_P(EqualsSetSchemaResultIgnoringStats, expected, "") {
   const SchemaStore::SetSchemaResult& actual = arg;
 
   if (actual.success == expected.success &&
@@ -668,6 +680,21 @@ MATCHER_P(EqualsSearchResultIgnoreStatsAndScores, expected, "") {
                             actual_copy, result_listener);
 }
 
+MATCHER_P(EqualsSchemaProtoIgnorePropertiesDigest, expected, "") {
+  SchemaProto actual_copy = arg;
+  for (SchemaTypeConfigProto& type_config : *actual_copy.mutable_types()) {
+    type_config.clear_properties_digest();
+  }
+
+  SchemaProto expected_copy = expected;
+  for (SchemaTypeConfigProto& type_config : *expected_copy.mutable_types()) {
+    type_config.clear_properties_digest();
+  }
+
+  return ExplainMatchResult(portable_equals_proto::EqualsProto(expected_copy),
+                            actual_copy, result_listener);
+}
+
 MATCHER_P4(EqualsCharacterIterator, expected_text, expected_utf8_index,
            expected_utf16_index, expected_utf32_index, "") {
   const CharacterIterator& actual = arg;
@@ -727,6 +754,28 @@ MATCHER_P(EqualsEmbeddingMatchSnippetProto, expected, "") {
              expected.embedding_query_vector_index() &&
          actual.embedding_query_metric_type() ==
              expected.embedding_query_metric_type();
+}
+
+// Used for matching SchemaUtil::TypeConfigInfoCache::TypeConfigHolder to a
+// SchemaTypeConfigProto.
+MATCHER_P(TypeConfigHolderEqualsProto, expected_proto, "") {
+  SchemaTypeConfigProto actual_proto = arg.base_type_config();
+  actual_proto.mutable_properties()->Clear();
+  for (const auto& property : arg.properties()) {
+    *actual_proto.add_properties() = property;
+  }
+  return Matches(EqualsProto(expected_proto))(actual_proto);
+}
+
+MATCHER_P(TypeConfigHolderEqualsProtoIgnorePropertiesDigest, expected_proto,
+          "") {
+  SchemaTypeConfigProto actual_proto = arg.base_type_config();
+  actual_proto.clear_properties_digest();
+  actual_proto.mutable_properties()->Clear();
+  for (const auto& property : arg.properties()) {
+    *actual_proto.add_properties() = property;
+  }
+  return Matches(EqualsProto(expected_proto))(actual_proto);
 }
 
 // TODO(tjbarron) Remove this once icing has switched to depend on TC3 Status
