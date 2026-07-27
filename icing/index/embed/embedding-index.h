@@ -25,7 +25,6 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
 #include "icing/feature-flags.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
@@ -87,77 +86,26 @@ class EmbeddingIndex : public PersistentStorage {
   static constexpr WorkingPathType kWorkingPathType =
       WorkingPathType::kDirectory;
 
-  struct IvfMetadata {
-    // Total number of embeddings that were used for the last IVF index
-    // construction (k-means) for this IVF corpus.
-    // 0 means no IVF index construction has been performed for this IVF corpus,
-    // and embeddings are only maintained in the delta-store.
-    uint32_t last_ivf_build_size = 0;
-    // Total number of embeddings currently in this IVF corpus.
-    uint32_t current_size = 0;
-    // Number of clusters maintained for this IVF corpus if k-means has been
-    // performed. This does not include delta-store and centroids.
-    uint32_t num_clusters = 0;
-
-    bool operator==(const IvfMetadata& other) const {
-      return last_ivf_build_size == other.last_ivf_build_size &&
-             current_size == other.current_size &&
-             num_clusters == other.num_clusters;
-    }
-  };
-
-  class IvfContextManager {
-   public:
-    explicit IvfContextManager(std::string base_key)
-        : dimension_(embedding_util::GetDimensionFromPostingListKey(base_key)),
-          base_key_(std::move(base_key)) {}
-
-    explicit IvfContextManager(uint32_t dimension,
-                               std::string_view model_signature)
-        : IvfContextManager(
-              embedding_util::GetPostingListKey(dimension, model_signature)) {}
-
-    static libtextclassifier3::StatusOr<IvfContextManager> Create(
-        const PropertyProto::VectorProto& vector) {
-      ICING_ASSIGN_OR_RETURN(std::string key,
-                             embedding_util::GetPostingListKey(vector));
-      return IvfContextManager(std::move(key));
-    }
-
-    std::string GetPostingListKey(uint32_t cluster_id) const;
-
-    libtextclassifier3::StatusOr<IvfMetadata> GetMetadata(
-        const EmbeddingIndex* embedding_index) const;
-
-    libtextclassifier3::Status SetMetadata(EmbeddingIndex* embedding_index,
-                                           IvfMetadata metadata) const;
-
-    // Finds and returns up to k cluster IDs whose cluster centroids are closest
-    // to the given query_vector.
-    //
-    // Note: The order of the cluster IDs in the returned list is arbitrary and
-    // is not guaranteed to be sorted by distance.
-    //
-    // Returns:
-    //   - A list of closest cluster IDs on success. The size of the list will
-    //     be min(k, total number of clusters).
-    //   - An empty list if the IVF index has not been built yet.
-    //   - INVALID_ARGUMENT if the dimension of `query_vector` does not
-    //     match the index dimension.
-    //   - INTERNAL error if the IVF index is corrupted.
-    libtextclassifier3::StatusOr<std::vector<uint32_t>>
-    GetClosestClusterIdsByDistance(
-        const EmbeddingIndex* embedding_index,
-        const PropertyProto::VectorProto& query_vector, uint32_t k) const;
-
-    uint32_t dimension() const { return dimension_; }
-
-    const std::string& base_key() const { return base_key_; }
-
-   private:
-    uint32_t dimension_;
-    std::string base_key_;
-  };
+  // Finds and returns up to k cluster IDs whose cluster centroids are closest
+  // to the given query_vector.
+  //
+  // Note: The order of the cluster IDs in the returned list is arbitrary and
+  // is not guaranteed to be sorted by distance.
+  //
+  // Returns:
+  //   - A list of closest cluster IDs on success. The size of the list will
+  //     be min(k, total number of clusters).
+  //   - An empty list if the IVF index has not been built yet.
+  //   - INVALID_ARGUMENT if the dimension of `query_vector` does not
+  //     match the index dimension.
+  //   - INTERNAL error if the IVF index is corrupted.
+  libtextclassifier3::StatusOr<std::vector<uint32_t>>
+  GetClosestClusterIdsByDistance(const PropertyProto::VectorProto& query_vector,
+                                 uint32_t k) const {
+    ICING_ASSIGN_OR_RETURN(IvfContextManager ivf_context,
+                           IvfContextManager::Create(query_vector));
+    return ivf_context.GetClosestClusterIdsByDistance(this, query_vector, k);
+  }
 
   EmbeddingIndex(const EmbeddingIndex&) = delete;
   EmbeddingIndex& operator=(const EmbeddingIndex&) = delete;
@@ -354,6 +302,125 @@ class EmbeddingIndex : public PersistentStorage {
       const std::vector<DocumentId>& document_id_old_to_new,
       DocumentId new_last_added_document_id);
 
+  // Runs or re-runs K-Means and redistributes embeddings into clusters for all
+  // existing IVF metadata base keys.
+  //
+  // Returns:
+  //   - The total number of K-Means iterations performed across all IVF
+  //     maintenance operations on success.
+  //   - Any error from the KeyMapper or MiniBatchKMeans.
+  libtextclassifier3::StatusOr<int> MaintainAllIvf(
+      const DocumentStore& document_store, const SchemaStore& schema_store,
+      const MaintainAnnIndexOptions& maintain_ann_index_options);
+
+  DocumentId last_added_document_id() const {
+    return info().last_added_document_id;
+  }
+
+  void set_last_added_document_id(DocumentId document_id) {
+    Info& info_ref = info();
+    if (info_ref.last_added_document_id == kInvalidDocumentId ||
+        document_id > info_ref.last_added_document_id) {
+      info_ref.last_added_document_id = document_id;
+    }
+  }
+
+  uint32_t GetShardId(uint32_t posting_list_key_hash,
+                      uint32_t schema_name_hash) const {
+    return (posting_list_key_hash * 31 + schema_name_hash) % num_shards_;
+  }
+
+  uint32_t num_shards() const { return num_shards_; }
+
+ private:
+  struct IvfMetadata {
+    // Total number of embeddings that were used for the last IVF index
+    // construction (k-means) for this IVF corpus.
+    // 0 means no IVF index construction has been performed for this IVF corpus,
+    // and embeddings are only maintained in the delta-store.
+    uint32_t last_ivf_build_size = 0;
+    // Total number of embeddings currently in this IVF corpus.
+    uint32_t current_size = 0;
+    // Number of clusters maintained for this IVF corpus if k-means has been
+    // performed. This does not include delta-store and centroids.
+    uint32_t num_clusters = 0;
+
+    bool operator==(const IvfMetadata& other) const {
+      return last_ivf_build_size == other.last_ivf_build_size &&
+             current_size == other.current_size &&
+             num_clusters == other.num_clusters;
+    }
+  };
+
+  class IvfContextManager {
+   public:
+    explicit IvfContextManager(std::string base_key)
+        : dimension_(embedding_util::GetDimensionFromPostingListKey(base_key)),
+          base_key_(std::move(base_key)) {}
+
+    explicit IvfContextManager(uint32_t dimension,
+                               std::string_view model_signature)
+        : IvfContextManager(
+              embedding_util::GetPostingListKey(dimension, model_signature)) {}
+
+    static libtextclassifier3::StatusOr<IvfContextManager> Create(
+        const PropertyProto::VectorProto& vector) {
+      ICING_ASSIGN_OR_RETURN(std::string key,
+                             embedding_util::GetPostingListKey(vector));
+      return IvfContextManager(std::move(key));
+    }
+
+    std::string GetPostingListKey(uint32_t cluster_id) const;
+
+    libtextclassifier3::StatusOr<IvfMetadata> GetMetadata(
+        const EmbeddingIndex* embedding_index) const;
+
+    libtextclassifier3::Status SetMetadata(EmbeddingIndex* embedding_index,
+                                           IvfMetadata metadata) const;
+
+    // Finds and returns up to k cluster IDs whose cluster centroids are closest
+    // to the given query_vector.
+    //
+    // Note: The order of the cluster IDs in the returned list is arbitrary and
+    // is not guaranteed to be sorted by distance.
+    //
+    // Returns:
+    //   - A list of closest cluster IDs on success. The size of the list will
+    //     be min(k, total number of clusters).
+    //   - An empty list if the IVF index has not been built yet.
+    //   - INVALID_ARGUMENT if the dimension of `query_vector` does not
+    //     match the index dimension.
+    //   - INTERNAL error if the IVF index is corrupted.
+    libtextclassifier3::StatusOr<std::vector<uint32_t>>
+    GetClosestClusterIdsByDistance(
+        const EmbeddingIndex* embedding_index,
+        const PropertyProto::VectorProto& query_vector, uint32_t k) const;
+
+    uint32_t dimension() const { return dimension_; }
+
+    const std::string& base_key() const { return base_key_; }
+
+   private:
+    uint32_t dimension_;
+    std::string base_key_;
+  };
+
+  explicit EmbeddingIndex(const Filesystem& filesystem,
+                          std::string working_path, const Clock* clock,
+                          const FeatureFlags* feature_flags,
+                          uint32_t num_shards)
+      : PersistentStorage(filesystem, std::move(working_path),
+                          kWorkingPathType),
+        clock_(*clock),
+        feature_flags_(feature_flags),
+        num_shards_(num_shards),
+        embedding_vectors_(num_shards),
+        quantized_embedding_vectors_(num_shards) {}
+
+  friend class EmbeddingHitAccessor;
+  friend class EmbeddingIndexTest;
+  friend class EmbeddingIndexTestPeer;
+
   // Returns a pointer to the embedding vector for the given hit.
   //
   // Returns:
@@ -395,65 +462,7 @@ class EmbeddingIndex : public PersistentStorage {
     return fbv->array() + hit.location();
   }
 
-  libtextclassifier3::StatusOr<const float*> GetRawEmbeddingData(
-      uint32_t shard_id) const {
-    if (is_empty()) {
-      return absl_ports::NotFoundError("EmbeddingIndex is empty");
-    }
-    if (shard_id >= num_shards_ || embedding_vectors_[shard_id] == nullptr) {
-      return absl_ports::NotFoundError(absl_ports::StrCat(
-          "Embedding storage shard ", std::to_string(shard_id), " not found"));
-    }
-    return embedding_vectors_[shard_id]->array();
-  }
-
-  int32_t GetTotalVectorSize(uint32_t shard_id) const {
-    if (is_empty() || shard_id >= num_shards_ ||
-        embedding_vectors_[shard_id] == nullptr) {
-      return 0;
-    }
-    return embedding_vectors_[shard_id]->num_elements();
-  }
-
-  int32_t GetTotalQuantizedVectorSize(uint32_t shard_id) const {
-    if (is_empty() || shard_id >= num_shards_ ||
-        quantized_embedding_vectors_[shard_id] == nullptr) {
-      return 0;
-    }
-    return quantized_embedding_vectors_[shard_id]->num_elements();
-  }
-
-  // Runs or re-runs K-Means and redistributes embeddings into clusters for all
-  // existing IVF metadata base keys.
-  //
-  // Returns:
-  //   - The total number of K-Means iterations performed across all IVF
-  //     maintenance operations on success.
-  //   - Any error from the KeyMapper or MiniBatchKMeans.
-  libtextclassifier3::StatusOr<int> MaintainAllIvf(
-      const DocumentStore& document_store, const SchemaStore& schema_store,
-      const MaintainAnnIndexOptions& maintain_ann_index_options);
-
-  DocumentId last_added_document_id() const {
-    return info().last_added_document_id;
-  }
-
-  void set_last_added_document_id(DocumentId document_id) {
-    Info& info_ref = info();
-    if (info_ref.last_added_document_id == kInvalidDocumentId ||
-        document_id > info_ref.last_added_document_id) {
-      info_ref.last_added_document_id = document_id;
-    }
-  }
-
   bool is_empty() const { return info().is_empty; }
-
-  uint32_t GetShardId(uint32_t posting_list_key_hash,
-                      uint32_t schema_name_hash) const {
-    return (posting_list_key_hash * 31 + schema_name_hash) % num_shards_;
-  }
-
-  uint32_t num_shards() const { return num_shards_; }
 
   Info& info() {
     return *reinterpret_cast<Info*>(metadata_mmapped_file_->mutable_region() +
@@ -464,22 +473,6 @@ class EmbeddingIndex : public PersistentStorage {
     return *reinterpret_cast<const Info*>(metadata_mmapped_file_->region() +
                                           kInfoMetadataBufferOffset);
   }
-
- private:
-  explicit EmbeddingIndex(const Filesystem& filesystem,
-                          std::string working_path, const Clock* clock,
-                          const FeatureFlags* feature_flags,
-                          uint32_t num_shards)
-      : PersistentStorage(filesystem, std::move(working_path),
-                          kWorkingPathType),
-        clock_(*clock),
-        feature_flags_(feature_flags),
-        num_shards_(num_shards),
-        embedding_vectors_(num_shards),
-        quantized_embedding_vectors_(num_shards) {}
-
-  friend class EmbeddingHitAccessor;
-  friend class EmbeddingIndexTest;
 
   // Creates the storage data. This will initialize flash_index_storage_,
   // embedding_posting_list_mapper_, and scan and initialize for existing vector

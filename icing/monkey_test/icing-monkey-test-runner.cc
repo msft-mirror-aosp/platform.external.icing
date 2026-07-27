@@ -525,11 +525,14 @@ libtextclassifier3::StatusOr<MonkeyQueryPair> GenerateRandomMonkeyQueryPair(
 ScoringSpecProto GenerateRandomScoringSpec(MonkeyTestRandomEngine* random) {
   ScoringSpecProto scoring_spec;
 
-  constexpr std::array<ScoringSpecProto::RankingStrategy::Code, 3>
+  // TODO(b/535253143):  Support RELEVANCE_SCORE for in-memory Icing search
+  // engine. In order to test GetNextPage, we need to be able to replicate the
+  // ordering of results in in-memory Icing. However, this is hard to do so for
+  // RELEVANCE_SCORE. As such we will disable RELEVANCE_SCORE for now.
+  constexpr std::array<ScoringSpecProto::RankingStrategy::Code, 2>
       ranking_strategies = {
           ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE,
-          ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP,
-          ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE};
+          ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP};
 
   std::uniform_int_distribution<> dist(0, ranking_strategies.size() - 1);
   scoring_spec.set_rank_by(ranking_strategies[dist(*random)]);
@@ -1081,7 +1084,8 @@ void IcingMonkeyTestRunner::InternalSearch(bool is_join_search) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<SearchResultProto::ResultProto> exp_results,
-      in_memory_icing_->Search(query_pair.query_node.get(), nested_queries));
+      in_memory_icing_->Search(query_pair.query_node.get(), nested_queries,
+                               *scoring_spec));
 
   SearchResultProto search_result =
       icing_->Search(*search_spec, *scoring_spec, *result_spec);
@@ -1207,6 +1211,8 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   icing_options.set_enable_schema_definition_deduping(true);
   icing_options.set_build_property_existence_metadata_hits(true);
   icing_options.set_schema_store_release_cached_proto_after_use(
+      GetRandomBoolean(&random_));
+  icing_options.set_remove_schema_store_move_assignment(
       GetRandomBoolean(&random_));
   icing_ = std::make_unique<IcingSearchEngine>(icing_options);
   ASSERT_THAT(icing_->Initialize().status(), ProtoIsOk());

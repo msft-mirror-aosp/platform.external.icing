@@ -33,6 +33,7 @@
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-store.h"
 
@@ -67,8 +68,7 @@ class ResultStateManager {
     }
   };
 
-  explicit ResultStateManager(int max_total_hits,
-                              const DocumentStore& document_store);
+  explicit ResultStateManager(int max_total_hits);
 
   ResultStateManager(const ResultStateManager&) = delete;
   ResultStateManager& operator=(const ResultStateManager&) = delete;
@@ -97,7 +97,8 @@ class ResultStateManager {
       std::unique_ptr<ScoredDocumentHitsRanker> ranker,
       std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
       std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
-      const ResultSpecProto& result_spec, const DocumentStore& document_store,
+      const ResultSpecProto& result_spec, const SchemaStore& schema_store,
+      const DocumentStore& document_store,
       const ResultRetrieverV2& result_retriever, int64_t current_time_ms,
       QueryStatsProto* query_stats = nullptr) ICING_LOCKS_EXCLUDED(mutex_);
 
@@ -144,8 +145,6 @@ class ResultStateManager {
   };
 
   absl_ports::shared_mutex mutex_;
-
-  const DocumentStore& document_store_;
 
   // The maximum number of scored document hits that all result states may
   // have. When a new result state is added such that num_total_hits_ would

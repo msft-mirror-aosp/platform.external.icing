@@ -86,9 +86,10 @@ constexpr SearchSpecProto::EmbeddingQueryMetricType::Code
 
 class ResultRetrieverV2SnippetTest : public testing::Test {
  protected:
-  ResultRetrieverV2SnippetTest() : test_dir_(GetTestTempDir() + "/icing") {
-    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
-  }
+  ResultRetrieverV2SnippetTest()
+      : test_dir_(GetTestTempDir() + "/icing"),
+        schema_store_dir_(test_dir_ + "/schema_store"),
+        document_store_dir_(test_dir_ + "/document_store") {}
 
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
@@ -98,13 +99,19 @@ class ResultRetrieverV2SnippetTest : public testing::Test {
           icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
+
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
+
     language_segmenter_factory::SegmenterOptions options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
         language_segmenter_,
         language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
                                            &fake_clock_, feature_flags_.get()));
 
     NormalizerOptions normalizer_options(
@@ -150,8 +157,8 @@ class ResultRetrieverV2SnippetTest : public testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(
-            &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
-            feature_flags_.get(),
+            &filesystem_, document_store_dir_, &fake_clock_,
+            schema_store_.get(), feature_flags_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
             /*pre_mapping_fbv=*/false,
             /*use_persistent_hash_map=*/true,
@@ -165,6 +172,12 @@ class ResultRetrieverV2SnippetTest : public testing::Test {
   }
 
   void TearDown() override {
+    document_store_.reset();
+    normalizer_.reset();
+    schema_store_.reset();
+    language_segmenter_.reset();
+    feature_flags_.reset();
+
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
@@ -190,6 +203,8 @@ class ResultRetrieverV2SnippetTest : public testing::Test {
   std::unique_ptr<FeatureFlags> feature_flags_;
   const Filesystem filesystem_;
   const std::string test_dir_;
+  const std::string schema_store_dir_;
+  const std::string document_store_dir_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<Normalizer> normalizer_;
@@ -333,9 +348,9 @@ TEST_F(ResultRetrieverV2SnippetTest,
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0},
-      {document_id3, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id3, hit_section_id_mask, /*score=*/0)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
@@ -356,7 +371,8 @@ TEST_F(ResultRetrieverV2SnippetTest,
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
   PageResult page_result =
       result_retriever
           ->RetrieveNextPage(
@@ -395,9 +411,9 @@ TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0},
-      {document_id3, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id3, hit_section_id_mask, /*score=*/0)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
@@ -420,7 +436,8 @@ TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   PageResult page_result =
       result_retriever
@@ -516,9 +533,9 @@ TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0},
-      {document_id3, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id3, hit_section_id_mask, /*score=*/0)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
@@ -543,7 +560,8 @@ TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   PageResult page_result =
       result_retriever
@@ -607,9 +625,9 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfo) {
       GetSectionId("Email", "embedding1"), GetSectionId("Email", "embedding2")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0},
-      {document_id3, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id3, hit_section_id_mask, /*score=*/0)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
@@ -641,7 +659,8 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfo) {
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   PageResult page_result =
       result_retriever
@@ -797,8 +816,8 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithAnnPositionNegativeOne) {
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
 
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -848,7 +867,8 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithAnnPositionNegativeOne) {
           schema_store_.get(), embedding_query_results,
           std::unordered_set<DocumentId>{document_id1, document_id2},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   PageResult page_result =
       result_retriever
@@ -903,9 +923,9 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfoDisabled) {
       GetSectionId("Email", "embedding1"), GetSectionId("Email", "embedding2")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0},
-      {document_id3, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id3, hit_section_id_mask, /*score=*/0)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
@@ -937,7 +957,8 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfoDisabled) {
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   PageResult page_result =
       result_retriever
@@ -1033,9 +1054,9 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0},
-      {document_id3, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id3, hit_section_id_mask, /*score=*/0)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
@@ -1060,7 +1081,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
   {
     absl_ports::unique_lock l(&result_state.mutex);
 
@@ -1103,9 +1125,9 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldNotSnippetAnyResults) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0},
-      {document_id3, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id3, hit_section_id_mask, /*score=*/0)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
@@ -1130,7 +1152,8 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldNotSnippetAnyResults) {
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
   {
     absl_ports::unique_lock l(&result_state.mutex);
 
@@ -1175,9 +1198,9 @@ TEST_F(ResultRetrieverV2SnippetTest,
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0},
-      {document_id3, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id3, hit_section_id_mask, /*score=*/0)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
       ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
@@ -1202,7 +1225,8 @@ TEST_F(ResultRetrieverV2SnippetTest,
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   {
     absl_ports::unique_lock l(&result_state.mutex);
@@ -1336,7 +1360,7 @@ TEST_F(ResultRetrieverV2SnippetTest, JoinSnippeted) {
           std::unordered_set<DocumentId>{email_document_id1, email_document_id2,
                                          email_document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      parent_result_spec, *document_store_);
+      parent_result_spec, *schema_store_, *document_store_);
 
   PageResult page_result =
       result_retriever
@@ -1582,7 +1606,7 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllJoinedResults) {
           std::unordered_set<DocumentId>{email_document_id1, email_document_id2,
                                          email_document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      parent_result_spec, *document_store_);
+      parent_result_spec, *schema_store_, *document_store_);
 
   // Only 1 parent document should be snippeted, but all of the child documents
   // should be snippeted.
@@ -1718,7 +1742,7 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeJoinedResults) {
           std::unordered_set<DocumentId>{email_document_id1, email_document_id2,
                                          email_document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      parent_result_spec, *document_store_);
+      parent_result_spec, *schema_store_, *document_store_);
 
   // All parents document should be snippeted. Only 2 child documents should be
   // snippeted.
