@@ -749,7 +749,13 @@ class Rfc822TokenIterator : public Tokenizer::Iterator {
   }
 
   void AdvanceCursor() {
-    iterator_.AdvanceToUtf32(iterator_.utf32_index() + 1);
+    if (!iterator_.AdvanceToUtf32(iterator_.utf32_index() + 1)) {
+      // CharacterIterator refused to advance (ill-formed byte, or U+FFFD prior
+      // to the i18n-utils fix). Force progress so the surrounding
+      // `while (utf8_index() < text_end_)` loops terminate.
+      iterator_.MoveToUtf8(
+          std::min<int>(iterator_.utf8_index() + 1, text_end_));
+    }
   }
 
   void AdvancePastWhitespace() {

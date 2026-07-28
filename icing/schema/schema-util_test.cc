@@ -3430,6 +3430,193 @@ TEST_P(SchemaUtilTest, DeletingNonIndexedDocumentPropertyIsIncompatible) {
   EXPECT_THAT(result_schema_delta, Eq(schema_delta));
 }
 
+TEST_P(SchemaUtilTest,
+       IncompatibleChangePropagatesThroughMultipleLayersOfDependents) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailProperty")
+                                        .SetDataTypeDocument(
+                                            kEmailType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Organization")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personProperty")
+                                        .SetDataTypeDocument(
+                                            kPersonType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema where kEmailType gets a new required property,
+  // making kEmailType incompatible.
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewRequired")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailProperty")
+                                        .SetDataTypeDocument(
+                                            kEmailType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Organization")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personProperty")
+                                        .SetDataTypeDocument(
+                                            kPersonType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  // kPersonType depends on kEmailType, Organization depends on kPersonType
+  // (`email -> person -> Organization`).
+  const PropertyConfigProto* person_email_property =
+      &new_schema.types(1).properties(1);
+  const PropertyConfigProto* organization_person_property =
+      &new_schema.types(2).properties(0);
+  SchemaUtil::DependentMap expected_dependent_map = {
+      {kEmailType,
+       {{kPersonType, {person_email_property}}, {"Organization", {}}}},
+      {kPersonType, {{"Organization", {organization_person_property}}}}};
+  EXPECT_THAT(new_schema_dependent_map, Eq(expected_dependent_map));
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_incompatible.insert(kEmailType);
+  schema_delta.schema_types_incompatible.insert(kPersonType);
+  schema_delta.schema_types_incompatible.insert("Organization");
+
+  SchemaUtil::SchemaDelta result_schema_delta =
+      SchemaUtil::ComputeCompatibilityDelta(
+          old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(result_schema_delta, Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest,
+       IncompatibleChangePropagatesThroughMixedInheritanceAndNestedDependents) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddParentType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Organization")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("person")
+                                        .SetDataTypeDocument(
+                                            kPersonType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema where kEmailType gets a new required property,
+  // making kEmailType incompatible directly.
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewRequired")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddParentType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewRequired")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Organization")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("person")
+                                        .SetDataTypeDocument(
+                                            kPersonType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  // kPersonType depends on kEmailType via inheritance, Organization depends on
+  // kPersonType via nested document (`email -> person -> Organization`).
+  const PropertyConfigProto* organization_person_property =
+      &new_schema.types(2).properties(0);
+  SchemaUtil::DependentMap expected_dependent_map = {
+      {kEmailType, {{kPersonType, {}}}},
+      {kPersonType, {{"Organization", {organization_person_property}}}}};
+  EXPECT_THAT(new_schema_dependent_map, Eq(expected_dependent_map));
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_incompatible.insert(kEmailType);
+  schema_delta.schema_types_incompatible.insert(kPersonType);
+  schema_delta.schema_types_incompatible.insert("Organization");
+
+  SchemaUtil::SchemaDelta result_schema_delta =
+      SchemaUtil::ComputeCompatibilityDelta(
+          old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(result_schema_delta, Eq(schema_delta));
+}
+
 TEST_P(SchemaUtilTest, ChangingIndexedDocumentPropertyIsIncompatible) {
   SchemaTypeConfigProto nested_schema =
       SchemaTypeConfigBuilder()

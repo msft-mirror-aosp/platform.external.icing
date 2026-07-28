@@ -28,6 +28,7 @@
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-store.h"
 #include "icing/util/clock.h"
@@ -36,10 +37,8 @@
 namespace icing {
 namespace lib {
 
-ResultStateManager::ResultStateManager(int max_total_hits,
-                                       const DocumentStore& document_store)
-    : document_store_(document_store),
-      max_total_hits_(max_total_hits),
+ResultStateManager::ResultStateManager(int max_total_hits)
+    : max_total_hits_(max_total_hits),
       num_total_hits_(0),
       random_generator_(GetSteadyTimeNanoseconds()) {}
 
@@ -48,7 +47,8 @@ ResultStateManager::CacheAndRetrieveFirstPage(
     std::unique_ptr<ScoredDocumentHitsRanker> ranker,
     std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
     std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
-    const ResultSpecProto& result_spec, const DocumentStore& document_store,
+    const ResultSpecProto& result_spec, const SchemaStore& schema_store,
+    const DocumentStore& document_store,
     const ResultRetrieverV2& result_retriever, int64_t current_time_ms,
     QueryStatsProto* query_stats) {
   if (ranker == nullptr) {
@@ -59,7 +59,8 @@ ResultStateManager::CacheAndRetrieveFirstPage(
   // ResultState should be created by ResultStateManager only.
   std::shared_ptr<ResultStateV2> result_state = std::make_shared<ResultStateV2>(
       std::move(ranker), std::move(parent_adjustment_info),
-      std::move(child_adjustment_info), result_spec, document_store);
+      std::move(child_adjustment_info), result_spec, schema_store,
+      document_store);
 
   // Retrieve docs outside of ResultStateManager critical section.
   // Will enter ResultState critical section inside ResultRetriever.

@@ -1112,9 +1112,10 @@ SchemaStore::SetInitialSchemaForDatabase(SchemaProto new_schema,
   ICING_ASSIGN_OR_RETURN(SchemaProto full_new_schema,
                          GetFullOptimizedSchemaProto(std::move(new_schema),
                                                      database, schema_delta));
-  result.schema_proto_byte_size =
+  result.set_schema_stats.schema_proto_byte_size =
       static_cast<int64_t>(full_new_schema.ByteSizeLong());
-  ICING_RETURN_IF_ERROR(ApplySchemaChange(std::move(full_new_schema)));
+  ICING_RETURN_IF_ERROR(
+      ApplySchemaChange(std::move(full_new_schema), &result.set_schema_stats));
   has_schema_successfully_set_ = true;
   ReleaseCachedSchemaFiles();
 
@@ -1222,9 +1223,10 @@ SchemaStore::SetSchemaWithDatabaseOverride(
   // Step 3: Apply the schema change if success. This updates persisted files
   // and derived data structures.
   if (result.success) {
-    result.schema_proto_byte_size =
+    result.set_schema_stats.schema_proto_byte_size =
         static_cast<int64_t>(full_new_schema.ByteSizeLong());
-    ICING_RETURN_IF_ERROR(ApplySchemaChange(std::move(full_new_schema)));
+    ICING_RETURN_IF_ERROR(ApplySchemaChange(std::move(full_new_schema),
+                                            &result.set_schema_stats));
     has_schema_successfully_set_ = true;
     ReleaseCachedSchemaFiles();
   }
@@ -1260,7 +1262,7 @@ SchemaStore::SetSchemaWithDatabaseOverride(
 }
 
 libtextclassifier3::Status SchemaStore::ApplySchemaChange(
-    SchemaProto new_schema) {
+    SchemaProto new_schema, SetSchemaStats* set_schema_stats) {
   // We need to ensure that we either 1) successfully set the schema and
   // update all derived data structures or 2) fail and leave the schema store
   // unchanged.
@@ -1295,29 +1297,69 @@ libtextclassifier3::Status SchemaStore::ApplySchemaChange(
   // next step.
   ICING_RETURN_IF_ERROR(new_schema_store->PersistToDisk());
 
-  // Then we swap the new schema file + new derived files with the old files.
-  if (!filesystem_->SwapFiles(base_dir_.c_str(),
-                              temp_schema_store_dir.dir().c_str())) {
-    return absl_ports::InternalError(
-        "Unable to apply new schema due to failed swap!");
-  }
+  if (feature_flags_->remove_schema_store_move_assignment()) {
+    // Step 1: Reset the internal state of the current schema store
+    new_schema_store.reset();
+    this->Reset();
 
-  std::string old_base_dir = std::move(base_dir_);
-  *this = std::move(*new_schema_store);
+    // Step 2: Swap the new schema file + new derived files with the old files.
+    // Doing this after Reset() ensures that we don't need to do any special
+    // handling for the filepaths.
+    if (!filesystem_->SwapFiles(base_dir_.c_str(),
+                                temp_schema_store_dir.dir().c_str())) {
+      return absl_ports::InternalError(
+          "Unable to apply new schema due to failed swap!");
+    }
 
-  // After the std::move, the filepaths saved in this instance, the header_ and
-  // in the schema_file_ instance will still be the one from
-  // temp_schema_store_dir even though they now point to files that are within
-  // old_base_dir. Manually set them to the correct paths.
-  base_dir_ = std::move(old_base_dir);
-  schema_file_.SetSwappedFilepath(MakeSchemaFilename(base_dir_));
-  header_->SetSwappedFilepath(MakeHeaderFilename(base_dir_));
-  if (overlay_schema_file_ != nullptr) {
-    overlay_schema_file_->SetSwappedFilepath(
-        MakeOverlaySchemaFilename(base_dir_));
+    // Step 3: Re-initialize the schema store using the files swapped in from
+    // the new schema.
+    std::unique_ptr<Timer> reinitialize_timer = clock_->GetNewTimer();
+    ICING_RETURN_IF_ERROR(LoadSchema());
+    ICING_RETURN_IF_ERROR(InitializeInternal(
+        /*create_overlay_if_necessary=*/false, /*initialize_stats=*/nullptr));
+
+    set_schema_stats->schema_reinitialization_latency_ms =
+        static_cast<int32_t>(reinitialize_timer->GetElapsedMilliseconds());
+  } else {
+    // Swap the new schema file + new derived files with the old files.
+    if (!filesystem_->SwapFiles(base_dir_.c_str(),
+                                temp_schema_store_dir.dir().c_str())) {
+      return absl_ports::InternalError(
+          "Unable to apply new schema due to failed swap!");
+    }
+
+    std::string old_base_dir = std::move(base_dir_);
+    *this = std::move(*new_schema_store);
+
+    // After the std::move, the filepaths saved in this instance, the header_
+    // and in the schema_file_ instance will still be the one from
+    // temp_schema_store_dir even though they now point to files that are within
+    // old_base_dir. Manually set them to the correct paths.
+    base_dir_ = std::move(old_base_dir);
+    schema_file_.SetSwappedFilepath(MakeSchemaFilename(base_dir_));
+    header_->SetSwappedFilepath(MakeHeaderFilename(base_dir_));
+    if (overlay_schema_file_ != nullptr) {
+      overlay_schema_file_->SetSwappedFilepath(
+          MakeOverlaySchemaFilename(base_dir_));
+    }
   }
 
   return libtextclassifier3::Status::OK;
+}
+
+void SchemaStore::Reset() {
+  header_.reset();
+  scorable_property_manager_.reset();
+  schema_type_manager_.reset();
+  schema_subtype_id_map_.clear();
+  type_config_info_cache_.Clear();
+  database_type_map_.clear();
+  reverse_schema_type_mapper_hash_.clear();
+  reverse_schema_type_mapper_.clear();
+  schema_type_mapper_.reset();
+  overlay_schema_file_.reset();
+  schema_file_.Reset();
+  has_schema_successfully_set_ = false;
 }
 
 libtextclassifier3::StatusOr<const SchemaTypeConfigProto*>

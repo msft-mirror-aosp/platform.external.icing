@@ -1,4 +1,4 @@
-// Copyright (C) 2022 Google LLC
+// Copyright (C) 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef ICING_SCORING_PRIORITY_QUEUE_SCORED_DOCUMENT_HITS_RANKER_H_
-#define ICING_SCORING_PRIORITY_QUEUE_SCORED_DOCUMENT_HITS_RANKER_H_
+#ifndef ICING_REVERSE_VECTOR_NO_RANKER_H_
+#define ICING_REVERSE_VECTOR_NO_RANKER_H_
 
+#include <algorithm>
 #include <memory>
 #include <optional>
-#include <queue>
+#include <type_traits>
 #include <unordered_set>
 #include <vector>
 
-#include "icing/scoring/reverse-vector-no-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-id.h"
@@ -29,21 +29,35 @@
 namespace icing {
 namespace lib {
 
-// ScoredDocumentHitsRanker interface implementation, based on
-// std::priority_queue. We can get next top hit in O(lgN) time.
+// ScoredDocumentHitsRanker interface implementation, based on std::vector.
+// ReverseVectorNoRanker DOES NOT re-rank the data. Instead, it returns hits in
+// the reverse order of the input vector (i.e. starts from the back).
+//
+// This class is used for:
+// - No ranking/scoring use case.
+// - ResultStateV2 cache eviction serialization: usually we use priority queue
+//   as the ranker for retrieval, but when serializing the state for cache
+//   eviction, we don't want to serialize the priority queue. Instead, we pop
+//   all hits from the priority queue and serialize them into a list.
+//   Afterwards, all hits have been ranked, so we only need to use
+//   ReverseVectorNoRanker after deserialization.
+// - ResultStateV2 optimization: same as above, we need to pop all hits from the
+//   priority queue and convert the ids from old to new. After popping and
+//   conversion, all hits have been ranked, so we only need to use
+//   ReverseVectorNoRanker.
 template <typename ScoredDataType,
           typename Converter = typename ScoredDataType::Converter>
-class PriorityQueueScoredDocumentHitsRanker : public ScoredDocumentHitsRanker {
+class ReverseVectorNoRanker : public ScoredDocumentHitsRanker {
  public:
-  explicit PriorityQueueScoredDocumentHitsRanker(
-      std::vector<ScoredDataType>&& scored_data_vec, bool is_descending = true);
+  // Constructs a ReverseVectorNoRanker.
+  explicit ReverseVectorNoRanker(std::vector<ScoredDataType>&& scored_data);
 
-  ~PriorityQueueScoredDocumentHitsRanker() override = default;
+  ~ReverseVectorNoRanker() override = default;
 
   void Pop() override;
 
   // Note: ranker may store ScoredDocumentHit or JoinedScoredDocumentHit, so we
-  // have template for scored_data_pq_.
+  // have template for scored_data_.
   // - JoinedScoredDocumentHit is a superset of ScoredDocumentHit, so we unify
   //   the return type of Top to use the superset type JoinedScoredDocumentHit
   //   in order to make it simple, and rankers storing ScoredDocumentHit should
@@ -51,13 +65,18 @@ class PriorityQueueScoredDocumentHitsRanker : public ScoredDocumentHitsRanker {
   //   implementation simpler, especially for ResultRetriever, which now only
   //   needs to deal with one single return format.
   // - JoinedScoredDocumentHit has ~2x size of ScoredDocumentHit. Since we cache
-  //   ranker (which contains a priority queue of data) in ResultState, if we
-  //   store the scored hits in JoinedScoredDocumentHit format directly, then it
-  //   doubles the memory usage. Therefore, we still keep the flexibility to
-  //   store ScoredDocumentHit or any other types of data, but require Pop to
-  //   convert it to JoinedScoredDocumentHit and cache it in curr_.
+  //   ranker (which contains a vector of data) in ResultState, if we store the
+  //   scored hits in JoinedScoredDocumentHit format directly, then it doubles
+  //   the memory usage. Therefore, we still keep the flexibility to store
+  //   ScoredDocumentHit or any other types of data, but require Pop to convert
+  //   it to JoinedScoredDocumentHit and cache it in curr_.
   const JoinedScoredDocumentHit& Top() const override { return *curr_; }
 
+  // Truncates the remaining ScoredDocumentHits to the given size. The best
+  // ScoredDocumentHits (according to the ranking policy) should be kept.
+  // If new_size is invalid (< 0), or greater or equal to # of remaining
+  // ScoredDocumentHits, then no action will be taken. Otherwise truncates the
+  // the remaining ScoredDocumentHits to the given size.
   void TruncateHitsTo(int new_size) override;
 
   std::unique_ptr<ScoredDocumentHitsRanker> OptimizeAndTransfer(
@@ -76,43 +95,18 @@ class PriorityQueueScoredDocumentHitsRanker : public ScoredDocumentHitsRanker {
   // - For ScoredDocumentHit, this returns an empty set.
   std::unordered_set<DocumentId> GetTopKChildDocumentIds(int k) const override;
 
-  int size() const override { return scored_data_pq_.size(); }
+  int size() const override { return scored_data_.size(); }
 
   bool empty() const override { return curr_ == nullptr; }
 
  private:
-  // Comparator for std::priority_queue. Since std::priority is a max heap
-  // (descending order), reverse it if we want ascending order.
-  class Comparator {
-   public:
-    explicit Comparator(bool is_ascending) : is_ascending_(is_ascending) {}
-
-    bool operator()(const ScoredDataType& lhs,
-                    const ScoredDataType& rhs) const {
-      // STL comparator requirement: equal MUST return false.
-      // If writing `return is_ascending_ == !(lhs < rhs)`:
-      // - When lhs == rhs, !(lhs < rhs) is true
-      // - If is_ascending_ is true, then we return true for equal case!
-      if (is_ascending_) {
-        return rhs < lhs;
-      }
-      return lhs < rhs;
-    }
-
-   private:
-    bool is_ascending_;
-  };
-
   // Helper function to refresh the current element (fetch the top element from
-  // the priority queue, convert it to JoinedScoredDocumentHit, and cache it in
-  // curr_).
+  // the back of the vector, convert it to JoinedScoredDocumentHit, and cache it
+  // in curr_).
   void RefreshCurrent();
 
-  Comparator comparator_;
-
-  // Use priority queue to get top K hits in O(KlgN) time.
-  std::priority_queue<ScoredDataType, std::vector<ScoredDataType>, Comparator>
-      scored_data_pq_;
+  // Use vector to store the hits and get top K hits in O(K) time.
+  std::vector<ScoredDataType> scored_data_;
 
   Converter converter_;
 
@@ -120,81 +114,64 @@ class PriorityQueueScoredDocumentHitsRanker : public ScoredDocumentHitsRanker {
 };
 
 template <typename ScoredDataType, typename Converter>
-PriorityQueueScoredDocumentHitsRanker<ScoredDataType, Converter>::
-    PriorityQueueScoredDocumentHitsRanker(
-        std::vector<ScoredDataType>&& scored_data_vec, bool is_descending)
-    : comparator_(/*is_ascending=*/!is_descending),
-      scored_data_pq_(comparator_, std::move(scored_data_vec)) {
+ReverseVectorNoRanker<ScoredDataType, Converter>::ReverseVectorNoRanker(
+    std::vector<ScoredDataType>&& scored_data)
+    : scored_data_(std::move(scored_data)) {
   RefreshCurrent();
 }
 
 template <typename ScoredDataType, typename Converter>
-void PriorityQueueScoredDocumentHitsRanker<ScoredDataType, Converter>::Pop() {
-  scored_data_pq_.pop();
+void ReverseVectorNoRanker<ScoredDataType, Converter>::Pop() {
+  scored_data_.pop_back();
   RefreshCurrent();
 }
 
 template <typename ScoredDataType, typename Converter>
-void PriorityQueueScoredDocumentHitsRanker<
-    ScoredDataType, Converter>::TruncateHitsTo(int new_size) {
-  if (new_size < 0 || scored_data_pq_.size() <= new_size) {
+void ReverseVectorNoRanker<ScoredDataType, Converter>::TruncateHitsTo(
+    int new_size) {
+  if (new_size < 0 || scored_data_.size() <= new_size) {
     return;
   }
 
-  // Copying the best new_size results.
-  std::priority_queue<ScoredDataType, std::vector<ScoredDataType>, Comparator>
-      new_pq(comparator_);
-  for (int i = 0; i < new_size; ++i) {
-    new_pq.push(scored_data_pq_.top());
-    scored_data_pq_.pop();
-  }
-
-  // Assign back to the class members.
-  scored_data_pq_ = std::move(new_pq);
+  // Keep [scored_data_.end() - new_size, scored_data_.end()] to preserve the
+  // last new_size elements, and erase the rest from the beginning.
+  scored_data_.erase(scored_data_.begin(), scored_data_.end() - new_size);
+  scored_data_.shrink_to_fit();
   RefreshCurrent();
 }
 
 template <typename ScoredDataType, typename Converter>
 std::unique_ptr<ScoredDocumentHitsRanker>
-PriorityQueueScoredDocumentHitsRanker<ScoredDataType, Converter>::
-    OptimizeAndTransfer(
-        const std::vector<DocumentId>& document_id_old_to_new) && {
+ReverseVectorNoRanker<ScoredDataType, Converter>::OptimizeAndTransfer(
+    const std::vector<DocumentId>& document_id_old_to_new) && {
   std::vector<ScoredDataType> optimized_scored_data_vec;
-  optimized_scored_data_vec.reserve(scored_data_pq_.size());
-  while (!scored_data_pq_.empty()) {
-    ScoredDataType scored_data = scored_data_pq_.top();
-    std::optional<ScoredDataType> optimized_scored_data =
+  optimized_scored_data_vec.reserve(scored_data_.size());
+  for (ScoredDataType& scored_data : scored_data_) {
+    std::optional<ScoredDataType> converted_scored_data =
         std::move(scored_data).Optimize(document_id_old_to_new);
-    if (optimized_scored_data.has_value()) {
-      optimized_scored_data_vec.push_back(std::move(*optimized_scored_data));
+    if (converted_scored_data.has_value()) {
+      optimized_scored_data_vec.push_back(std::move(*converted_scored_data));
     }
-
-    scored_data_pq_.pop();
   }
   optimized_scored_data_vec.shrink_to_fit();
 
-  // After popping all elements from the priority queue, the top rank element is
-  // at the beginning of the vector.
-  // Reverse the optimized vector to make the top element be at the end of the
-  // vector, and put it into ReverseVectorNoRanker.
-  std::reverse(optimized_scored_data_vec.begin(),
-               optimized_scored_data_vec.end());
   return std::make_unique<ReverseVectorNoRanker<ScoredDataType, Converter>>(
       std::move(optimized_scored_data_vec));
 }
 
 template <typename ScoredDataType, typename Converter>
-std::unordered_set<DocumentId> PriorityQueueScoredDocumentHitsRanker<
-    ScoredDataType, Converter>::GetTopKDocumentIds(int k) const {
+std::unordered_set<DocumentId>
+ReverseVectorNoRanker<ScoredDataType, Converter>::GetTopKDocumentIds(
+    int k) const {
   std::unordered_set<DocumentId> top_k_document_ids;
   if (k <= 0) {
     return top_k_document_ids;
   }
 
-  std::priority_queue<ScoredDataType, std::vector<ScoredDataType>, Comparator>
-      pq_copy(scored_data_pq_);
-  for (int i = 0; i < k && !pq_copy.empty(); ++i) {
-    const ScoredDataType& next_scored_data = pq_copy.top();
+  top_k_document_ids.reserve(k);
+  for (int i = std::max(0, static_cast<int>(scored_data_.size()) - k);
+       i < scored_data_.size(); ++i) {
+    const ScoredDataType& next_scored_data = scored_data_[i];
     if constexpr (std::is_same_v<ScoredDataType, ScoredDocumentHit>) {
       top_k_document_ids.insert(next_scored_data.document_id());
     } else if constexpr (std::is_same_v<ScoredDataType,
@@ -206,14 +183,14 @@ std::unordered_set<DocumentId> PriorityQueueScoredDocumentHitsRanker<
       // JoinedScoredDocumentHit or ScoredDocumentHit.
       return top_k_document_ids;
     }
-    pq_copy.pop();
   }
   return top_k_document_ids;
 }
 
 template <typename ScoredDataType, typename Converter>
-std::unordered_set<DocumentId> PriorityQueueScoredDocumentHitsRanker<
-    ScoredDataType, Converter>::GetTopKChildDocumentIds(int k) const {
+std::unordered_set<DocumentId>
+ReverseVectorNoRanker<ScoredDataType, Converter>::GetTopKChildDocumentIds(
+    int k) const {
   std::unordered_set<DocumentId> top_k_document_ids;
   if (k <= 0) {
     return top_k_document_ids;
@@ -223,16 +200,12 @@ std::unordered_set<DocumentId> PriorityQueueScoredDocumentHitsRanker<
     return top_k_document_ids;
   } else if constexpr (std::is_same_v<ScoredDataType,
                                       JoinedScoredDocumentHit>) {
-    std::priority_queue<ScoredDataType, std::vector<ScoredDataType>, Comparator>
-        pq_copy(scored_data_pq_);
-    while (!pq_copy.empty()) {
-      const ScoredDataType& next_scored_data = pq_copy.top();
+    for (const ScoredDataType& scored_data : scored_data_) {
       const std::vector<ScoredDocumentHit>& child_scored_document_hits =
-          next_scored_data.child_scored_document_hits();
+          scored_data.child_scored_document_hits();
       for (int i = 0; i < k && i < child_scored_document_hits.size(); ++i) {
         top_k_document_ids.insert(child_scored_document_hits[i].document_id());
       }
-      pq_copy.pop();
     }
   } else {
     // Returns an empty set if the ScoredDataType is not JoinedScoredDocumentHit
@@ -243,12 +216,11 @@ std::unordered_set<DocumentId> PriorityQueueScoredDocumentHitsRanker<
 }
 
 template <typename ScoredDataType, typename Converter>
-void PriorityQueueScoredDocumentHitsRanker<ScoredDataType,
-                                           Converter>::RefreshCurrent() {
-  if (scored_data_pq_.empty()) {
+void ReverseVectorNoRanker<ScoredDataType, Converter>::RefreshCurrent() {
+  if (scored_data_.empty()) {
     curr_ = nullptr;
   } else {
-    ScoredDataType scored_data = scored_data_pq_.top();
+    ScoredDataType scored_data = scored_data_.back();
 
     if (curr_ == nullptr) {
       curr_ = std::make_unique<JoinedScoredDocumentHit>(
@@ -262,4 +234,4 @@ void PriorityQueueScoredDocumentHitsRanker<ScoredDataType,
 }  // namespace lib
 }  // namespace icing
 
-#endif  // ICING_SCORING_PRIORITY_QUEUE_SCORED_DOCUMENT_HITS_RANKER_H_
+#endif  // ICING_REVERSE_VECTOR_NO_RANKER_H_
