@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -27,7 +28,9 @@
 #include "icing/index/embed/embedding-query-results.h"
 #include "icing/index/embed/quantizer.h"
 #include "icing/proto/document.pb.h"
+#include "icing/schema/schema-store.h"
 #include "icing/store/document-id.h"
+#include "icing/util/embedding-util.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -62,25 +65,46 @@ GetEmbeddingHitsFromIndex(const EmbeddingIndex* embedding_index,
   }
 }
 
-std::vector<float> GetRawEmbeddingDataFromIndex(
+std::vector<float> EmbeddingIndexTestPeer::GetRawEmbeddingDataFromIndex(
     const EmbeddingIndex* embedding_index, uint32_t shard_id) {
-  ICING_ASSIGN_OR_RETURN(const float* data,
-                         embedding_index->GetRawEmbeddingData(shard_id),
-                         std::vector<float>());
-  return std::vector<float>(
-      data, data + embedding_index->GetTotalVectorSize(shard_id));
+  if (embedding_index->is_empty() || shard_id >= embedding_index->num_shards_ ||
+      embedding_index->embedding_vectors_[shard_id] == nullptr) {
+    return std::vector<float>();
+  }
+  const auto& fbv = embedding_index->embedding_vectors_[shard_id];
+  return std::vector<float>(fbv->array(), fbv->array() + fbv->num_elements());
 }
 
 libtextclassifier3::StatusOr<std::vector<float>>
-GetAndRestoreQuantizedEmbeddingVectorFromIndex(
+EmbeddingIndexTestPeer::GetAndRestoreQuantizedEmbeddingVectorFromIndex(
     const EmbeddingIndex* embedding_index, const EmbeddingHit& hit,
     uint32_t dimension, std::string_view model_signature,
     std::string_view schema_name, uint32_t cluster_id) {
-  uint32_t shard_id = GetShardId(embedding_index, dimension, model_signature,
-                                 schema_name, cluster_id);
-  ICING_ASSIGN_OR_RETURN(
-      const char* data,
-      embedding_index->GetQuantizedEmbeddingVector(hit, dimension, shard_id));
+  std::string key;
+  if (cluster_id != embedding_util::kLinearSearchClusterId) {
+    key = EmbeddingIndex::IvfContextManager(dimension, model_signature)
+              .GetPostingListKey(cluster_id);
+  } else {
+    key = embedding_util::GetPostingListKey(dimension, model_signature);
+  }
+  uint32_t shard_id =
+      embedding_index->GetShardId(embedding_util::GetPostingListKeyHash(key),
+                                  SchemaStore::GetSchemaNameHash(schema_name));
+
+  if (shard_id >= embedding_index->num_shards_ ||
+      embedding_index->quantized_embedding_vectors_[shard_id] == nullptr) {
+    return absl_ports::InvalidArgumentError(
+        "Attempting to query a non-existent storage shard.");
+  }
+  const auto& fbv = embedding_index->quantized_embedding_vectors_[shard_id];
+  if (static_cast<int64_t>(hit.location()) + sizeof(Quantizer) +
+          sizeof(uint8_t) * dimension >
+      fbv->num_elements()) {
+    return absl_ports::OutOfRangeError(
+        "Got an embedding hit that refers to a vector out of range.");
+  }
+  const char* data = fbv->array() + hit.location();
+
   Quantizer quantizer(data);
   const uint8_t* quantized_vector =
       reinterpret_cast<const uint8_t*>(data + sizeof(Quantizer));

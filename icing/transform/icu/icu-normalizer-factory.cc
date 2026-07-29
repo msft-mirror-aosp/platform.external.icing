@@ -49,7 +49,8 @@ libtextclassifier3::StatusOr<std::unique_ptr<Normalizer>> Create(
     return absl_ports::InvalidArgumentError(
         "max_term_byte_size must be greater than zero.");
   }
-  auto icu_normalizer_or = IcuNormalizer::Create(options.max_term_byte_size);
+  auto icu_normalizer_or = IcuNormalizer::Create(
+      options.max_term_byte_size, options.rules_config);
   if (icu_normalizer_creation_status != nullptr) {
     TransformStatus(icu_normalizer_or.status(), icu_normalizer_creation_status);
   }
