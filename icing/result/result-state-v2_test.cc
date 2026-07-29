@@ -34,6 +34,7 @@
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/result/result-utils.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
@@ -64,25 +65,31 @@ ResultSpecProto CreateResultSpec(
 
 class ResultStateV2Test : public ::testing::Test {
  protected:
+  ResultStateV2Test()
+      : test_dir_(GetTestTempDir() + "/icing"),
+        schema_store_dir_(test_dir_ + "/schema_store"),
+        document_store_dir_(test_dir_ + "/document_store") {}
+
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
-    schema_store_base_dir_ = GetTestTempDir() + "/schema_store";
-    filesystem_.CreateDirectoryRecursively(schema_store_base_dir_.c_str());
+
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_, SchemaStore::Create(&filesystem_, schema_store_base_dir_,
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
                                            &clock_, feature_flags_.get()));
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");
     ICING_ASSERT_OK(schema_store_->SetSchema(
         std::move(schema), /*ignore_errors_and_delete_documents=*/false));
 
-    doc_store_base_dir_ = GetTestTempDir() + "/document_store";
-    filesystem_.CreateDirectoryRecursively(doc_store_base_dir_.c_str());
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
         DocumentStore::Create(
-            &filesystem_, doc_store_base_dir_, &clock_, schema_store_.get(),
+            &filesystem_, document_store_dir_, &clock_, schema_store_.get(),
             feature_flags_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
             /*pre_mapping_fbv=*/false,
@@ -99,8 +106,10 @@ class ResultStateV2Test : public ::testing::Test {
   }
 
   void TearDown() override {
-    filesystem_.DeleteDirectoryRecursively(doc_store_base_dir_.c_str());
-    filesystem_.DeleteDirectoryRecursively(schema_store_base_dir_.c_str());
+    document_store_.reset();
+    schema_store_.reset();
+
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
   ScoredDocumentHit AddScoredDocument(DocumentId document_id) {
@@ -116,6 +125,8 @@ class ResultStateV2Test : public ::testing::Test {
     return ScoredDocumentHit(document_id, kSectionIdMaskNone, /*score=*/1);
   }
 
+  SchemaStore& schema_store() { return *schema_store_; }
+
   DocumentStore& document_store() { return *document_store_; }
 
   std::atomic<int>& num_total_hits() { return num_total_hits_; }
@@ -125,11 +136,12 @@ class ResultStateV2Test : public ::testing::Test {
  private:
   std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
-  std::string doc_store_base_dir_;
-  std::string schema_store_base_dir_;
+  const std::string test_dir_;
+  const std::string schema_store_dir_;
+  const std::string document_store_dir_;
   Clock clock_;
-  std::unique_ptr<DocumentStore> document_store_;
   std::unique_ptr<SchemaStore> schema_store_;
+  std::unique_ptr<DocumentStore> document_store_;
   std::atomic<int> num_total_hits_;
 };
 
@@ -145,7 +157,7 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToSpecs) {
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::vector<ScoredDocumentHit>(), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, document_store());
+      result_spec, schema_store(), document_store());
 
   absl_ports::shared_lock l(&result_state.mutex);
 
@@ -170,7 +182,7 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToDefaultSpecs) {
           std::vector<ScoredDocumentHit>(),
           /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      default_result_spec, document_store());
+      default_result_spec, schema_store(), document_store());
 
   absl_ports::shared_lock l(&result_state.mutex);
 
@@ -239,14 +251,20 @@ TEST_F(ResultStateV2Test,
 
   // Get entry ids.
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      int32_t entry_id1, document_store().GetResultGroupingEntryId(
-                             result_grouping_type, "namespace1", "Document"));
+      result_utils::ResultGroupingEntryId entry_id1,
+      result_utils::EncodeResultGroupingEntryId(
+          schema_store(), document_store(), result_grouping_type, "namespace1",
+          "Document"));
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      int32_t entry_id2, document_store().GetResultGroupingEntryId(
-                             result_grouping_type, "namespace2", "Document"));
+      result_utils::ResultGroupingEntryId entry_id2,
+      result_utils::EncodeResultGroupingEntryId(
+          schema_store(), document_store(), result_grouping_type, "namespace2",
+          "Document"));
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      int32_t entry_id3, document_store().GetResultGroupingEntryId(
-                             result_grouping_type, "namespace3", "Document"));
+      result_utils::ResultGroupingEntryId entry_id3,
+      result_utils::EncodeResultGroupingEntryId(
+          schema_store(), document_store(), result_grouping_type, "namespace3",
+          "Document"));
 
   // Adjustment info is not important in this test.
   ResultStateV2 result_state(
@@ -255,14 +273,14 @@ TEST_F(ResultStateV2Test,
           std::vector<ScoredDocumentHit>(),
           /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, document_store());
+      result_spec, schema_store(), document_store());
 
   absl_ports::shared_lock l(&result_state.mutex);
 
-  // "namespace1" should be in group 0, and "namespace2"+"namespace3" should be
-  // in group 2.
-  // "nonexistentNamespace1" and "nonexistentNamespace2" shouldn't exist.
-  EXPECT_THAT(result_state.entry_id_group_id_map(),
+  // "namespace1" should be in group index 0, and "namespace2" + "namespace3"
+  // should be in group index 2. "nonexistentNamespace1" and
+  // "nonexistentNamespace2" shouldn't exist.
+  EXPECT_THAT(result_state.entry_id_group_index_map(),
               UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 2),
                                    Pair(entry_id3, 2)));
 
@@ -289,7 +307,7 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHits) {
           /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
       CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
-      document_store());
+      schema_store(), document_store());
 
   absl_ports::unique_lock l(&result_state.mutex);
 
@@ -323,7 +341,7 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHitsWhenDestructed) {
             /*is_descending=*/true),
         /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
         CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
-        document_store());
+        schema_store(), document_store());
 
     absl_ports::unique_lock l(&result_state1.mutex);
 
@@ -340,7 +358,7 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHitsWhenDestructed) {
               /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
-          document_store());
+          schema_store(), document_store());
 
       absl_ports::unique_lock l(&result_state2.mutex);
 
@@ -371,7 +389,7 @@ TEST_F(ResultStateV2Test, ShouldNotUpdateNumTotalHitsWhenNotRegistered) {
             /*is_descending=*/true),
         /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
         CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
-        document_store());
+        schema_store(), document_store());
 
     {
       absl_ports::unique_lock l(&result_state.mutex);
@@ -403,7 +421,7 @@ TEST_F(ResultStateV2Test, ShouldDecrementOriginalNumTotalHitsWhenReregister) {
           /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
       CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
-      document_store());
+      schema_store(), document_store());
 
   absl_ports::unique_lock l(&result_state.mutex);
 

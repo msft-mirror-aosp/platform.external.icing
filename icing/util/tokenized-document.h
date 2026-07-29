@@ -62,6 +62,14 @@ class TokenizedDocument {
       const LanguageSegmenter* language_segmenter, int64_t current_time_ms,
       DocumentProto document);
 
+  virtual ~TokenizedDocument() = default;
+
+  TokenizedDocument(const TokenizedDocument&) = delete;
+  TokenizedDocument& operator=(const TokenizedDocument&) = delete;
+
+  TokenizedDocument(TokenizedDocument&&) = default;
+  TokenizedDocument& operator=(TokenizedDocument&&) = default;
+
   // Due to DocumentStore's internal implementation, we need to wrap
   // DocumentProto into DocumentWrapper.
   const DocumentWrapper& document_wrapper() const { return *document_wrapper_; }
@@ -92,7 +100,7 @@ class TokenizedDocument {
     return joinable_property_group_.qualified_id_properties;
   }
 
- private:
+ protected:
   // Use TokenizedDocument::Create() to instantiate.
   explicit TokenizedDocument(
       std::unique_ptr<DocumentWrapper> document_wrapper,
@@ -106,6 +114,7 @@ class TokenizedDocument {
         vector_sections_(std::move(vector_sections)),
         joinable_property_group_(std::move(joinable_property_group)) {}
 
+ private:
   std::unique_ptr<DocumentWrapper> document_wrapper_;
   std::vector<TokenizedSection> tokenized_string_sections_;
   std::vector<Section<int64_t>> integer_sections_;

@@ -19,6 +19,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <random>
 #include <string>
 #include <string_view>
@@ -542,6 +543,12 @@ std::string MonkeyDocumentGenerator::GetUriWithRange(int l, int r) const {
   return absl_ports::StrCat(kDocumentUriPrefix, std::to_string(dist(*random_)));
 }
 
+int32_t MonkeyDocumentGenerator::GetRandomInt32Value() const {
+  // Scores are integers ranging from 0 to the max int32 value (2,147,483,647).
+  std::uniform_int_distribution<> dist(0, std::numeric_limits<int32_t>::max());
+  return dist(*random_);
+}
+
 int MonkeyDocumentGenerator::GetNumTokens() const {
   std::uniform_int_distribution<> dist(0,
                                        config_->possible_num_tokens.size() - 1);
@@ -701,7 +708,8 @@ MonkeyTokenizedDocument MonkeyDocumentGenerator::GenerateDocument() {
           .SetNamespace(name_space)
           .SetSchema(type_config.schema_type())
           .SetUri(GetUri())
-          .SetCreationTimestampMs(clock_.GetSystemTimeMilliseconds());
+          .SetCreationTimestampMs(GetRandomInt32Value())
+          .SetScore(GetRandomInt32Value());
   for (const PropertyConfigProto& prop : type_config.properties()) {
     if (prop.data_type() == PropertyConfigProto::DataType::STRING) {
       // Generate string contents.
