@@ -1352,7 +1352,7 @@ TEST_P(SchemaStoreDeduplicationTest,
             /*ignore_errors_and_delete_documents=*/false)));
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
-    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+    EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
   } else {
     // Set full schema using empty database.
     ICING_ASSERT_OK_AND_ASSIGN(
@@ -1362,7 +1362,7 @@ TEST_P(SchemaStoreDeduplicationTest,
             /*ignore_errors_and_delete_documents=*/false)));
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
-    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+    EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
   }
 
   // Check that the file-backed schema proto is deduped.
@@ -1458,7 +1458,7 @@ TEST_P(SchemaStoreDeduplicationTest,
             /*ignore_errors_and_delete_documents=*/false)));
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
-    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+    EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
 
     expected_result = SchemaStore::SetSchemaResult();
     expected_result.success = true;
@@ -1470,7 +1470,7 @@ TEST_P(SchemaStoreDeduplicationTest,
                            /*ignore_errors_and_delete_documents=*/false)));
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
-    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+    EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
   } else {
     // Set schema for the 2 dbs together using the empty database name.
     SchemaStore::SetSchemaResult expected_result;
@@ -1486,7 +1486,7 @@ TEST_P(SchemaStoreDeduplicationTest,
             /*database=*/"", /*ignore_errors_and_delete_documents=*/false)));
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
-    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+    EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
   }
 
   // Check that the file-backed schema proto is deduped.
@@ -1590,7 +1590,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaRemoveCanonicalTypes_ok) {
           /*database=*/"db1/", /*ignore_errors_and_delete_documents=*/false)));
   EXPECT_THAT(actual_result,
               EqualsSetSchemaResultIgnoringStats(expected_result));
-  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+  EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
   expected_result.schema_types_new_by_name.insert("db2/message");
@@ -1602,7 +1602,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaRemoveCanonicalTypes_ok) {
           /*database=*/"db2/", /*ignore_errors_and_delete_documents=*/false)));
   EXPECT_THAT(actual_result,
               EqualsSetSchemaResultIgnoringStats(expected_result));
-  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+  EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
 
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
@@ -1615,7 +1615,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaRemoveCanonicalTypes_ok) {
           /*database=*/"db3/", /*ignore_errors_and_delete_documents=*/false)));
   EXPECT_THAT(actual_result,
               EqualsSetSchemaResultIgnoringStats(expected_result));
-  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+  EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
 
   // Check that the file-backed schema proto is deduped.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* stored_schema,
@@ -1652,7 +1652,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaRemoveCanonicalTypes_ok) {
             /*ignore_errors_and_delete_documents=*/true)));
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
-    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+    EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
   } else {
     SchemaProto full_schema = SchemaBuilder()
                                   .AddType(db2_message)
@@ -1667,7 +1667,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaRemoveCanonicalTypes_ok) {
             /*ignore_errors_and_delete_documents=*/true)));
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
-    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+    EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
   }
 
   // Remaining db2 and db3 types should still be deduped
@@ -1775,7 +1775,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeCanonicalTypes_ok) {
           /*ignore_errors_and_delete_documents=*/false)));
   EXPECT_THAT(actual_result,
               EqualsSetSchemaResultIgnoringStats(expected_result));
-  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+  EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
 
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
@@ -1788,7 +1788,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeCanonicalTypes_ok) {
                          /*ignore_errors_and_delete_documents=*/false)));
   EXPECT_THAT(actual_result,
               EqualsSetSchemaResultIgnoringStats(expected_result));
-  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+  EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
 
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
@@ -1801,7 +1801,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeCanonicalTypes_ok) {
                          /*ignore_errors_and_delete_documents=*/false)));
   EXPECT_THAT(actual_result,
               EqualsSetSchemaResultIgnoringStats(expected_result));
-  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+  EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
 
   // Check that the file-backed schema proto is deduped.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* stored_schema,
@@ -1875,7 +1875,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeCanonicalTypes_ok) {
             /*ignore_errors_and_delete_documents=*/true)));
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
-    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+    EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
   } else {
     ICING_ASSERT_OK_AND_ASSIGN(
         SchemaStore::SetSchemaResult actual_result,
@@ -1884,7 +1884,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeCanonicalTypes_ok) {
             /*ignore_errors_and_delete_documents=*/true)));
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
-    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+    EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
   }
 
   // Remaining db2 and db3 types should still be deduped
@@ -1987,7 +1987,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeOrRemoveDedupedTypes_ok) {
           /*ignore_errors_and_delete_documents=*/false)));
   EXPECT_THAT(actual_result,
               EqualsSetSchemaResultIgnoringStats(expected_result));
-  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+  EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
 
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
@@ -2000,7 +2000,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeOrRemoveDedupedTypes_ok) {
                          /*ignore_errors_and_delete_documents=*/false)));
   EXPECT_THAT(actual_result,
               EqualsSetSchemaResultIgnoringStats(expected_result));
-  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+  EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
 
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
@@ -2013,7 +2013,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeOrRemoveDedupedTypes_ok) {
                          /*ignore_errors_and_delete_documents=*/false)));
   EXPECT_THAT(actual_result,
               EqualsSetSchemaResultIgnoringStats(expected_result));
-  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+  EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
 
   // Check that the file-backed schema proto is deduped.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* stored_schema,
@@ -2085,7 +2085,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeOrRemoveDedupedTypes_ok) {
             /*ignore_errors_and_delete_documents=*/true)));
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
-    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+    EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
   } else {
     ICING_ASSERT_OK_AND_ASSIGN(
         SchemaStore::SetSchemaResult actual_result,
@@ -2095,7 +2095,7 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeOrRemoveDedupedTypes_ok) {
             /*ignore_errors_and_delete_documents=*/true)));
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
-    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+    EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
   }
 
   // Remaining db1 and db3 types should still be deduped
@@ -2211,7 +2211,7 @@ TEST_P(SchemaStoreDeduplicationTest,
           /*ignore_errors_and_delete_documents=*/false)));
   EXPECT_THAT(actual_result,
               EqualsSetSchemaResultIgnoringStats(expected_result));
-  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+  EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
 
   expected_result = SchemaStore::SetSchemaResult();
   expected_result.success = true;
@@ -2224,7 +2224,7 @@ TEST_P(SchemaStoreDeduplicationTest,
                          /*ignore_errors_and_delete_documents=*/false)));
   EXPECT_THAT(actual_result,
               EqualsSetSchemaResultIgnoringStats(expected_result));
-  EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+  EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
 
   // Check that the file-backed schema proto is deduped.
   ICING_ASSERT_OK_AND_ASSIGN(const SchemaProto* stored_schema,
@@ -2290,7 +2290,7 @@ TEST_P(SchemaStoreDeduplicationTest,
     expected_result.schema_types_incompatible_by_name.insert("db2/email");
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
-    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+    EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
   } else {
     ICING_ASSERT_OK_AND_ASSIGN(
         SchemaStore::SetSchemaResult actual_result,
@@ -2303,7 +2303,7 @@ TEST_P(SchemaStoreDeduplicationTest,
     expected_result.schema_types_incompatible_by_name.insert("db2/email");
     EXPECT_THAT(actual_result,
                 EqualsSetSchemaResultIgnoringStats(expected_result));
-    EXPECT_GT(actual_result.schema_proto_byte_size, 0);
+    EXPECT_GT(actual_result.set_schema_stats.schema_proto_byte_size, 0);
   }
 
   // db2 should still be deduped

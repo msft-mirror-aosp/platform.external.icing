@@ -70,9 +70,10 @@ using ::testing::SizeIs;
 
 class ResultRetrieverV2ProjectionTest : public testing::Test {
  protected:
-  ResultRetrieverV2ProjectionTest() : test_dir_(GetTestTempDir() + "/icing") {
-    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
-  }
+  ResultRetrieverV2ProjectionTest()
+      : test_dir_(GetTestTempDir() + "/icing"),
+        schema_store_dir_(test_dir_ + "/schema_store"),
+        document_store_dir_(test_dir_ + "/document_store") {}
 
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
@@ -82,13 +83,19 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
           icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
+
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
+
     language_segmenter_factory::SegmenterOptions options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
         language_segmenter_,
         language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
                                            &fake_clock_, feature_flags_.get()));
 
     NormalizerOptions normalizer_options(
@@ -203,8 +210,8 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(
-            &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
-            feature_flags_.get(),
+            &filesystem_, document_store_dir_, &fake_clock_,
+            schema_store_.get(), feature_flags_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
             /*pre_mapping_fbv=*/false,
             /*use_persistent_hash_map=*/true,
@@ -218,6 +225,12 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
   }
 
   void TearDown() override {
+    document_store_.reset();
+    normalizer_.reset();
+    schema_store_.reset();
+    language_segmenter_.reset();
+    feature_flags_.reset();
+
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
@@ -243,6 +256,8 @@ class ResultRetrieverV2ProjectionTest : public testing::Test {
   std::unique_ptr<FeatureFlags> feature_flags_;
   const Filesystem filesystem_;
   const std::string test_dir_;
+  const std::string schema_store_dir_;
+  const std::string document_store_dir_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<Normalizer> normalizer_;
@@ -312,8 +327,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -333,7 +348,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTopLevelLeadNodeFieldPath) {
           schema_store_.get(), EmbeddingQueryResults(),
           /*documents_to_snippet=*/
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -421,8 +437,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -441,7 +457,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionNestedLeafNodeFieldPath) {
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -540,8 +557,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -560,7 +577,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionIntermediateNodeFieldPath) {
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -662,8 +680,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -683,7 +701,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleNestedFieldPaths) {
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -770,8 +789,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -789,7 +808,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionEmptyFieldPath) {
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -858,8 +878,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -878,7 +898,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionInvalidFieldPath) {
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -947,8 +968,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -968,7 +989,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionValidAndInvalidFieldPath) {
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1040,8 +1062,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -1060,7 +1082,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesNoWildcards) {
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1134,8 +1157,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -1156,7 +1179,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleTypesWildcard) {
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1230,8 +1254,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -1256,7 +1280,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1339,8 +1364,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -1365,7 +1390,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1452,8 +1478,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -1478,7 +1504,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1623,7 +1650,7 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionJoinDocuments) {
           CreateScoringSpec(/*is_descending_order=*/false), child_result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      parent_result_spec, *document_store_);
+      parent_result_spec, *schema_store_, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1709,8 +1736,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphism) {
 
   // 2. Setup the scored results.
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, kSectionIdMaskAll, /*score=*/0},
-      {document_id2, kSectionIdMaskAll, /*score=*/0}};
+      ScoredDocumentHit(document_id1, kSectionIdMaskAll, /*score=*/0),
+      ScoredDocumentHit(document_id2, kSectionIdMaskAll, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -1732,7 +1759,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphism) {
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1801,8 +1829,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTransitivePolymorphism) {
 
   // 2. Setup the scored results.
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, kSectionIdMaskAll, /*score=*/0},
-      {document_id2, kSectionIdMaskAll, /*score=*/0}};
+      ScoredDocumentHit(document_id1, kSectionIdMaskAll, /*score=*/0),
+      ScoredDocumentHit(document_id2, kSectionIdMaskAll, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -1824,7 +1852,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionTransitivePolymorphism) {
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1880,7 +1909,7 @@ TEST_F(ResultRetrieverV2ProjectionTest,
 
   // 2. Setup the scored results.
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id, kSectionIdMaskAll, /*score=*/0}};
+      ScoredDocumentHit(document_id, kSectionIdMaskAll, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask for the missing property
   // 'emailAddress' in the Person type. Since Artist is a child type of Person,
@@ -1903,7 +1932,8 @@ TEST_F(ResultRetrieverV2ProjectionTest,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>{document_id},
           SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1959,8 +1989,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphismMerge) {
 
   // 2. Setup the scored results.
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, kSectionIdMaskAll, /*score=*/0},
-      {document_id2, kSectionIdMaskAll, /*score=*/0}};
+      ScoredDocumentHit(document_id1, kSectionIdMaskAll, /*score=*/0),
+      ScoredDocumentHit(document_id2, kSectionIdMaskAll, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/2);
@@ -1987,7 +2017,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionPolymorphismMerge) {
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>(), SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -2046,7 +2077,7 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleParentPolymorphism) {
 
   // 2. Setup the scored results.
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id, kSectionIdMaskAll, /*score=*/0}};
+      ScoredDocumentHit(document_id, kSectionIdMaskAll, /*score=*/0)};
 
   // 3. Create a ResultSpec with type property mask.
   ResultSpecProto result_spec = CreateResultSpec(/*num_per_page=*/1);
@@ -2075,7 +2106,8 @@ TEST_F(ResultRetrieverV2ProjectionTest, ProjectionMultipleParentPolymorphism) {
           schema_store_.get(), EmbeddingQueryResults(),
           std::unordered_set<DocumentId>{document_id},
           SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *document_store_);
+      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
