@@ -34,11 +34,11 @@
 #include "icing/result/page-result.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
+#include "icing/result/result-utils.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
-#include "icing/store/corpus-id.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
@@ -72,9 +72,9 @@ using ::testing::UnorderedElementsAre;
 class ResultRetrieverV2GroupResultLimiterTest : public testing::Test {
  protected:
   ResultRetrieverV2GroupResultLimiterTest()
-      : test_dir_(GetTestTempDir() + "/icing") {
-    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
-  }
+      : test_dir_(GetTestTempDir() + "/icing"),
+        schema_store_dir_(test_dir_ + "/schema_store"),
+        document_store_dir_(test_dir_ + "/document_store") {}
 
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
@@ -84,13 +84,19 @@ class ResultRetrieverV2GroupResultLimiterTest : public testing::Test {
           icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
+
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
+
     language_segmenter_factory::SegmenterOptions options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
         language_segmenter_,
         language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
                                            &fake_clock_, feature_flags_.get()));
 
     NormalizerOptions normalizer_options(
@@ -108,8 +114,8 @@ class ResultRetrieverV2GroupResultLimiterTest : public testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult create_result,
         DocumentStore::Create(
-            &filesystem_, test_dir_, &fake_clock_, schema_store_.get(),
-            feature_flags_.get(),
+            &filesystem_, document_store_dir_, &fake_clock_,
+            schema_store_.get(), feature_flags_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
             /*pre_mapping_fbv=*/false,
             /*use_persistent_hash_map=*/true,
@@ -123,12 +129,20 @@ class ResultRetrieverV2GroupResultLimiterTest : public testing::Test {
   }
 
   void TearDown() override {
+    document_store_.reset();
+    normalizer_.reset();
+    schema_store_.reset();
+    language_segmenter_.reset();
+    feature_flags_.reset();
+
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
   std::unique_ptr<FeatureFlags> feature_flags_;
   const Filesystem filesystem_;
   const std::string test_dir_;
+  const std::string schema_store_dir_;
+  const std::string document_store_dir_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<Normalizer> normalizer_;
@@ -190,7 +204,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *document_store_);
+      result_spec, *schema_store_, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -201,7 +215,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   // Only the top ranked document in "namespace" (document2), should be
   // returned.
   auto [page_result, has_more_results] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   ASSERT_THAT(page_result.results, SizeIs(1));
   EXPECT_THAT(page_result.results.at(0).document(), EqualsProto(document2));
   // Document1 has not been returned due to GroupResultLimiter, but since it was
@@ -255,7 +270,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *document_store_);
+      result_spec, *schema_store_, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -265,7 +280,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 
   // First page: empty page
   auto [page_result, has_more_results] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   ASSERT_THAT(page_result.results, IsEmpty());
   EXPECT_FALSE(has_more_results);
 }
@@ -340,7 +356,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *document_store_);
+      result_spec, *schema_store_, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -350,7 +366,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 
   // First page: document4 and document3 should be returned.
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   ASSERT_THAT(page_result1.results, SizeIs(2));
   EXPECT_THAT(page_result1.results.at(0).document(), EqualsProto(document4));
   EXPECT_THAT(page_result1.results.at(1).document(), EqualsProto(document3));
@@ -360,7 +377,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   // them will be filtered out by group result limiter, so we should get an
   // empty page.
   auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   EXPECT_THAT(page_result2.results, SizeIs(0));
   EXPECT_FALSE(has_more_results2);
 }
@@ -436,7 +454,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *document_store_);
+      result_spec, *schema_store_, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -447,8 +465,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   // All documents in "namespace2" should be returned.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).document(), EqualsProto(document4));
@@ -505,7 +524,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *document_store_);
+      result_spec, *schema_store_, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -518,8 +537,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   // grouping should have no effect.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(1));
   EXPECT_THAT(page_result.results.at(0).document(), EqualsProto(document2));
@@ -574,7 +594,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *document_store_);
+      result_spec, *schema_store_, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -587,8 +607,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   // grouping should have no effect.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(1));
   EXPECT_THAT(page_result.results.at(0).document(), EqualsProto(document2));
@@ -696,7 +717,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *document_store_);
+      result_spec, *schema_store_, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -709,8 +730,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   // (document6, document5) should be returned.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).document(), EqualsProto(document6));
@@ -820,7 +842,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *document_store_);
+      result_spec, *schema_store_, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -833,8 +855,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   // (document5, document3) should be returned.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).document(), EqualsProto(document6));
@@ -947,7 +970,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *document_store_);
+      result_spec, *schema_store_, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -962,8 +985,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(3));
   EXPECT_THAT(page_result.results.at(0).document(), EqualsProto(document6));
@@ -1018,7 +1042,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *document_store_);
+      result_spec, *schema_store_, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1030,8 +1054,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   // "nonexistentNamespace" should have no effect.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
   EXPECT_THAT(page_result.results.at(0).document(), EqualsProto(document2));
@@ -1085,7 +1110,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *document_store_);
+      result_spec, *schema_store_, *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1097,8 +1122,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   // "nonexistentDocument" should have no effect.
   PageResult page_result =
       result_retriever
-          ->RetrieveNextPage(result_state,
-                             fake_clock_.GetSystemTimeMilliseconds())
+          ->RetrieveNextPage(
+              result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+              fake_clock_.GetSystemTimeMilliseconds())
           .first;
   ASSERT_THAT(page_result.results, SizeIs(2));
   EXPECT_THAT(page_result.results.at(0).document(), EqualsProto(document2));
@@ -1188,13 +1214,17 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   entry = result_grouping->add_entry_groupings();
   entry->set_namespace_("namespace2");
 
-  // Get corpus ids.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      CorpusId corpus_id1, document_store_->GetResultGroupingEntryId(
-                               result_grouping_type, "namespace1", "Document"));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      CorpusId corpus_id2, document_store_->GetResultGroupingEntryId(
-                               result_grouping_type, "namespace2", "Document"));
+  // Get result grouping entry ids.
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      result_utils::ResultGroupingEntryId entry_id1,
+      result_utils::EncodeResultGroupingEntryId(
+          *schema_store_, *document_store_, result_grouping_type, "namespace1",
+          "Document"));
+  ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
+      result_utils::ResultGroupingEntryId entry_id2,
+      result_utils::EncodeResultGroupingEntryId(
+          *schema_store_, *document_store_, result_grouping_type, "namespace2",
+          "Document"));
 
   // Creates a ResultState with 5 ScoredDocumentHits.
   ResultStateV2 result_state(
@@ -1202,12 +1232,12 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *document_store_);
+      result_spec, *schema_store_, *document_store_);
   {
     absl_ports::shared_lock l(&result_state.mutex);
 
-    ASSERT_THAT(result_state.entry_id_group_id_map(),
-                UnorderedElementsAre(Pair(corpus_id1, 0), Pair(corpus_id2, 1)));
+    ASSERT_THAT(result_state.entry_id_group_index_map(),
+                UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     ASSERT_THAT(result_state.group_result_limits, ElementsAre(3, 1));
   }
 
@@ -1219,11 +1249,12 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
 
   // document5, document4, document1 belong to namespace2 (with max_results =
   // 1).
-  // docuemnt3, document2 belong to namespace 1 (with max_results = 3).
+  // document3, document2 belong to namespace 1 (with max_results = 3).
   // Since num_per_page is 2, we expect to get document5 and document3 in the
   // first page.
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   ASSERT_THAT(page_result1.results, SizeIs(2));
   ASSERT_THAT(page_result1.results.at(0).document(), EqualsProto(document5));
   ASSERT_THAT(page_result1.results.at(1).document(), EqualsProto(document3));
@@ -1246,9 +1277,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
     // round, num_returned should still be 2, since document4 was "filtered out"
     // and should not be counted into num_returned.
     EXPECT_THAT(result_state.num_returned, Eq(2));
-    // corpus_id_group_id_map should be unchanged.
-    EXPECT_THAT(result_state.entry_id_group_id_map(),
-                UnorderedElementsAre(Pair(corpus_id1, 0), Pair(corpus_id2, 1)));
+    // entry_id_group_index_map should be unchanged.
+    EXPECT_THAT(result_state.entry_id_group_index_map(),
+                UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     // GroupResultLimiter should decrement the # in group_result_limits.
     EXPECT_THAT(result_state.group_result_limits, ElementsAre(2, 0));
   }
@@ -1256,7 +1287,8 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
   // Although there are document2 and document1 left, since namespace2 has
   // reached its max results, document1 should be excluded from the second page.
   auto [page_result2, has_more_results2] = result_retriever->RetrieveNextPage(
-      result_state, fake_clock_.GetSystemTimeMilliseconds());
+      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
+      fake_clock_.GetSystemTimeMilliseconds());
   ASSERT_THAT(page_result2.results, SizeIs(1));
   ASSERT_THAT(page_result2.results.at(0).document(), EqualsProto(document2));
   ASSERT_FALSE(has_more_results2);
@@ -1270,9 +1302,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
     // since document1 was "filtered out" and should not be counted into
     // num_returned.
     EXPECT_THAT(result_state.num_returned, Eq(3));
-    // corpus_id_group_id_map should be unchanged.
-    EXPECT_THAT(result_state.entry_id_group_id_map(),
-                UnorderedElementsAre(Pair(corpus_id1, 0), Pair(corpus_id2, 1)));
+    // entry_id_group_index_map should be unchanged.
+    EXPECT_THAT(result_state.entry_id_group_index_map(),
+                UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     // GroupResultLimiter should decrement the # in group_result_limits.
     EXPECT_THAT(result_state.group_result_limits, ElementsAre(1, 0));
   }

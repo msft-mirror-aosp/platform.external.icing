@@ -52,6 +52,9 @@ struct SnippetContext {
     // - vector2: 1
     // - vector3: 0
     // - vector4: 2
+    //
+    // For ANN hits, position is set to -1 to indicate that the specific vector
+    // position is not supported.
     int position;
     int query_vector_index;
     SectionId section_id;

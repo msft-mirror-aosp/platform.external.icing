@@ -247,20 +247,20 @@ GetJoinData(const QualifiedIdJoinIndexImplV2& index,
 
 TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
        CreationWithNullPointerShouldFail) {
-  EXPECT_THAT(
-      QualifiedIdJoinIndexingHandler::Create(
-          /*clock=*/nullptr, doc_store_.get(), qualified_id_join_index_.get()),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QualifiedIdJoinIndexingHandler::Create(
+                  /*clock=*/nullptr, doc_store_.get(),
+                  qualified_id_join_index_.get(), feature_flags_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
-  EXPECT_THAT(
-      QualifiedIdJoinIndexingHandler::Create(
-          &fake_clock_, /*doc_store=*/nullptr, qualified_id_join_index_.get()),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QualifiedIdJoinIndexingHandler::Create(
+                  &fake_clock_, /*doc_store=*/nullptr,
+                  qualified_id_join_index_.get(), feature_flags_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
-  EXPECT_THAT(
-      QualifiedIdJoinIndexingHandler::Create(
-          &fake_clock_, doc_store_.get(), /*qualified_id_join_index=*/nullptr),
-      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(QualifiedIdJoinIndexingHandler::Create(
+                  &fake_clock_, doc_store_.get(),
+                  /*qualified_id_join_index=*/nullptr, feature_flags_.get()),
+              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
 TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleJoinableProperty) {
@@ -318,7 +318,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleJoinableProperty) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
   EXPECT_THAT(
       handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
                       /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
@@ -434,7 +435,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleNestedJoinableProperty) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
   EXPECT_THAT(handler->Handle(
                   nested_tokenized_document, doc_id, put_result.old_document_id,
                   /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
@@ -499,7 +501,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
   EXPECT_THAT(
       handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
                       /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
@@ -546,7 +549,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
   EXPECT_THAT(
       handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
                       /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
@@ -587,7 +591,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test, HandleShouldSkipEmptyQualifiedId) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
   EXPECT_THAT(
       handler->Handle(tokenized_document, doc_id, put_result.old_document_id,
                       /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
@@ -659,7 +664,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
 
   // Handling document with kInvalidDocumentId should cause a failure.
   EXPECT_THAT(
@@ -745,7 +751,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
 
   // Handling document with document_id == last_added_document_id should cause a
   // failure.
@@ -837,7 +844,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
 
   // Handle document with document_id > last_added_document_id in recovery mode.
   // The handler should index this document and update last_added_document_id.
@@ -910,7 +918,8 @@ TEST_F(QualifiedIdJoinIndexingHandlerV2Test,
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
       QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                             qualified_id_join_index_.get()));
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
 
   // Handle document with document_id == last_added_document_id in recovery
   // mode. We should not get any error, but the handler should ignore the

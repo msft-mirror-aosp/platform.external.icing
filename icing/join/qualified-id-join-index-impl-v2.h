@@ -34,9 +34,11 @@
 #include "icing/join/posting-list-join-data-accessor.h"
 #include "icing/join/posting-list-join-data-serializer.h"
 #include "icing/join/qualified-id-join-index.h"
+#include "icing/join/qualified-id.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/store/key-mapper.h"
 #include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
@@ -158,8 +160,16 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
   }
 
   // v3 only API. Returns UNIMPLEMENTED_ERROR.
-  libtextclassifier3::StatusOr<std::vector<DocumentJoinIdPair>> Get(
-      DocumentId parent_document_id) const override {
+  libtextclassifier3::Status Put(
+      const DocumentStore* document_store,
+      const DocumentJoinIdPair& child_document_join_id_pair,
+      std::vector<QualifiedId>&& parent_qualified_ids) override {
+    return absl_ports::UnimplementedError("This API is not supported in V2");
+  }
+
+  // v3 only API. Returns UNIMPLEMENTED_ERROR.
+  libtextclassifier3::StatusOr<DocumentJoinIdPairArrayView>
+  GetDocumentJoinIdPairArrayView(DocumentId parent_document_id) const override {
     return absl_ports::UnimplementedError("This API is not supported in V2");
   }
 
@@ -180,7 +190,16 @@ class QualifiedIdJoinIndexImplV2 : public QualifiedIdJoinIndex {
     return libtextclassifier3::Status::OK;
   }
 
+  // No-op since v2 stores parent information in (namespace_id,
+  // fingerprint(uri)) format and does not require parent migration.
+  libtextclassifier3::Status MigrateParent(
+      const QualifiedId& parent_qualified_id,
+      DocumentId new_document_id) override {
+    return libtextclassifier3::Status::OK;
+  }
+
   libtextclassifier3::Status Optimize(
+      const DocumentStore* document_store,
       const std::vector<DocumentId>& document_id_old_to_new,
       const std::vector<NamespaceId>& namespace_id_old_to_new,
       DocumentId new_last_added_document_id) override;

@@ -18,6 +18,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
@@ -25,6 +26,7 @@
 #include "icing/document-builder.h"
 #include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
+#include "icing/index/embed/quantizer.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
@@ -33,6 +35,7 @@
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/embedding-util.h"
 
 namespace icing {
 namespace lib {
@@ -43,6 +46,7 @@ using ::testing::HasSubstr;
 
 // type and property names of EmailMessage and EmailMessageWithNote
 constexpr char kTypeEmail[] = "EmailMessage";
+constexpr char kTypeEmailCopy[] = "EmailMessageCopy";
 constexpr char kTypeEmailWithNote[] = "EmailMessageWithNote";
 constexpr char kPropertySubject[] = "subject";
 constexpr char kPropertyText[] = "text";
@@ -65,23 +69,30 @@ class DocumentValidatorTest : public ::testing::Test {
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
 
+    SchemaTypeConfigProto email_type =
+        SchemaTypeConfigBuilder()
+            .SetType(kTypeEmail)
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertySubject)
+                             .SetDataType(TYPE_STRING)
+                             .SetCardinality(CARDINALITY_REQUIRED))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertyText)
+                             .SetDataType(TYPE_STRING)
+                             .SetCardinality(CARDINALITY_OPTIONAL))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName(kPropertyRecipients)
+                             .SetDataType(TYPE_STRING)
+                             .SetCardinality(CARDINALITY_REPEATED))
+            .Build();
+    SchemaTypeConfigProto email_type_copy =
+        SchemaTypeConfigBuilder(email_type)
+            .SetType(kTypeEmailCopy)
+            .Build();
     SchemaProto schema =
         SchemaBuilder()
-            .AddType(
-                SchemaTypeConfigBuilder()
-                    .SetType(kTypeEmail)
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kPropertySubject)
-                                     .SetDataType(TYPE_STRING)
-                                     .SetCardinality(CARDINALITY_REQUIRED))
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kPropertyText)
-                                     .SetDataType(TYPE_STRING)
-                                     .SetCardinality(CARDINALITY_OPTIONAL))
-                    .AddProperty(PropertyConfigBuilder()
-                                     .SetName(kPropertyRecipients)
-                                     .SetDataType(TYPE_STRING)
-                                     .SetCardinality(CARDINALITY_REPEATED)))
+            .AddType(email_type)
+            .AddType(email_type_copy)
             .AddType(
                 SchemaTypeConfigBuilder()
                     .SetType(kTypeEmailWithNote)
@@ -132,6 +143,15 @@ class DocumentValidatorTest : public ::testing::Test {
                                          kTypeEmailWithNote,
                                          /*index_nested_properties=*/true)
                                      .SetCardinality(CARDINALITY_REPEATED)))
+            .AddType(
+                SchemaTypeConfigBuilder()
+                    .SetType("QuantizedType")
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName("qEmbedding")
+                            .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                               QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                            .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
 
     schema_dir_ = GetTestTempDir() + "/schema_store";
@@ -147,7 +167,7 @@ class DocumentValidatorTest : public ::testing::Test {
         std::make_unique<DocumentValidator>(schema_store_.get());
   }
 
-  DocumentBuilder SimpleEmailBuilder() {
+  static DocumentBuilder SimpleEmailBuilder() {
     return DocumentBuilder()
         .SetKey(kDefaultNamespace, "email/1")
         .SetSchema(kTypeEmail)
@@ -157,7 +177,17 @@ class DocumentValidatorTest : public ::testing::Test {
                            kDefaultString);
   }
 
-  DocumentBuilder SimpleEmailWithNoteBuilder() {
+  static DocumentBuilder SimpleEmailCopyBuilder() {
+    return DocumentBuilder()
+        .SetKey(kDefaultNamespace, "email/1")
+        .SetSchema(kTypeEmailCopy)
+        .AddStringProperty(kPropertySubject, kDefaultString)
+        .AddStringProperty(kPropertyText, kDefaultString)
+        .AddStringProperty(kPropertyRecipients, kDefaultString, kDefaultString,
+                           kDefaultString);
+  }
+
+  static DocumentBuilder SimpleEmailWithNoteBuilder() {
     PropertyProto::VectorProto vector;
     vector.add_values(0.1);
     vector.add_values(0.2);
@@ -175,7 +205,7 @@ class DocumentValidatorTest : public ::testing::Test {
         .AddVectorProperty(kPropertyNoteEmbedding, vector);
   }
 
-  DocumentBuilder SimpleConversationBuilder() {
+  static DocumentBuilder SimpleConversationBuilder() {
     return DocumentBuilder()
         .SetKey(kDefaultNamespace, "conversation/1")
         .SetSchema(kTypeConversation)
@@ -199,6 +229,11 @@ TEST_F(DocumentValidatorTest, ValidateSimpleSchemasOk) {
 
   DocumentProto conversation = SimpleConversationBuilder().Build();
   EXPECT_THAT(document_validator_->Validate(conversation), IsOk());
+}
+
+TEST_F(DocumentValidatorTest, ValidateDuplicateSchemaTypeOk) {
+  DocumentProto email = SimpleEmailCopyBuilder().Build();
+  EXPECT_THAT(document_validator_->Validate(email), IsOk());
 }
 
 TEST_F(DocumentValidatorTest, ValidateEmptyNamespaceInvalid) {
@@ -672,6 +707,91 @@ TEST_F(DocumentValidatorTest, ValidateEmbeddingNoSignatureOk) {
           .AddVectorProperty(kPropertyNoteEmbedding, vector)
           .Build();
   ICING_EXPECT_OK(document_validator_->Validate(email));
+}
+
+TEST_F(DocumentValidatorTest, ValidateEmbeddingInvalidSignatureSeparator) {
+  PropertyProto::VectorProto vector;
+  vector.add_values(0.1);
+  vector.add_values(0.2);
+  vector.add_values(0.3);
+  vector.set_model_signature(
+      "my_model" + std::string(embedding_util::kIvfPostingListKeySeparator));
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey(kDefaultNamespace, "email_with_note/1")
+          .SetSchema(kTypeEmailWithNote)
+          .AddStringProperty(kPropertySubject, kDefaultString)
+          .AddStringProperty(kPropertyText, kDefaultString)
+          .AddStringProperty(kPropertyRecipients, kDefaultString,
+                             kDefaultString, kDefaultString)
+          .AddStringProperty(kPropertyNote, kDefaultString)
+          .AddVectorProperty(kPropertyNoteEmbedding, vector)
+          .Build();
+  EXPECT_THAT(document_validator_->Validate(email),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("contains model_signature with invalid "
+                                 "kIvfPostingListKeySeparator")));
+}
+
+TEST_F(DocumentValidatorTest, ValidateQuantizedEmbeddingInvalidLength) {
+  PropertyProto::VectorProto vector;
+  vector.set_model_signature("my_model");
+  // Create a quantized_values with exactly sizeof(Quantizer)
+  std::string small_string(sizeof(Quantizer), 'a');
+  vector.set_quantized_values(small_string);
+
+  DocumentProto email =
+      DocumentBuilder()
+          .SetKey(kDefaultNamespace, "email_with_note/1")
+          .SetSchema(kTypeEmailWithNote)
+          .AddStringProperty(kPropertySubject, kDefaultString)
+          .AddStringProperty(kPropertyText, kDefaultString)
+          .AddStringProperty(kPropertyRecipients, kDefaultString,
+                             kDefaultString, kDefaultString)
+          .AddStringProperty(kPropertyNote, kDefaultString)
+          .AddVectorProperty(kPropertyNoteEmbedding, vector)
+          .Build();
+  EXPECT_THAT(document_validator_->Validate(email),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       HasSubstr("has 'quantized_values' of invalid length")));
+}
+
+// Tests that a document with quantized values passes validation even if the
+// schema does not enable quantization (should log a warning instead of return
+// error).
+TEST_F(DocumentValidatorTest,
+       ValidateQuantizedEmbeddingWithIncompatibleSchemaTypeOk) {
+  PropertyProto::VectorProto vector;
+  vector.set_model_signature("my_model");
+  // Valid length string but schema does not support quantization
+  std::string valid_string(sizeof(Quantizer) + 4, 'a');
+  vector.set_quantized_values(valid_string);
+
+  DocumentProto email = DocumentBuilder()
+                            .SetKey(kDefaultNamespace, "email_with_note/1")
+                            .SetSchema(kTypeEmailWithNote)
+                            .AddStringProperty(kPropertySubject, kDefaultString)
+                            .AddVectorProperty(kPropertyNoteEmbedding, vector)
+                            .Build();
+  EXPECT_THAT(document_validator_->Validate(email), IsOk());
+}
+
+TEST_F(DocumentValidatorTest, ValidateVectorWithBothFloatAndQuantizedValues) {
+  PropertyProto::VectorProto vector;
+  vector.set_model_signature("my_model");
+  vector.add_values(0.1);
+  std::string valid_string(sizeof(Quantizer) + 4, 'a');
+  vector.set_quantized_values(valid_string);
+
+  DocumentProto doc = DocumentBuilder()
+                          .SetKey(kDefaultNamespace, "doc/1")
+                          .SetSchema("QuantizedType")
+                          .AddVectorProperty("qEmbedding", vector)
+                          .Build();
+  EXPECT_THAT(
+      document_validator_->Validate(doc),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+               HasSubstr("has both 'values' and 'quantized_values' set")));
 }
 
 }  // namespace

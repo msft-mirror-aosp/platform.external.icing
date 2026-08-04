@@ -16,9 +16,14 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project(icing)
 
-add_definitions("-DICING_REVERSE_JNI_SEGMENTATION=1")
+add_definitions(
+        "-DICING_REVERSE_JNI_SEGMENTATION=1"
+        "-DICING_DISABLE_EIGEN"
+)
 set(VERSION_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/icing/jni.lds")
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-pragma")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-deprecated-pragma")
 set(CMAKE_SHARED_LINKER_FLAGS
     "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--gc-sections -Wl,--version-script=${VERSION_SCRIPT}")
 
