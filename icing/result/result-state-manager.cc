@@ -28,6 +28,7 @@
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-store.h"
 #include "icing/util/clock.h"
@@ -36,10 +37,8 @@
 namespace icing {
 namespace lib {
 
-ResultStateManager::ResultStateManager(int max_total_hits,
-                                       const DocumentStore& document_store)
-    : document_store_(document_store),
-      max_total_hits_(max_total_hits),
+ResultStateManager::ResultStateManager(int max_total_hits)
+    : max_total_hits_(max_total_hits),
       num_total_hits_(0),
       random_generator_(GetSteadyTimeNanoseconds()) {}
 
@@ -48,7 +47,8 @@ ResultStateManager::CacheAndRetrieveFirstPage(
     std::unique_ptr<ScoredDocumentHitsRanker> ranker,
     std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
     std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
-    const ResultSpecProto& result_spec, const DocumentStore& document_store,
+    const ResultSpecProto& result_spec, const SchemaStore& schema_store,
+    const DocumentStore& document_store,
     const ResultRetrieverV2& result_retriever, int64_t current_time_ms,
     QueryStatsProto* query_stats) {
   if (ranker == nullptr) {
@@ -59,7 +59,8 @@ ResultStateManager::CacheAndRetrieveFirstPage(
   // ResultState should be created by ResultStateManager only.
   std::shared_ptr<ResultStateV2> result_state = std::make_shared<ResultStateV2>(
       std::move(ranker), std::move(parent_adjustment_info),
-      std::move(child_adjustment_info), result_spec, document_store);
+      std::move(child_adjustment_info), result_spec, schema_store,
+      document_store);
 
   // Retrieve docs outside of ResultStateManager critical section.
   // Will enter ResultState critical section inside ResultRetriever.
@@ -72,14 +73,12 @@ ResultStateManager::CacheAndRetrieveFirstPage(
   }
 
   // ResultState has multiple pages, storing it
-  int num_hits_to_add = 0;
   {
     // ResultState critical section
     absl_ports::unique_lock l(&result_state->mutex);
 
     result_state->scored_document_hits_ranker->TruncateHitsTo(max_total_hits_);
     result_state->RegisterNumTotalHits(&num_total_hits_);
-    num_hits_to_add = result_state->scored_document_hits_ranker->size();
   }
 
   // It is fine to exit ResultState critical section, since it is just created
@@ -92,10 +91,10 @@ ResultStateManager::CacheAndRetrieveFirstPage(
     absl_ports::unique_lock l(&mutex_);
 
     // Remove expired result states first.
-    InternalInvalidateExpiredResultStates(kDefaultResultStateTtlInMs,
-                                          current_time_ms);
+    InternalRemoveExpiredResultStates(kDefaultResultStateTtlInMs,
+                                      current_time_ms);
     // Remove states to make room for this new state.
-    RemoveStatesIfNeeded(num_hits_to_add, query_stats);
+    RemoveStatesIfNeeded(query_stats);
     // Generate a new unique token and add it into result_state_map_.
     next_page_token = Add(std::move(result_state), current_time_ms);
   }
@@ -109,7 +108,7 @@ uint64_t ResultStateManager::Add(std::shared_ptr<ResultStateV2> result_state,
 
   result_state_map_.emplace(new_token, std::move(result_state));
   // Tracks the insertion order
-  token_queue_.push(std::make_pair(new_token, current_time_ms));
+  token_queue_.push(TokenInfo(new_token, current_time_ms));
 
   return new_token;
 }
@@ -124,8 +123,8 @@ ResultStateManager::GetNextPage(uint64_t next_page_token, int32_t max_results,
     absl_ports::unique_lock l(&mutex_);
 
     // Remove expired result states before fetching
-    InternalInvalidateExpiredResultStates(kDefaultResultStateTtlInMs,
-                                          current_time_ms);
+    InternalRemoveExpiredResultStates(kDefaultResultStateTtlInMs,
+                                      current_time_ms);
 
     const auto& state_iterator = result_state_map_.find(next_page_token);
     if (state_iterator == result_state_map_.end()) {
@@ -155,9 +154,9 @@ ResultStateManager::GetNextPage(uint64_t next_page_token, int32_t max_results,
 int ResultStateManager::GetNumActiveResultStates(int64_t current_time_ms) {
   absl_ports::unique_lock l(&mutex_);
 
-  InternalInvalidateExpiredResultStates(kDefaultResultStateTtlInMs,
-                                        current_time_ms);
-  return result_state_map_.size();
+  InternalRemoveExpiredResultStates(kDefaultResultStateTtlInMs,
+                                    current_time_ms);
+  return static_cast<int>(result_state_map_.size());
 }
 
 void ResultStateManager::InvalidateResultState(uint64_t next_page_token) {
@@ -170,18 +169,28 @@ void ResultStateManager::InvalidateResultState(uint64_t next_page_token) {
   InternalInvalidateResultState(next_page_token);
 }
 
-void ResultStateManager::InvalidateAllResultStates() {
+ResultStateManager::TokenRemovalStats
+ResultStateManager::RemoveAllResultStates() {
   absl_ports::unique_lock l(&mutex_);
-  InternalInvalidateAllResultStates();
+
+  return InternalRemoveAllResultStates();
 }
 
-void ResultStateManager::InternalInvalidateAllResultStates() {
+ResultStateManager::TokenRemovalStats
+ResultStateManager::InternalRemoveAllResultStates() {
+  TokenRemovalStats removal_stats = {
+      .num_active_tokens_removed = static_cast<int>(result_state_map_.size()),
+      .num_invalidated_tokens_removed =
+          static_cast<int>(invalidated_token_set_.size())};
+
   // We don't have to reset num_total_hits_ (to 0) here, since clearing
   // result_state_map_ will "eventually" invoke the destructor of ResultState
   // (which decrements num_total_hits_) and num_total_hits_ will become 0.
   result_state_map_.clear();
   invalidated_token_set_.clear();
-  token_queue_ = std::queue<std::pair<uint64_t, int64_t>>();
+  token_queue_ = std::queue<TokenInfo>();
+
+  return removal_stats;
 }
 
 uint64_t ResultStateManager::GetUniqueToken() {
@@ -197,55 +206,44 @@ uint64_t ResultStateManager::GetUniqueToken() {
   return new_token;
 }
 
-void ResultStateManager::RemoveStatesIfNeeded(int num_hits_to_add,
-                                              QueryStatsProto* query_stats) {
+void ResultStateManager::RemoveStatesIfNeeded(QueryStatsProto* query_stats) {
   if (result_state_map_.empty() || token_queue_.empty()) {
     return;
   }
 
-  // 1. Check if this new result_state would take up the entire result state
-  //    manager budget.
-  if (num_hits_to_add > max_total_hits_) {
-    // This single result state will exceed our budget. Drop everything else to
-    // accommodate it.
-    InternalInvalidateAllResultStates();
-    return;
-  }
-
-  // 2. Remove any tokens that were previously invalidated.
-  while (!token_queue_.empty() &&
-         invalidated_token_set_.find(token_queue_.front().first) !=
-             invalidated_token_set_.end()) {
-    invalidated_token_set_.erase(token_queue_.front().first);
-    token_queue_.pop();
-  }
-
-  // 3. If we're over budget, remove states from oldest to newest until we fit
-  //    into our budget.
+  // If we're over budget, remove states from oldest to newest until we fit into
+  // our budget.
   //
-  // Note: num_total_hits_ may not be decremented immediately after invalidating
-  // a result state, since other threads may still hold the shared pointer.
-  // Thus, we have to check if token_queue_ is empty or not, since it is
-  // possible that num_total_hits_ is non-zero and still greater than
-  // max_total_hits_ when token_queue_ is empty. Still "eventually" it will be
-  // decremented after the last thread releases the shared pointer.
-  int num_states_evicted = 0;
+  // Note:
+  // - The corresponding ResultState of the front token may have already been
+  //   invalidated previously (removed from result_state_map_ and added to
+  //   invalidated_token_set_). In this case:
+  //   - num_total_hits_ was likely to be decremented already.
+  //   - Removing the front token from token_queue_ in this round will not
+  //     affect num_total_hits_, so we might need to remove more states.
+  // - If the corresponding ResultState of the front token is still active:
+  //   - num_total_hits_ may still not be decremented immediately after
+  //     removing the ResultState from result_state_map_ , since other threads
+  //     may still hold the shared pointer.
+  //   - Thus, we have to check if token_queue_ is empty or not, since it is
+  //     possible that num_total_hits_ is non-zero and still greater than
+  //     max_total_hits_ when token_queue_ is empty. Still "eventually" it will
+  //     be decremented after the last thread releases the shared pointer.
+  TokenRemovalStats removal_stats;
   while (!token_queue_.empty() && num_total_hits_ > max_total_hits_) {
     ICING_LOG(WARNING) << "Evicting result state from token_queue_ due to "
                           "budget limit. Current num_total_hits_: "
                        << num_total_hits_;
-
-    InternalInvalidateResultState(token_queue_.front().first);
-    ++num_states_evicted;
-    token_queue_.pop();
+    removal_stats += InternalRemoveFrontToken();
   }
-  invalidated_token_set_.clear();
-  if (num_states_evicted > 0) {
-    ICING_LOG(WARNING) << "Evicted " << num_states_evicted
-                       << " states. After eviction: " << num_total_hits_
+
+  if (removal_stats.num_active_tokens_removed > 0) {
+    ICING_LOG(WARNING) << "Evicted " << removal_stats.num_active_tokens_removed
+                       << " active states. After eviction: " << num_total_hits_
                        << " hits and " << token_queue_.size() << " states.";
     if (query_stats != nullptr) {
-      query_stats->set_num_result_states_evicted(num_states_evicted);
+      query_stats->set_num_result_states_evicted(
+          removal_stats.num_active_tokens_removed);
     }
   }
 }
@@ -265,24 +263,64 @@ void ResultStateManager::InternalInvalidateResultState(uint64_t token) {
   }
 }
 
-void ResultStateManager::InternalInvalidateExpiredResultStates(
-    int64_t result_state_ttl, int64_t current_time_ms) {
-  while (!token_queue_.empty() &&
-         current_time_ms - token_queue_.front().second >= result_state_ttl) {
-    auto itr = result_state_map_.find(token_queue_.front().first);
-    if (itr != result_state_map_.end()) {
-      // We don't have to decrement num_total_hits_ here, since erasing the
-      // shared ptr instance will "eventually" invoke the destructor of
-      // ResultState and it will handle this.
-      result_state_map_.erase(itr);
-    } else {
-      // Since result_state_map_ and invalidated_token_set_ are mutually
-      // exclusive, we remove the token from invalidated_token_set_ only if it
-      // isn't present in result_state_map_.
-      invalidated_token_set_.erase(token_queue_.front().first);
-    }
-    token_queue_.pop();
+ResultStateManager::TokenRemovalStats
+ResultStateManager::InternalRemoveFrontToken() {
+  TokenRemovalStats removal_stats;
+  if (token_queue_.empty()) {
+    return removal_stats;
   }
+
+  // The front token should be in either result_state_map_ or
+  // invalidated_token_set_.
+  //
+  // NOTE: we don't have to decrement num_total_hits_ if removing result state
+  // from result_state_map_, since erasing the shared ptr instance will
+  // "eventually" invoke the destructor of ResultState and it will handle this.
+  auto itr_map = result_state_map_.find(token_queue_.front().token);
+  auto itr_invalidated =
+      invalidated_token_set_.find(token_queue_.front().token);
+  if (itr_map != result_state_map_.end() &&
+      itr_invalidated != invalidated_token_set_.end()) {
+    // This should never happen, unless there is a bug in our code that causes
+    // token collision.
+    ICING_LOG(ERROR) << "Token " << token_queue_.front().token
+                     << " is in both result_state_map_ and "
+                        "invalidated_token_set_. This should never happen.";
+    result_state_map_.erase(itr_map);
+    invalidated_token_set_.erase(itr_invalidated);
+    ++removal_stats.num_active_tokens_removed;
+    ++removal_stats.num_invalidated_tokens_removed;
+  } else if (itr_map != result_state_map_.end()) {
+    result_state_map_.erase(itr_map);
+    ++removal_stats.num_active_tokens_removed;
+  } else if (itr_invalidated != invalidated_token_set_.end()) {
+    invalidated_token_set_.erase(itr_invalidated);
+    ++removal_stats.num_invalidated_tokens_removed;
+  } else {
+    // This should never happen.
+    ICING_LOG(ERROR) << "Token " << token_queue_.front().token
+                     << " is not in either result_state_map_ or "
+                        "invalidated_token_set_. This should never happen.";
+  }
+
+  token_queue_.pop();
+  return removal_stats;
+}
+
+ResultStateManager::TokenRemovalStats
+ResultStateManager::InternalRemoveExpiredResultStates(int64_t result_state_ttl,
+                                                      int64_t current_time_ms) {
+  TokenRemovalStats removal_stats;
+  while (!token_queue_.empty() &&
+         current_time_ms - token_queue_.front().creation_timestamp_ms >=
+             result_state_ttl) {
+    removal_stats += InternalRemoveFrontToken();
+  }
+  ICING_VLOG(1) << "Removed " << removal_stats.num_active_tokens_removed
+                << " expired tokens and "
+                << removal_stats.num_invalidated_tokens_removed
+                << " tokens that were already invalidated before expiration.";
+  return removal_stats;
 }
 
 }  // namespace lib
