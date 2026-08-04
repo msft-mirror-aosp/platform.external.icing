@@ -96,9 +96,10 @@ DocumentProto CreateDocument(int id) {
 
 class ResultStateManagerTest : public testing::Test {
  protected:
-  ResultStateManagerTest() : test_dir_(GetTestTempDir() + "/icing") {
-    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
-  }
+  ResultStateManagerTest()
+      : test_dir_(GetTestTempDir() + "/icing"),
+        schema_store_dir_(test_dir_ + "/schema_store"),
+        document_store_dir_(test_dir_ + "/document_store") {}
 
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
@@ -109,6 +110,11 @@ class ResultStateManagerTest : public testing::Test {
               GetTestFilePath("icing/icu.dat")));
     }
 
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
+
     clock_ = std::make_unique<FakeClock>();
 
     language_segmenter_factory::SegmenterOptions options(ULOC_US);
@@ -117,7 +123,7 @@ class ResultStateManagerTest : public testing::Test {
         language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
                                            clock_.get(), feature_flags_.get()));
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");
@@ -132,8 +138,8 @@ class ResultStateManagerTest : public testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
         DocumentStore::Create(
-            &filesystem_, test_dir_, clock_.get(), schema_store_.get(),
-            feature_flags_.get(),
+            &filesystem_, document_store_dir_, clock_.get(),
+            schema_store_.get(), feature_flags_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
             /*pre_mapping_fbv=*/false,
             /*use_persistent_hash_map=*/true,
@@ -153,8 +159,15 @@ class ResultStateManagerTest : public testing::Test {
   }
 
   void TearDown() override {
-    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+    result_retriever_.reset();
+    document_store_.reset();
+    normalizer_.reset();
+    schema_store_.reset();
+    language_segmenter_.reset();
     clock_.reset();
+    feature_flags_.reset();
+
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
   std::pair<ScoredDocumentHit, DocumentProto> AddScoredDocument(
@@ -210,6 +223,8 @@ class ResultStateManagerTest : public testing::Test {
   std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   const std::string test_dir_;
+  const std::string schema_store_dir_;
+  const std::string document_store_dir_;
   std::unique_ptr<FakeClock> clock_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<SchemaStore> schema_store_;
@@ -235,15 +250,15 @@ TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageOnePage) {
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, kSectionIdMaskNone, /*score=*/1},
-      {document_id2, kSectionIdMaskNone, /*score=*/1},
-      {document_id3, kSectionIdMaskNone, /*score=*/1}};
+      ScoredDocumentHit(document_id1, kSectionIdMaskNone, /*score=*/1),
+      ScoredDocumentHit(document_id2, kSectionIdMaskNone, /*score=*/1),
+      ScoredDocumentHit(document_id3, kSectionIdMaskNone, /*score=*/1)};
   std::unique_ptr<ScoredDocumentHitsRanker> ranker = std::make_unique<
       PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
       std::move(scored_document_hits), /*is_descending=*/true);
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info,
@@ -251,7 +266,7 @@ TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageOnePage) {
           std::move(ranker), /*parent_adjustment_info=*/nullptr,
           /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/10, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(page_result_info.first, Eq(kInvalidNextPageToken));
@@ -293,17 +308,17 @@ TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageMultiplePages) {
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
   DocumentId document_id5 = put_result5.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, kSectionIdMaskNone, /*score=*/1},
-      {document_id2, kSectionIdMaskNone, /*score=*/1},
-      {document_id3, kSectionIdMaskNone, /*score=*/1},
-      {document_id4, kSectionIdMaskNone, /*score=*/1},
-      {document_id5, kSectionIdMaskNone, /*score=*/1}};
+      ScoredDocumentHit(document_id1, kSectionIdMaskNone, /*score=*/1),
+      ScoredDocumentHit(document_id2, kSectionIdMaskNone, /*score=*/1),
+      ScoredDocumentHit(document_id3, kSectionIdMaskNone, /*score=*/1),
+      ScoredDocumentHit(document_id4, kSectionIdMaskNone, /*score=*/1),
+      ScoredDocumentHit(document_id5, kSectionIdMaskNone, /*score=*/1)};
   std::unique_ptr<ScoredDocumentHitsRanker> ranker = std::make_unique<
       PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
       std::move(scored_document_hits), /*is_descending=*/true);
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
 
   // First page, 2 results
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -312,7 +327,7 @@ TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageMultiplePages) {
           std::move(ranker), /*parent_adjustment_info=*/nullptr,
           /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
   EXPECT_THAT(page_result_info1.first, Not(Eq(kInvalidNextPageToken)));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(2));
@@ -357,21 +372,21 @@ TEST_F(ResultStateManagerTest, ShouldCacheAndRetrieveFirstPageMultiplePages) {
 
 TEST_F(ResultStateManagerTest, NullRankerShouldReturnError) {
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
 
   EXPECT_THAT(
       result_state_manager.CacheAndRetrieveFirstPage(
           /*ranker=*/nullptr, /*parent_adjustment_info=*/nullptr,
           /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()),
       StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(ResultStateManagerTest, EmptyRankerShouldReturnEmptyFirstPage) {
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info,
       result_state_manager.CacheAndRetrieveFirstPage(
@@ -380,7 +395,7 @@ TEST_F(ResultStateManagerTest, EmptyRankerShouldReturnEmptyFirstPage) {
               std::vector<ScoredDocumentHit>(), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(page_result_info.first, Eq(kInvalidNextPageToken));
@@ -399,11 +414,11 @@ TEST_F(ResultStateManagerTest, ShouldAllowEmptyFirstPage) {
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, kSectionIdMaskNone, /*score=*/1},
-      {document_id2, kSectionIdMaskNone, /*score=*/1}};
+      ScoredDocumentHit(document_id1, kSectionIdMaskNone, /*score=*/1),
+      ScoredDocumentHit(document_id2, kSectionIdMaskNone, /*score=*/1)};
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
 
   // Create a ResultSpec that limits "namespace" to 0 results.
   ResultSpecProto result_spec =
@@ -423,7 +438,7 @@ TEST_F(ResultStateManagerTest, ShouldAllowEmptyFirstPage) {
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          result_spec, document_store(), result_retriever(),
+          result_spec, schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
   // If the first page has no result, then it should be the last page.
   EXPECT_THAT(page_result_info.first, Eq(kInvalidNextPageToken));
@@ -452,13 +467,13 @@ TEST_F(ResultStateManagerTest, ShouldAllowEmptyLastPage) {
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
   DocumentId document_id4 = put_result4.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, kSectionIdMaskNone, /*score=*/1},
-      {document_id2, kSectionIdMaskNone, /*score=*/1},
-      {document_id3, kSectionIdMaskNone, /*score=*/1},
-      {document_id4, kSectionIdMaskNone, /*score=*/1}};
+      ScoredDocumentHit(document_id1, kSectionIdMaskNone, /*score=*/1),
+      ScoredDocumentHit(document_id2, kSectionIdMaskNone, /*score=*/1),
+      ScoredDocumentHit(document_id3, kSectionIdMaskNone, /*score=*/1),
+      ScoredDocumentHit(document_id4, kSectionIdMaskNone, /*score=*/1)};
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
 
   // Create a ResultSpec that limits "namespace" to 2 results.
   ResultSpecProto result_spec =
@@ -478,7 +493,7 @@ TEST_F(ResultStateManagerTest, ShouldAllowEmptyLastPage) {
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          result_spec, document_store(), result_retriever(),
+          result_spec, schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
   EXPECT_THAT(page_result_info1.first, Not(Eq(kInvalidNextPageToken)));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(2));
@@ -501,14 +516,14 @@ TEST_F(ResultStateManagerTest, ShouldAllowEmptyLastPage) {
 }
 
 TEST_F(ResultStateManagerTest,
-       ShouldInvalidateExpiredTokensWhenCacheAndRetrieveFirstPage) {
+       ShouldRemoveExpiredTokensWhenCacheAndRetrieveFirstPage) {
   auto [scored_document_hits1, document_protos1] = AddScoredDocuments(
       {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2});
   auto [scored_document_hits2, document_protos2] = AddScoredDocuments(
       {/*document_id=*/3, /*document_id=*/4, /*document_id=*/5});
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
 
   SectionRestrictQueryTermsMap query_terms;
   SearchSpecProto search_spec;
@@ -532,8 +547,9 @@ TEST_F(ResultStateManagerTest,
       PageResultInfo page_result_info1,
       result_state_manager.CacheAndRetrieveFirstPage(
           std::move(ranker), std::move(parent_adjustment_info),
-          /*child_adjustment_info=*/nullptr, result_spec, document_store(),
-          result_retriever(), clock()->GetSystemTimeMilliseconds()));
+          /*child_adjustment_info=*/nullptr, result_spec, schema_store(),
+          document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info1.first, Not(Eq(kInvalidNextPageToken)));
 
   // Set time as 1hr1s and add state 2.
@@ -550,11 +566,12 @@ TEST_F(ResultStateManagerTest,
       PageResultInfo page_result_info2,
       result_state_manager.CacheAndRetrieveFirstPage(
           std::move(ranker), std::move(parent_adjustment_info),
-          /*child_adjustment_info=*/nullptr, result_spec, document_store(),
-          result_retriever(), clock()->GetSystemTimeMilliseconds()));
+          /*child_adjustment_info=*/nullptr, result_spec, schema_store(),
+          document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
 
-  // Calling CacheAndRetrieveFirstPage() on state 2 should invalidate the
-  // expired state 1 internally.
+  // Calling CacheAndRetrieveFirstPage() on state 2 should remove the expired
+  // state 1 internally.
   //
   // We test the behavior by setting time back to 1s, to make sure the
   // invalidation of state 1 was done by the previous
@@ -569,14 +586,14 @@ TEST_F(ResultStateManagerTest,
 }
 
 TEST_F(ResultStateManagerTest,
-       ShouldInvalidateExpiredTokensWhenGetNextPageOnOthers) {
+       ShouldRemoveExpiredTokensWhenGetNextPageOnOthers) {
   auto [scored_document_hits1, document_protos1] = AddScoredDocuments(
       {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2});
   auto [scored_document_hits2, document_protos2] = AddScoredDocuments(
       {/*document_id=*/3, /*document_id=*/4, /*document_id=*/5});
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
 
   // Set time as 1s and add state 1.
   clock()->SetSystemTimeMilliseconds(1000);
@@ -588,7 +605,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info1.first, Not(Eq(kInvalidNextPageToken)));
 
@@ -602,13 +619,13 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info2.first, Not(Eq(kInvalidNextPageToken)));
 
   // 1. Set time as 1hr1s.
-  // 2. Call GetNextPage() on state 2. It should correctly invalidate the
-  //    expired state 1.
+  // 2. Call GetNextPage() on state 2. It should correctly remove the expired
+  //    state 1.
   // 3. Then calling GetNextPage() on state 1 shouldn't get anything.
   clock()->SetSystemTimeMilliseconds(kDefaultResultStateTtlInMs + 1000);
   // page_result_info2's token (page_result_info2.first) should be found
@@ -631,14 +648,14 @@ TEST_F(ResultStateManagerTest,
 }
 
 TEST_F(ResultStateManagerTest,
-       ShouldInvalidateExpiredTokensWhenGetNextPageOnItself) {
+       ShouldRemoveExpiredTokensWhenGetNextPageOnItself) {
   auto [scored_document_hits1, document_protos1] = AddScoredDocuments(
       {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2});
   auto [scored_document_hits2, document_protos2] = AddScoredDocuments(
       {/*document_id=*/3, /*document_id=*/4, /*document_id=*/5});
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
 
   // Set time as 1s and add state.
   clock()->SetSystemTimeMilliseconds(1000);
@@ -650,7 +667,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info.first, Not(Eq(kInvalidNextPageToken)));
 
@@ -665,102 +682,16 @@ TEST_F(ResultStateManagerTest,
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(ResultStateManagerTest, ShouldInvalidateOneToken) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result1,
-      document_store().Put(
-          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
-  DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result2,
-      document_store().Put(
-          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
-  DocumentId document_id2 = put_result2.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result3,
-      document_store().Put(
-          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
-  DocumentId document_id3 = put_result3.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result4,
-      document_store().Put(
-          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
-  DocumentId document_id4 = put_result4.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result5,
-      document_store().Put(
-          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
-  DocumentId document_id5 = put_result5.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result6,
-      document_store().Put(
-          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/6))));
-  DocumentId document_id6 = put_result6.new_document_id;
-  std::vector<ScoredDocumentHit> scored_document_hits1 = {
-      {document_id1, kSectionIdMaskNone, /*score=*/1},
-      {document_id2, kSectionIdMaskNone, /*score=*/1},
-      {document_id3, kSectionIdMaskNone, /*score=*/1}};
-  std::vector<ScoredDocumentHit> scored_document_hits2 = {
-      {document_id4, kSectionIdMaskNone, /*score=*/1},
-      {document_id5, kSectionIdMaskNone, /*score=*/1},
-      {document_id6, kSectionIdMaskNone, /*score=*/1}};
-
-  ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      PageResultInfo page_result_info1,
-      result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<
-              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-              std::move(scored_document_hits1), /*is_descending=*/true),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
-          clock()->GetSystemTimeMilliseconds()));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      PageResultInfo page_result_info2,
-      result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<
-              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-              std::move(scored_document_hits2), /*is_descending=*/true),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
-          clock()->GetSystemTimeMilliseconds()));
-
-  // Invalidate first result state by the token.
-  result_state_manager.InvalidateResultState(page_result_info1.first);
-
-  // page_result_info1's token (page_result_info1.first) shouldn't be found
-  EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info1.first,
-                  /*max_results=*/std::numeric_limits<int32_t>::max(),
-                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-
-  // page_result_info2's token (page_result_info2.first) should still exist
-  ICING_ASSERT_OK_AND_ASSIGN(
-      page_result_info2,
-      result_state_manager.GetNextPage(
-          page_result_info2.first,
-          /*max_results=*/std::numeric_limits<int32_t>::max(),
-          result_retriever(), clock()->GetSystemTimeMilliseconds()));
-  // Should get docs.
-  ASSERT_THAT(page_result_info2.second.results, SizeIs(1));
-  EXPECT_THAT(page_result_info2.second.results.at(0).document(),
-              EqualsProto(CreateDocument(/*id=*/5)));
-}
-
-TEST_F(ResultStateManagerTest, ShouldInvalidateAllTokens) {
+TEST_F(ResultStateManagerTest, RemoveAllResultStates) {
   auto [scored_document_hits1, document_protos1] = AddScoredDocuments(
       {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2});
   auto [scored_document_hits2, document_protos2] = AddScoredDocuments(
       {/*document_id=*/3, /*document_id=*/4, /*document_id=*/5});
+  auto [scored_document_hits3, document_protos3] = AddScoredDocuments(
+      {/*document_id=*/6, /*document_id=*/7, /*document_id=*/8});
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
 
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
@@ -770,7 +701,7 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateAllTokens) {
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -781,10 +712,38 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateAllTokens) {
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
-  result_state_manager.InvalidateAllResultStates();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info3,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits3), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          schema_store(), document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  ASSERT_THAT(result_state_manager.GetNumActiveResultStates(
+                  clock()->GetSystemTimeMilliseconds()),
+              Eq(3));
+  ASSERT_THAT(result_state_manager.num_total_hits(), Eq(6));
+  // Invalidate state 2.
+  result_state_manager.InvalidateResultState(page_result_info2.first);
+  ASSERT_THAT(result_state_manager.GetNumActiveResultStates(
+                  clock()->GetSystemTimeMilliseconds()),
+              Eq(2));
+  ASSERT_THAT(result_state_manager.num_total_hits(), Eq(4));
+
+  // Remove all states.
+  // - State 1 and 3 are active and removed.
+  // - State 2 is already invalidated and not counted as active.
+  ResultStateManager::TokenRemovalStats removal_stats =
+      result_state_manager.RemoveAllResultStates();
+  EXPECT_THAT(removal_stats.num_active_tokens_removed, Eq(2));
+  EXPECT_THAT(removal_stats.num_invalidated_tokens_removed, Eq(1));
 
   // page_result_info1's token (page_result_info1.first) shouldn't be found
   EXPECT_THAT(result_state_manager.GetNextPage(
@@ -799,82 +758,17 @@ TEST_F(ResultStateManagerTest, ShouldInvalidateAllTokens) {
                   /*max_results=*/std::numeric_limits<int32_t>::max(),
                   result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-}
 
-TEST_F(ResultStateManagerTest, ShouldRemoveOldestResultState) {
-  auto [scored_document_hits1, document_protos1] =
-      AddScoredDocuments({/*document_id=*/0, /*document_id=*/1});
-  auto [scored_document_hits2, document_protos2] =
-      AddScoredDocuments({/*document_id=*/2, /*document_id=*/3});
-  auto [scored_document_hits3, document_protos3] =
-      AddScoredDocuments({/*document_id=*/4, /*document_id=*/5});
-
-  ResultStateManager result_state_manager(/*max_total_hits=*/2,
-                                          document_store());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      PageResultInfo page_result_info1,
-      result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<
-              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-              std::move(scored_document_hits1), /*is_descending=*/true),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
-          clock()->GetSystemTimeMilliseconds()));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      PageResultInfo page_result_info2,
-      result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<
-              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-              std::move(scored_document_hits2), /*is_descending=*/true),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
-          clock()->GetSystemTimeMilliseconds()));
-
-  // Adding state 3 should cause state 1 to be removed.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      PageResultInfo page_result_info3,
-      result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<
-              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-              std::move(scored_document_hits3), /*is_descending=*/true),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
-          clock()->GetSystemTimeMilliseconds()));
-
+  // page_result_info3's token (page_result_info3.first) shouldn't be found
   EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info1.first,
+                  page_result_info3.first,
                   /*max_results=*/std::numeric_limits<int32_t>::max(),
                   result_retriever(), clock()->GetSystemTimeMilliseconds()),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      page_result_info2,
-      result_state_manager.GetNextPage(
-          page_result_info2.first,
-          /*max_results=*/std::numeric_limits<int32_t>::max(),
-          result_retriever(), clock()->GetSystemTimeMilliseconds()));
-  ASSERT_THAT(page_result_info2.second.results, SizeIs(1));
-  EXPECT_THAT(page_result_info2.second.results.at(0).document(),
-              EqualsProto(document_protos2.at(1)));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      page_result_info3,
-      result_state_manager.GetNextPage(
-          page_result_info3.first,
-          /*max_results=*/std::numeric_limits<int32_t>::max(),
-          result_retriever(), clock()->GetSystemTimeMilliseconds()));
-  ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
-  EXPECT_THAT(page_result_info3.second.results.at(0).document(),
-              EqualsProto(document_protos3.at(1)));
 }
 
 TEST_F(ResultStateManagerTest,
-       InvalidatedResultStateShouldDecreaseCurrentHitsCount) {
+       RemoveAllResultStates_ShouldResetCurrentHitCount) {
   auto [scored_document_hits1, document_protos1] =
       AddScoredDocuments({/*document_id=*/0, /*document_id=*/1});
   auto [scored_document_hits2, document_protos2] =
@@ -887,8 +781,7 @@ TEST_F(ResultStateManagerTest,
   // CacheAndRetrieveFirstPage). Each result state has a page size of 1 and a
   // result set of 2 hits. So each result will take up one hit of our three hit
   // budget.
-  ResultStateManager result_state_manager(/*max_total_hits=*/3,
-                                          document_store());
+  ResultStateManager result_state_manager(/*max_total_hits=*/3);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
@@ -898,7 +791,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -909,7 +802,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -920,118 +813,14 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits3), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
-  // Invalidates state 2, so that the number of hits current cached should be
-  // decremented to 2.
-  result_state_manager.InvalidateResultState(page_result_info2.first);
-
-  // If invalidating state 2 correctly decremented the current hit count to 2,
-  // then adding state 4 should still be within our budget and no other result
-  // states should be evicted.
-  auto [scored_document_hits4, document_protos4] =
-      AddScoredDocuments({/*document_id=*/6, /*document_id=*/7});
-  ICING_ASSERT_OK_AND_ASSIGN(
-      PageResultInfo page_result_info4,
-      result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<
-              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-              std::move(scored_document_hits4), /*is_descending=*/true),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
-          clock()->GetSystemTimeMilliseconds()));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      page_result_info1,
-      result_state_manager.GetNextPage(
-          page_result_info1.first,
-          /*max_results=*/std::numeric_limits<int32_t>::max(),
-          result_retriever(), clock()->GetSystemTimeMilliseconds()));
-  ASSERT_THAT(page_result_info1.second.results, SizeIs(1));
-  EXPECT_THAT(page_result_info1.second.results.at(0).document(),
-              EqualsProto(document_protos1.at(1)));
-
-  EXPECT_THAT(result_state_manager.GetNextPage(
-                  page_result_info2.first,
-                  /*max_results=*/std::numeric_limits<int32_t>::max(),
-                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      page_result_info3,
-      result_state_manager.GetNextPage(
-          page_result_info3.first,
-          /*max_results=*/std::numeric_limits<int32_t>::max(),
-          result_retriever(), clock()->GetSystemTimeMilliseconds()));
-  ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
-  EXPECT_THAT(page_result_info3.second.results.at(0).document(),
-              EqualsProto(document_protos3.at(1)));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      page_result_info4,
-      result_state_manager.GetNextPage(
-          page_result_info4.first,
-          /*max_results=*/std::numeric_limits<int32_t>::max(),
-          result_retriever(), clock()->GetSystemTimeMilliseconds()));
-  ASSERT_THAT(page_result_info4.second.results, SizeIs(1));
-  EXPECT_THAT(page_result_info4.second.results.at(0).document(),
-              EqualsProto(document_protos4.at(1)));
-}
-
-TEST_F(ResultStateManagerTest,
-       InvalidatedAllResultStatesShouldResetCurrentHitCount) {
-  auto [scored_document_hits1, document_protos1] =
-      AddScoredDocuments({/*document_id=*/0, /*document_id=*/1});
-  auto [scored_document_hits2, document_protos2] =
-      AddScoredDocuments({/*document_id=*/2, /*document_id=*/3});
-  auto [scored_document_hits3, document_protos3] =
-      AddScoredDocuments({/*document_id=*/4, /*document_id=*/5});
-
-  // Add the first three states. Remember, the first page for each result state
-  // won't be cached (since it is returned immediately from
-  // CacheAndRetrieveFirstPage). Each result state has a page size of 1 and a
-  // result set of 2 hits. So each result will take up one hit of our three hit
-  // budget.
-  ResultStateManager result_state_manager(/*max_total_hits=*/3,
-                                          document_store());
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      PageResultInfo page_result_info1,
-      result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<
-              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-              std::move(scored_document_hits1), /*is_descending=*/true),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
-          clock()->GetSystemTimeMilliseconds()));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      PageResultInfo page_result_info2,
-      result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<
-              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-              std::move(scored_document_hits2), /*is_descending=*/true),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
-          clock()->GetSystemTimeMilliseconds()));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      PageResultInfo page_result_info3,
-      result_state_manager.CacheAndRetrieveFirstPage(
-          std::make_unique<
-              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-              std::move(scored_document_hits3), /*is_descending=*/true),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
-          clock()->GetSystemTimeMilliseconds()));
-
-  // Invalidates all states so that the current hit count will be 0.
-  result_state_manager.InvalidateAllResultStates();
+  // Removes all states so that the current hit count will be 0.
+  ResultStateManager::TokenRemovalStats removal_stats =
+      result_state_manager.RemoveAllResultStates();
+  EXPECT_THAT(removal_stats.num_active_tokens_removed, Eq(3));
+  EXPECT_THAT(removal_stats.num_invalidated_tokens_removed, Eq(0));
 
   // If invalidating all states correctly reset the current hit count to 0,
   // then adding state 4, 5, 6 should still be within our budget and no other
@@ -1051,7 +840,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits4), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1062,7 +851,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits5), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1073,7 +862,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits6), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
@@ -1125,9 +914,96 @@ TEST_F(ResultStateManagerTest,
               EqualsProto(document_protos6.at(1)));
 }
 
-TEST_F(
-    ResultStateManagerTest,
-    InvalidatedResultStateShouldDecreaseCurrentHitsCountByExactStateHitCount) {
+TEST_F(ResultStateManagerTest, InvalidateResultState) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
+  DocumentId document_id1 = put_result1.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result2,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
+  DocumentId document_id2 = put_result2.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result3,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
+  DocumentId document_id3 = put_result3.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result4,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
+  DocumentId document_id4 = put_result4.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result5,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
+  DocumentId document_id5 = put_result5.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result6,
+      document_store().Put(
+          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/6))));
+  DocumentId document_id6 = put_result6.new_document_id;
+  std::vector<ScoredDocumentHit> scored_document_hits1 = {
+      ScoredDocumentHit(document_id1, kSectionIdMaskNone, /*score=*/1),
+      ScoredDocumentHit(document_id2, kSectionIdMaskNone, /*score=*/1),
+      ScoredDocumentHit(document_id3, kSectionIdMaskNone, /*score=*/1)};
+  std::vector<ScoredDocumentHit> scored_document_hits2 = {
+      ScoredDocumentHit(document_id4, kSectionIdMaskNone, /*score=*/1),
+      ScoredDocumentHit(document_id5, kSectionIdMaskNone, /*score=*/1),
+      ScoredDocumentHit(document_id6, kSectionIdMaskNone, /*score=*/1)};
+
+  ResultStateManager result_state_manager(
+      /*max_total_hits=*/std::numeric_limits<int>::max());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info1,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits1), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          schema_store(), document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info2,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits2), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          schema_store(), document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  // Invalidate first result state by the token.
+  result_state_manager.InvalidateResultState(page_result_info1.first);
+
+  // page_result_info1's token (page_result_info1.first) shouldn't be found
+  EXPECT_THAT(result_state_manager.GetNextPage(
+                  page_result_info1.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  // page_result_info2's token (page_result_info2.first) should still exist
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info2,
+      result_state_manager.GetNextPage(
+          page_result_info2.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
+  // Should get docs.
+  ASSERT_THAT(page_result_info2.second.results, SizeIs(1));
+  EXPECT_THAT(page_result_info2.second.results.at(0).document(),
+              EqualsProto(CreateDocument(/*id=*/5)));
+}
+
+TEST_F(ResultStateManagerTest,
+       InvalidateResultState_ShouldDecreaseCurrentHitsCount) {
   auto [scored_document_hits1, document_protos1] =
       AddScoredDocuments({/*document_id=*/0, /*document_id=*/1});
   auto [scored_document_hits2, document_protos2] =
@@ -1140,8 +1016,7 @@ TEST_F(
   // CacheAndRetrieveFirstPage). Each result state has a page size of 1 and a
   // result set of 2 hits. So each result will take up one hit of our three hit
   // budget.
-  ResultStateManager result_state_manager(/*max_total_hits=*/3,
-                                          document_store());
+  ResultStateManager result_state_manager(/*max_total_hits=*/3);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
@@ -1151,7 +1026,7 @@ TEST_F(
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1162,7 +1037,7 @@ TEST_F(
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1173,7 +1048,7 @@ TEST_F(
               std::move(scored_document_hits3), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   // Invalidates state 2, so that the number of hits current cached should be
@@ -1193,7 +1068,114 @@ TEST_F(
               std::move(scored_document_hits4), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info1,
+      result_state_manager.GetNextPage(
+          page_result_info1.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
+  ASSERT_THAT(page_result_info1.second.results, SizeIs(1));
+  EXPECT_THAT(page_result_info1.second.results.at(0).document(),
+              EqualsProto(document_protos1.at(1)));
+
+  EXPECT_THAT(result_state_manager.GetNextPage(
+                  page_result_info2.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info3,
+      result_state_manager.GetNextPage(
+          page_result_info3.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
+  ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
+  EXPECT_THAT(page_result_info3.second.results.at(0).document(),
+              EqualsProto(document_protos3.at(1)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info4,
+      result_state_manager.GetNextPage(
+          page_result_info4.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
+  ASSERT_THAT(page_result_info4.second.results, SizeIs(1));
+  EXPECT_THAT(page_result_info4.second.results.at(0).document(),
+              EqualsProto(document_protos4.at(1)));
+}
+
+TEST_F(
+    ResultStateManagerTest,
+    InvalidateResultState_ShouldDecreaseCurrentHitsCountByExactStateHitCount) {
+  auto [scored_document_hits1, document_protos1] =
+      AddScoredDocuments({/*document_id=*/0, /*document_id=*/1});
+  auto [scored_document_hits2, document_protos2] =
+      AddScoredDocuments({/*document_id=*/2, /*document_id=*/3});
+  auto [scored_document_hits3, document_protos3] =
+      AddScoredDocuments({/*document_id=*/4, /*document_id=*/5});
+
+  // Add the first three states. Remember, the first page for each result state
+  // won't be cached (since it is returned immediately from
+  // CacheAndRetrieveFirstPage). Each result state has a page size of 1 and a
+  // result set of 2 hits. So each result will take up one hit of our three hit
+  // budget.
+  ResultStateManager result_state_manager(/*max_total_hits=*/3);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info1,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits1), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          schema_store(), document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info2,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits2), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          schema_store(), document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info3,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits3), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          schema_store(), document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  // Invalidates state 2, so that the number of hits current cached should be
+  // decremented to 2.
+  result_state_manager.InvalidateResultState(page_result_info2.first);
+
+  // If invalidating state 2 correctly decremented the current hit count to 2,
+  // then adding state 4 should still be within our budget and no other result
+  // states should be evicted.
+  auto [scored_document_hits4, document_protos4] =
+      AddScoredDocuments({/*document_id=*/6, /*document_id=*/7});
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info4,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits4), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   // If invalidating result state 2 correctly decremented the current hit count
@@ -1209,7 +1191,7 @@ TEST_F(
               std::move(scored_document_hits5), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
@@ -1255,7 +1237,7 @@ TEST_F(
               EqualsProto(document_protos5.at(1)));
 }
 
-TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
+TEST_F(ResultStateManagerTest, GetNextPage_ShouldDecreaseCurrentHitsCount) {
   auto [scored_document_hits1, document_protos1] =
       AddScoredDocuments({/*document_id=*/0, /*document_id=*/1});
   auto [scored_document_hits2, document_protos2] =
@@ -1268,8 +1250,7 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
   // CacheAndRetrieveFirstPage). Each result state has a page size of 1 and a
   // result set of 2 hits. So each result will take up one hit of our three hit
   // budget.
-  ResultStateManager result_state_manager(/*max_total_hits=*/3,
-                                          document_store());
+  ResultStateManager result_state_manager(/*max_total_hits=*/3);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
@@ -1279,7 +1260,7 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1290,7 +1271,7 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1301,7 +1282,7 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
               std::move(scored_document_hits3), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   // GetNextPage for result state 1 should return its result and decrement the
@@ -1329,7 +1310,7 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
               std::move(scored_document_hits4), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
@@ -1370,7 +1351,7 @@ TEST_F(ResultStateManagerTest, GetNextPageShouldDecreaseCurrentHitsCount) {
 }
 
 TEST_F(ResultStateManagerTest,
-       GetNextPageShouldDecreaseCurrentHitsCountByExactlyOnePage) {
+       GetNextPage_ShouldDecreaseCurrentHitsCountByExactlyOnePage) {
   auto [scored_document_hits1, document_protos1] =
       AddScoredDocuments({/*document_id=*/0, /*document_id=*/1});
   auto [scored_document_hits2, document_protos2] =
@@ -1383,8 +1364,7 @@ TEST_F(ResultStateManagerTest,
   // CacheAndRetrieveFirstPage). Each result state has a page size of 1 and a
   // result set of 2 hits. So each result will take up one hit of our three hit
   // budget.
-  ResultStateManager result_state_manager(/*max_total_hits=*/3,
-                                          document_store());
+  ResultStateManager result_state_manager(/*max_total_hits=*/3);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
@@ -1394,7 +1374,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1405,7 +1385,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1416,7 +1396,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits3), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   // GetNextPage for result state 1 should return its result and decrement the
@@ -1444,7 +1424,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits4), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   // If retrieving the next page for result state 1 correctly decremented the
@@ -1460,7 +1440,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits5), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   EXPECT_THAT(result_state_manager.GetNextPage(
@@ -1506,19 +1486,15 @@ TEST_F(ResultStateManagerTest,
               EqualsProto(document_protos5.at(1)));
 }
 
-TEST_F(ResultStateManagerTest,
-       AddingOverBudgetResultStateShouldEvictAllStates) {
-  auto [scored_document_hits1, document_protos1] = AddScoredDocuments(
-      {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2});
+TEST_F(ResultStateManagerTest, CacheEviction_ShouldRemoveOldestResultState) {
+  auto [scored_document_hits1, document_protos1] =
+      AddScoredDocuments({/*document_id=*/0, /*document_id=*/1});
   auto [scored_document_hits2, document_protos2] =
-      AddScoredDocuments({/*document_id=*/3, /*document_id=*/4});
+      AddScoredDocuments({/*document_id=*/2, /*document_id=*/3});
+  auto [scored_document_hits3, document_protos3] =
+      AddScoredDocuments({/*document_id=*/4, /*document_id=*/5});
 
-  // Add the first two states. Remember, the first page for each result state
-  // won't be cached (since it is returned immediately from
-  // CacheAndRetrieveFirstPage). Each result state has a page size of 1. So 3
-  // hits will remain cached.
-  ResultStateManager result_state_manager(/*max_total_hits=*/4,
-                                          document_store());
+  ResultStateManager result_state_manager(/*max_total_hits=*/2);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
@@ -1528,7 +1504,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1539,7 +1515,83 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  // Adding state 3 should cause state 1 to be removed due to budget limit.
+  QueryStatsProto query_stats;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info3,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits3), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          schema_store(), document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds(), &query_stats));
+  EXPECT_THAT(query_stats.num_result_states_evicted(), Eq(1));
+
+  EXPECT_THAT(result_state_manager.GetNextPage(
+                  page_result_info1.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info2,
+      result_state_manager.GetNextPage(
+          page_result_info2.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
+  ASSERT_THAT(page_result_info2.second.results, SizeIs(1));
+  EXPECT_THAT(page_result_info2.second.results.at(0).document(),
+              EqualsProto(document_protos2.at(1)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info3,
+      result_state_manager.GetNextPage(
+          page_result_info3.first,
+          /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
+  ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
+  EXPECT_THAT(page_result_info3.second.results.at(0).document(),
+              EqualsProto(document_protos3.at(1)));
+}
+
+TEST_F(ResultStateManagerTest,
+       CacheEviction_SingleOverBudgetStateShouldEvictAllStatesAndTruncateHits) {
+  auto [scored_document_hits1, document_protos1] = AddScoredDocuments(
+      {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2});
+  auto [scored_document_hits2, document_protos2] =
+      AddScoredDocuments({/*document_id=*/3, /*document_id=*/4});
+
+  // Add the first two states. Remember, the first page for each result state
+  // won't be cached (since it is returned immediately from
+  // CacheAndRetrieveFirstPage). Each result state has a page size of 1. So 3
+  // hits will remain cached.
+  ResultStateManager result_state_manager(/*max_total_hits=*/4);
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info1,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits1), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          schema_store(), document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info2,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits2), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   // Add a result state that is larger than the entire budget. This should
@@ -1558,7 +1610,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits3), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds(), &query_stats));
   EXPECT_THAT(page_result_info3.first, Not(Eq(kInvalidNextPageToken)));
   // Should set num_result_states_evicted since result state 1 and 2 were
@@ -1632,15 +1684,14 @@ TEST_F(ResultStateManagerTest,
 }
 
 TEST_F(ResultStateManagerTest,
-       AddingResultStateShouldEvictOverBudgetResultState) {
+       CacheEviction_ShouldEvictStatesUntilBudgetIsReached) {
   // Add a result state that is larger than the entire budget. The entire result
   // state will still be cached
   auto [scored_document_hits1, document_protos1] = AddScoredDocuments(
       {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2,
        /*document_id=*/3, /*document_id=*/4, /*document_id=*/5});
 
-  ResultStateManager result_state_manager(/*max_total_hits=*/4,
-                                          document_store());
+  ResultStateManager result_state_manager(/*max_total_hits=*/4);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
@@ -1650,7 +1701,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   // Add a result state. Because state2 + state1 is larger than the budget,
@@ -1665,7 +1716,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   // state1 should have been evicted and state2 should still be retrievable.
@@ -1686,8 +1737,7 @@ TEST_F(ResultStateManagerTest,
               EqualsProto(document_protos2.at(1)));
 }
 
-TEST_F(ResultStateManagerTest,
-       AddingResultStateShouldNotTruncatedAfterFirstPage) {
+TEST_F(ResultStateManagerTest, CacheEviction_ShouldNotTruncatedAfterFirstPage) {
   // Add a result state that is larger than the entire budget, but within the
   // entire budget after the first page. The entire result state will still be
   // cached and not truncated.
@@ -1695,8 +1745,7 @@ TEST_F(ResultStateManagerTest,
       {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2,
        /*document_id=*/3, /*document_id=*/4});
 
-  ResultStateManager result_state_manager(/*max_total_hits=*/4,
-                                          document_store());
+  ResultStateManager result_state_manager(/*max_total_hits=*/4);
 
   // The 5 input scored document hits will not be truncated. The first page of
   // two hits will be returned immediately and the other three hits will fit
@@ -1709,7 +1758,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   // First page, 2 results
@@ -1751,16 +1800,20 @@ TEST_F(ResultStateManagerTest,
       StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(ResultStateManagerTest, GetNumActiveResultStates) {
+TEST_F(ResultStateManagerTest,
+       CacheEviction_EvictionStatsShouldNotCountInvalidatedTokens) {
   auto [scored_document_hits1, document_protos1] = AddScoredDocuments(
       {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2});
-  auto [scored_document_hits2, document_protos2] = AddScoredDocuments(
-      {/*document_id=*/3, /*document_id=*/4, /*document_id=*/5});
-  auto [scored_document_hits3, document_protos3] = AddScoredDocuments(
-      {/*document_id=*/6, /*document_id=*/7, /*document_id=*/8});
+  auto [scored_document_hits2, document_protos2] =
+      AddScoredDocuments({/*document_id=*/3, /*document_id=*/4});
+  auto [scored_document_hits3, document_protos3] =
+      AddScoredDocuments({/*document_id=*/5, /*document_id=*/6});
 
-  ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+  // Add the first three states. Remember, the first page for each result state
+  // won't be cached (since it is returned immediately from
+  // CacheAndRetrieveFirstPage). Each result state has a page size of 1. So 2 +
+  // 1 + 1 = 4 hits will remain cached.
+  ResultStateManager result_state_manager(/*max_total_hits=*/4);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       PageResultInfo page_result_info1,
@@ -1770,7 +1823,7 @@ TEST_F(ResultStateManagerTest, GetNumActiveResultStates) {
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1781,7 +1834,7 @@ TEST_F(ResultStateManagerTest, GetNumActiveResultStates) {
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1792,16 +1845,119 @@ TEST_F(ResultStateManagerTest, GetNumActiveResultStates) {
               std::move(scored_document_hits3), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
-  EXPECT_THAT(result_state_manager.GetNumActiveResultStates(
-                  /*current_time_ms=*/clock()->GetSystemTimeMilliseconds()),
-              Eq(3));
+  // Invalidate the second result state, which is not the front token in the
+  // token queue.
+  // - The corresponding ResultState is removed from result_state_map_ and
+  //   destroyed.
+  // - The token will remain in the queue, and be added into
+  //   invalidated_token_set_.
+  // - The num_total_hits_ will be decremented.
+  ASSERT_THAT(result_state_manager.num_total_hits(), Eq(4));
+  result_state_manager.InvalidateResultState(page_result_info2.first);
+  ASSERT_THAT(result_state_manager.num_total_hits(), Eq(3));
+
+  // Add a result state that is larger than the entire budget. This should
+  // result in all previous result states being evicted.
+  auto [scored_document_hits4, document_protos4] = AddScoredDocuments(
+      {/*document_id=*/7, /*document_id=*/8, /*document_id=*/9,
+       /*document_id=*/10, /*document_id=*/11, /*document_id=*/12});
+  QueryStatsProto query_stats;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info4,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits4), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          schema_store(), document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds(), &query_stats));
+  EXPECT_THAT(page_result_info4.first, Not(Eq(kInvalidNextPageToken)));
+  // num_result_states_evicted should be 2.
+  // - result state 1 was evicted and destroyed, so it should be counted as
+  //   cache eviction.
+  // - result state 2 was already invalidated and destroyed, so it should not be
+  //   counted as cache eviction.
+  // - result state 3 was evicted and destroyed, so it should be counted as
+  //   cache eviction.
+  EXPECT_THAT(query_stats.num_result_states_evicted(), Eq(2));
+
+  // GetNextPage for result state 1, 2 and 3 should return NOT_FOUND.
+  EXPECT_THAT(result_state_manager.GetNextPage(
+                  page_result_info1.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  EXPECT_THAT(result_state_manager.GetNextPage(
+                  page_result_info2.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  EXPECT_THAT(result_state_manager.GetNextPage(
+                  page_result_info3.first,
+                  /*max_results=*/std::numeric_limits<int32_t>::max(),
+                  result_retriever(), clock()->GetSystemTimeMilliseconds()),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+
+  // Only the next four results in state 4 should be retrievable.
+  uint64_t next_page_token4 = page_result_info4.first;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info4,
+      result_state_manager.GetNextPage(
+          next_page_token4, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
+  EXPECT_THAT(page_result_info4.first, Eq(next_page_token4));
+  ASSERT_THAT(page_result_info4.second.results, SizeIs(1));
+  EXPECT_THAT(page_result_info4.second.results.at(0).document(),
+              EqualsProto(document_protos4.at(1)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info4,
+      result_state_manager.GetNextPage(
+          next_page_token4, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
+  EXPECT_THAT(page_result_info4.first, Eq(next_page_token4));
+  ASSERT_THAT(page_result_info4.second.results, SizeIs(1));
+  EXPECT_THAT(page_result_info4.second.results.at(0).document(),
+              EqualsProto(document_protos4.at(2)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info4,
+      result_state_manager.GetNextPage(
+          next_page_token4, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
+  EXPECT_THAT(page_result_info4.first, Eq(next_page_token4));
+  ASSERT_THAT(page_result_info4.second.results, SizeIs(1));
+  EXPECT_THAT(page_result_info4.second.results.at(0).document(),
+              EqualsProto(document_protos4.at(3)));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      page_result_info4,
+      result_state_manager.GetNextPage(
+          next_page_token4, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()));
+  // The final document should have been dropped because it exceeded the budget,
+  // so the next page token of the second last round should be
+  // kInvalidNextPageToken.
+  EXPECT_THAT(page_result_info4.first, Eq(kInvalidNextPageToken));
+  ASSERT_THAT(page_result_info4.second.results, SizeIs(1));
+  EXPECT_THAT(page_result_info4.second.results.at(0).document(),
+              EqualsProto(document_protos4.at(4)));
+
+  // Double check that next_page_token3 is not retrievable anymore.
+  EXPECT_THAT(
+      result_state_manager.GetNextPage(
+          next_page_token4, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          result_retriever(), clock()->GetSystemTimeMilliseconds()),
+      StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
-TEST_F(ResultStateManagerTest,
-       GetNumActiveResultStatesShouldInvalidateExpiredResultStates) {
+TEST_F(ResultStateManagerTest, GetNumActiveResultStates) {
   auto [scored_document_hits1, document_protos1] = AddScoredDocuments(
       {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2});
   auto [scored_document_hits2, document_protos2] = AddScoredDocuments(
@@ -1810,7 +1966,57 @@ TEST_F(ResultStateManagerTest,
       {/*document_id=*/6, /*document_id=*/7, /*document_id=*/8});
 
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/std::numeric_limits<int>::max(), document_store());
+      /*max_total_hits=*/std::numeric_limits<int>::max());
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info1,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits1), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          schema_store(), document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info2,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits2), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          schema_store(), document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info3,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::make_unique<
+              PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+              std::move(scored_document_hits3), /*is_descending=*/true),
+          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          schema_store(), document_store(), result_retriever(),
+          clock()->GetSystemTimeMilliseconds()));
+
+  EXPECT_THAT(result_state_manager.GetNumActiveResultStates(
+                  /*current_time_ms=*/clock()->GetSystemTimeMilliseconds()),
+              Eq(3));
+}
+
+TEST_F(ResultStateManagerTest,
+       GetNumActiveResultStatesShouldRemoveExpiredResultStates) {
+  auto [scored_document_hits1, document_protos1] = AddScoredDocuments(
+      {/*document_id=*/0, /*document_id=*/1, /*document_id=*/2});
+  auto [scored_document_hits2, document_protos2] = AddScoredDocuments(
+      {/*document_id=*/3, /*document_id=*/4, /*document_id=*/5});
+  auto [scored_document_hits3, document_protos3] = AddScoredDocuments(
+      {/*document_id=*/6, /*document_id=*/7, /*document_id=*/8});
+
+  ResultStateManager result_state_manager(
+      /*max_total_hits=*/std::numeric_limits<int>::max());
 
   // Set time as 1s and add state.
   clock()->SetSystemTimeMilliseconds(1000);
@@ -1822,7 +2028,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits1), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   // Set time as 10s and add state 2, state 3.
@@ -1835,7 +2041,7 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits2), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1846,12 +2052,12 @@ TEST_F(ResultStateManagerTest,
               std::move(scored_document_hits3), /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          document_store(), result_retriever(),
+          schema_store(), document_store(), result_retriever(),
           clock()->GetSystemTimeMilliseconds()));
 
   // 1. Set time as 1hr1s.
-  // 2. Then calling GetNumActiveResultStates() should invalidate state 1 and
-  //    return 2.
+  // 2. Then calling GetNumActiveResultStates() should remove the expired state
+  //    1, and return count == 2 (for state 2 and state 3).
   clock()->SetSystemTimeMilliseconds(kDefaultResultStateTtlInMs + 1000);
   EXPECT_THAT(result_state_manager.GetNumActiveResultStates(
                   /*current_time_ms=*/clock()->GetSystemTimeMilliseconds()),

@@ -44,6 +44,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-state-v2.h"
+#include "icing/result/result-utils.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
@@ -55,6 +56,7 @@
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/test-data.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/tokenization/language-segmenter-factory.h"
 #include "icing/tokenization/language-segmenter.h"
@@ -80,7 +82,7 @@ using ::testing::IsEmpty;
 using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::SizeIs;
-using EntryIdMap = std::unordered_map<int32_t, int>;
+using EntryIdMap = std::unordered_map<result_utils::ResultGroupingEntryId, int>;
 
 // Mock the behavior of GroupResultLimiter::GetGroupResultLimitsIndex: get
 // -1 to avoid excluding documents.
@@ -97,14 +99,15 @@ class MockGroupResultLimiter : public GroupResultLimiterV2 {
               (const, override));
 };
 
-class ResultRetrieverV2Test : public ::testing::TestWithParam<FeatureFlags> {
+class ResultRetrieverV2Test : public ::testing::Test {
  protected:
-  ResultRetrieverV2Test() : test_dir_(GetTestTempDir() + "/icing") {
-    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
-  }
+  ResultRetrieverV2Test()
+      : test_dir_(GetTestTempDir() + "/icing"),
+        schema_store_dir_(test_dir_ + "/schema_store"),
+        document_store_dir_(test_dir_ + "/document_store") {}
 
   void SetUp() override {
-    feature_flags_ = std::make_unique<FeatureFlags>(GetParam());
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
 
     if (!IsCfStringTokenization() && !IsReverseJniTokenization()) {
       ICING_ASSERT_OK(
@@ -112,13 +115,19 @@ class ResultRetrieverV2Test : public ::testing::TestWithParam<FeatureFlags> {
           icu_data_file_helper::SetUpIcuDataFile(
               GetTestFilePath("icing/icu.dat")));
     }
+
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
+
     language_segmenter_factory::SegmenterOptions options(ULOC_US);
     ICING_ASSERT_OK_AND_ASSIGN(
         language_segmenter_,
         language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
                                            &fake_clock_, feature_flags_.get()));
 
     NormalizerOptions normalizer_options(
@@ -164,10 +173,31 @@ class ResultRetrieverV2Test : public ::testing::TestWithParam<FeatureFlags> {
                     schema, /*ignore_errors_and_delete_documents=*/false),
                 IsOk());
 
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, &fake_clock_,
+            schema_store_.get(), feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
+    document_store_ = std::move(create_result.document_store);
+
     num_total_hits_ = 0;
   }
 
   void TearDown() override {
+    document_store_.reset();
+    normalizer_.reset();
+    schema_store_.reset();
+    language_segmenter_.reset();
+    feature_flags_.reset();
+
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
@@ -191,11 +221,14 @@ class ResultRetrieverV2Test : public ::testing::TestWithParam<FeatureFlags> {
   }
 
   std::unique_ptr<FeatureFlags> feature_flags_;
-  const Filesystem filesystem_;
+  const MockFilesystem filesystem_;
   const std::string test_dir_;
+  const std::string schema_store_dir_;
+  const std::string document_store_dir_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<SchemaStore> schema_store_;
   std::unique_ptr<Normalizer> normalizer_;
+  std::unique_ptr<DocumentStore> document_store_;
   std::atomic<int> num_total_hits_;
   FakeClock fake_clock_;
 };
@@ -226,93 +259,65 @@ ResultSpecProto CreateResultSpec(
   return result_spec;
 }
 
-libtextclassifier3::StatusOr<DocumentStore::CreateResult> CreateDocumentStore(
-    const Filesystem* filesystem, const std::string& base_dir,
-    const Clock* clock, const SchemaStore* schema_store,
-    const FeatureFlags& feature_flags) {
-  return DocumentStore::Create(
-      filesystem, base_dir, clock, schema_store, &feature_flags,
-      /*force_recovery_and_revalidate_documents=*/false,
-      /*pre_mapping_fbv=*/false, /*use_persistent_hash_map=*/true,
-      PortableFileBackedProtoLog<DocumentWrapper>::kDefaultCompressionLevel,
-      PortableFileBackedProtoLog<
-          DocumentWrapper>::kDefaultCompressionThresholdBytes,
-      protobuf_ports::kDefaultMemLevel,
-      /*initialize_stats=*/nullptr);
-}
-
-TEST_P(ResultRetrieverV2Test, CreationWithNullPointerShouldFail) {
+TEST_F(ResultRetrieverV2Test, CreationWithNullPointerShouldFail) {
   EXPECT_THAT(
       ResultRetrieverV2::Create(
           /*doc_store=*/nullptr, schema_store_.get(), language_segmenter_.get(),
           normalizer_.get(), feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get(), *feature_flags_));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
   EXPECT_THAT(
-      ResultRetrieverV2::Create(doc_store.get(), /*schema_store=*/nullptr,
+      ResultRetrieverV2::Create(document_store_.get(), /*schema_store=*/nullptr,
                                 language_segmenter_.get(), normalizer_.get(),
                                 feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(
-      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 /*language_segmenter=*/nullptr,
                                 normalizer_.get(), feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(
-      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 language_segmenter_.get(),
                                 /*normalizer=*/nullptr, feature_flags_.get()),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
   EXPECT_THAT(
-      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
                                 /*feature_flags=*/nullptr),
       StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                        language_segmenter_.get(),
-                                        normalizer_.get(), feature_flags_.get(),
-                                        /*group_result_limiter=*/nullptr),
-              StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+  EXPECT_THAT(
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
+                                language_segmenter_.get(), normalizer_.get(),
+                                feature_flags_.get(),
+                                /*group_result_limiter=*/nullptr),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
 }
 
-TEST_P(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get(), *feature_flags_));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
+TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result4,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
   DocumentId document_id4 = put_result4.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result5,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
   DocumentId document_id5 = put_result5.new_document_id;
 
@@ -320,14 +325,14 @@ TEST_P(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/19},
-      {document_id2, hit_section_id_mask, /*score=*/12},
-      {document_id3, hit_section_id_mask, /*score=*/8},
-      {document_id4, hit_section_id_mask, /*score=*/3},
-      {document_id5, hit_section_id_mask, /*score=*/1}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/19),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/12),
+      ScoredDocumentHit(document_id3, hit_section_id_mask, /*score=*/8),
+      ScoredDocumentHit(document_id4, hit_section_id_mask, /*score=*/3),
+      ScoredDocumentHit(document_id5, hit_section_id_mask, /*score=*/1)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
-      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
                                 feature_flags_.get()));
 
@@ -353,7 +358,7 @@ TEST_P(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
           std::move(scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
-      *doc_store);
+      *schema_store_, *document_store_);
 
   // First page, 2 results
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
@@ -394,22 +399,15 @@ TEST_P(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
   EXPECT_FALSE(has_more_results3);
 }
 
-TEST_P(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get(), *feature_flags_));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
+TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
 
@@ -418,12 +416,12 @@ TEST_P(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/12},
-      {document_id2, hit_section_id_mask, /*score=*/4},
-      {invalid_document_id, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/12),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/4),
+      ScoredDocumentHit(invalid_document_id, hit_section_id_mask, /*score=*/0)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
-      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
                                 feature_flags_.get(),
                                 std::make_unique<MockGroupResultLimiter>()));
@@ -442,7 +440,7 @@ TEST_P(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
           /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
       CreateResultSpec(/*num_per_page=*/3, ResultSpecProto::NAMESPACE),
-      *doc_store);
+      *schema_store_, *document_store_);
   PageResult page_result1 =
       result_retriever
           ->RetrieveNextPage(
@@ -455,9 +453,10 @@ TEST_P(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
 
   DocumentId non_existing_document_id = 4;
   scored_document_hits = {
-      {non_existing_document_id, hit_section_id_mask, /*score=*/15},
-      {document_id1, hit_section_id_mask, /*score=*/12},
-      {document_id2, hit_section_id_mask, /*score=*/4}};
+      ScoredDocumentHit(non_existing_document_id, hit_section_id_mask,
+                        /*score=*/15),
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/12),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/4)};
   ResultStateV2 result_state2(
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
@@ -465,7 +464,7 @@ TEST_P(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
           /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
       CreateResultSpec(/*num_per_page=*/3, ResultSpecProto::NAMESPACE),
-      *doc_store);
+      *schema_store_, *document_store_);
   PageResult page_result2 =
       result_retriever
           ->RetrieveNextPage(
@@ -477,15 +476,8 @@ TEST_P(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
               ElementsAre(EqualsProto(result1), EqualsProto(result2)));
 }
 
-TEST_P(ResultRetrieverV2Test,
+TEST_F(ResultRetrieverV2Test,
        ShouldLimitNumChildDocumentsByMaxJoinedChildPerParent) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get(), *feature_flags_));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
   // 1. Add 2 Person document
   DocumentProto person_document1 =
       DocumentBuilder()
@@ -497,7 +489,8 @@ TEST_P(ResultRetrieverV2Test,
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      doc_store->Put(document_util::CreateDocumentWrapper(person_document1)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(person_document1)));
   DocumentId person_document_id1 = put_result1.new_document_id;
 
   DocumentProto person_document2 =
@@ -510,7 +503,8 @@ TEST_P(ResultRetrieverV2Test,
           .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      doc_store->Put(document_util::CreateDocumentWrapper(person_document2)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(person_document2)));
   DocumentId person_document_id2 = put_result2.new_document_id;
 
   // 2. Add 4 Email documents
@@ -522,8 +516,8 @@ TEST_P(ResultRetrieverV2Test,
                                       .AddStringProperty("body", "Test 1")
                                       .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
-      put_result1,
-      doc_store->Put(document_util::CreateDocumentWrapper(email_document1)));
+      put_result1, document_store_->Put(
+                       document_util::CreateDocumentWrapper(email_document1)));
   DocumentId email_document_id1 = put_result1.new_document_id;
 
   DocumentProto email_document2 = DocumentBuilder()
@@ -534,8 +528,8 @@ TEST_P(ResultRetrieverV2Test,
                                       .AddStringProperty("body", "Test 2")
                                       .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
-      put_result2,
-      doc_store->Put(document_util::CreateDocumentWrapper(email_document2)));
+      put_result2, document_store_->Put(
+                       document_util::CreateDocumentWrapper(email_document2)));
   DocumentId email_document_id2 = put_result2.new_document_id;
 
   DocumentProto email_document3 = DocumentBuilder()
@@ -547,7 +541,8 @@ TEST_P(ResultRetrieverV2Test,
                                       .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
-      doc_store->Put(document_util::CreateDocumentWrapper(email_document3)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(email_document3)));
   DocumentId email_document_id3 = put_result3.new_document_id;
 
   DocumentProto email_document4 = DocumentBuilder()
@@ -559,7 +554,8 @@ TEST_P(ResultRetrieverV2Test,
                                       .Build();
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result4,
-      doc_store->Put(document_util::CreateDocumentWrapper(email_document4)));
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(email_document4)));
   DocumentId email_document_id4 = put_result4.new_document_id;
 
   // 3. Setup the joined scored results.
@@ -606,7 +602,7 @@ TEST_P(ResultRetrieverV2Test,
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
-      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
                                 feature_flags_.get()));
   ResultStateV2 result_state(
@@ -614,7 +610,7 @@ TEST_P(ResultRetrieverV2Test,
           PriorityQueueScoredDocumentHitsRanker<JoinedScoredDocumentHit>>(
           std::move(joined_scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *doc_store);
+      result_spec, *schema_store_, *document_store_);
 
   // Result1: person2 with child docs = [email4, email3]
   SearchResultProto::ResultProto result1;
@@ -644,28 +640,19 @@ TEST_P(ResultRetrieverV2Test,
   EXPECT_FALSE(has_more_results);
 }
 
-TEST_P(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
-  MockFilesystem mock_filesystem;
-  EXPECT_CALL(mock_filesystem,
-              PRead(A<int>(), A<void*>(), A<size_t>(), A<off_t>()))
+TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
+  EXPECT_CALL(filesystem_, PRead(A<int>(), A<void*>(), A<size_t>(), A<off_t>()))
       .WillOnce(Return(false))
       .WillRepeatedly(DoDefault());
 
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&mock_filesystem, test_dir_, &fake_clock_,
-                          schema_store_.get(), *feature_flags_));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
-  ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
 
@@ -673,12 +660,12 @@ TEST_P(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
-      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
                                 feature_flags_.get(),
                                 std::make_unique<MockGroupResultLimiter>()));
@@ -694,7 +681,7 @@ TEST_P(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
           /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
-      *doc_store);
+      *schema_store_, *document_store_);
   PageResult page_result =
       result_retriever
           ->RetrieveNextPage(
@@ -707,37 +694,30 @@ TEST_P(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
   EXPECT_THAT(page_result.results, ElementsAre(EqualsProto(result1)));
 }
 
-TEST_P(ResultRetrieverV2Test, ShouldUpdateResultState) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get(), *feature_flags_));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
+TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result4,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
   DocumentId document_id4 = put_result4.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result5,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
   DocumentId document_id5 = put_result5.new_document_id;
 
@@ -745,14 +725,14 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateResultState) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0},
-      {document_id3, hit_section_id_mask, /*score=*/0},
-      {document_id4, hit_section_id_mask, /*score=*/0},
-      {document_id5, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id3, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id4, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id5, hit_section_id_mask, /*score=*/0)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
-      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
                                 feature_flags_.get()));
 
@@ -763,7 +743,7 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateResultState) {
           /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
-      *doc_store);
+      *schema_store_, *document_store_);
 
   // First page, 2 results
   PageResult page_result1 =
@@ -823,31 +803,24 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateResultState) {
   }
 }
 
-TEST_P(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get(), *feature_flags_));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
+TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits1 = {
-      {document_id1, hit_section_id_mask, /*score=*/0},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
   std::shared_ptr<ResultStateV2> result_state1 =
       std::make_shared<ResultStateV2>(
           std::make_unique<
@@ -856,7 +829,7 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
               /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
-          *doc_store);
+          *schema_store_, *document_store_);
   {
     absl_ports::unique_lock l(&result_state1->mutex);
 
@@ -866,23 +839,23 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result3,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/3))));
   DocumentId document_id3 = put_result3.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result4,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/4))));
   DocumentId document_id4 = put_result4.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result5,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/5))));
   DocumentId document_id5 = put_result5.new_document_id;
   std::vector<ScoredDocumentHit> scored_document_hits2 = {
-      {document_id3, hit_section_id_mask, /*score=*/0},
-      {document_id4, hit_section_id_mask, /*score=*/0},
-      {document_id5, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id3, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id4, hit_section_id_mask, /*score=*/0),
+      ScoredDocumentHit(document_id5, hit_section_id_mask, /*score=*/0)};
   std::shared_ptr<ResultStateV2> result_state2 =
       std::make_shared<ResultStateV2>(
           std::make_unique<
@@ -891,7 +864,7 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
               /*is_descending=*/true),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
           CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
-          *doc_store);
+          *schema_store_, *document_store_);
   {
     absl_ports::unique_lock l(&result_state2->mutex);
 
@@ -901,7 +874,7 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
-      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
                                 feature_flags_.get()));
 
@@ -953,22 +926,15 @@ TEST_P(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
   EXPECT_THAT(num_total_hits_, Eq(0));
 }
 
-TEST_P(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get(), *feature_flags_));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
+TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
 
@@ -976,11 +942,11 @@ TEST_P(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/5},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/5),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
-      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
                                 feature_flags_.get()));
 
@@ -1000,7 +966,7 @@ TEST_P(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *doc_store);
+      result_spec, *schema_store_, *document_store_);
 
   // First page. Only result1 should be returned, since its byte size meets
   // num_total_bytes_per_page_threshold and ResultRetriever should terminate
@@ -1021,23 +987,16 @@ TEST_P(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
   EXPECT_FALSE(has_more_results2);
 }
 
-TEST_P(ResultRetrieverV2Test,
+TEST_F(ResultRetrieverV2Test,
        ShouldReturnSingleLargeResultAboveNumTotalBytesPerPageThreshold) {
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get(), *feature_flags_));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
-  ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
 
@@ -1045,11 +1004,11 @@ TEST_P(ResultRetrieverV2Test,
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/5},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/5),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
-      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
                                 feature_flags_.get()));
 
@@ -1072,7 +1031,7 @@ TEST_P(ResultRetrieverV2Test,
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *doc_store);
+      result_spec, *schema_store_, *document_store_);
 
   // First page. Should return single result1 even though its byte size exceeds
   // num_total_bytes_per_page_threshold.
@@ -1092,97 +1051,16 @@ TEST_P(ResultRetrieverV2Test,
   EXPECT_FALSE(has_more_results2);
 }
 
-TEST_P(ResultRetrieverV2Test,
-       ShouldRetrieveNextResultWhenBelowNumTotalBytesPerPageThreshold) {
-  if (feature_flags_->enable_strict_page_byte_size_limit()) {
-    GTEST_SKIP() << "Test only applies to non-strict page byte size limit.";
-  }
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get(), *feature_flags_));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result1,
-      doc_store->Put(
-          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
-  DocumentId document_id1 = put_result1.new_document_id;
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result2,
-      doc_store->Put(
-          document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
-  DocumentId document_id2 = put_result2.new_document_id;
-
-  std::vector<SectionId> hit_section_ids = {GetSectionId("Email", "name"),
-                                            GetSectionId("Email", "body")};
-  SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
-  std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/5},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<ResultRetrieverV2> result_retriever,
-      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
-                                language_segmenter_.get(), normalizer_.get(),
-                                feature_flags_.get()));
-
-  SearchResultProto::ResultProto result1;
-  *result1.mutable_document() = CreateDocument(/*id=*/1);
-  result1.set_score(5);
-  SearchResultProto::ResultProto result2;
-  *result2.mutable_document() = CreateDocument(/*id=*/2);
-  result2.set_score(0);
-
-  int threshold = result1.ByteSizeLong() + 1;
-  ASSERT_THAT(result1.ByteSizeLong() + result2.ByteSizeLong(), Gt(threshold));
-
-  ResultSpecProto result_spec =
-      CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE);
-  result_spec.set_num_total_bytes_per_page_threshold(threshold);
-  ResultStateV2 result_state(
-      std::make_unique<
-          PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
-          std::move(scored_document_hits),
-          /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *doc_store);
-
-  // After retrieving result1, total bytes are still below the threshold and #
-  // of results is still below num_per_page, so ResultRetriever should continue
-  // the retrieval process and thus include result2 into this page, even though
-  // finally total bytes of result1 + result2 exceed the threshold.
-  auto [page_result, has_more_results] = result_retriever->RetrieveNextPage(
-      result_state, /*max_results=*/std::numeric_limits<int32_t>::max(),
-      fake_clock_.GetSystemTimeMilliseconds());
-  EXPECT_THAT(page_result.results,
-              ElementsAre(EqualsProto(result1), EqualsProto(result2)));
-  // No more results.
-  EXPECT_FALSE(has_more_results);
-}
-
-TEST_P(ResultRetrieverV2Test,
+TEST_F(ResultRetrieverV2Test,
        ShouldNotIncludeNextResultIfExceedingNumTotalBytesPerPageThreshold) {
-  if (!feature_flags_->enable_strict_page_byte_size_limit()) {
-    GTEST_SKIP() << "Test only applies to strict page byte size limit.";
-  }
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get(), *feature_flags_));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
 
@@ -1190,11 +1068,11 @@ TEST_P(ResultRetrieverV2Test,
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/5},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/5),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
-      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
                                 feature_flags_.get()));
 
@@ -1219,7 +1097,7 @@ TEST_P(ResultRetrieverV2Test,
           std::move(scored_document_hits),
           /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *doc_store);
+      result_spec, *schema_store_, *document_store_);
 
   // After retrieving result1, total bytes are still below the threshold and #
   // of results is still below num_per_page, so ResultRetriever should continue
@@ -1243,27 +1121,16 @@ TEST_P(ResultRetrieverV2Test,
   EXPECT_FALSE(has_more_results2);
 }
 
-TEST_P(ResultRetrieverV2Test,
+TEST_F(ResultRetrieverV2Test,
        ResultGroupingShouldDecrementOnlyWhenResultIsIncludedInThePage) {
-  if (!feature_flags_->enable_strict_page_byte_size_limit()) {
-    GTEST_SKIP() << "Test only applies to non-strict page byte size limit.";
-  }
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, test_dir_, &fake_clock_,
-                          schema_store_.get(), *feature_flags_));
-  std::unique_ptr<DocumentStore> doc_store =
-      std::move(create_result.document_store);
-
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result1,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/1))));
   DocumentId document_id1 = put_result1.new_document_id;
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::PutResult put_result2,
-      doc_store->Put(
+      document_store_->Put(
           document_util::CreateDocumentWrapper(CreateDocument(/*id=*/2))));
   DocumentId document_id2 = put_result2.new_document_id;
 
@@ -1271,11 +1138,11 @@ TEST_P(ResultRetrieverV2Test,
                                             GetSectionId("Email", "body")};
   SectionIdMask hit_section_id_mask = CreateSectionIdMask(hit_section_ids);
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      {document_id1, hit_section_id_mask, /*score=*/5},
-      {document_id2, hit_section_id_mask, /*score=*/0}};
+      ScoredDocumentHit(document_id1, hit_section_id_mask, /*score=*/5),
+      ScoredDocumentHit(document_id2, hit_section_id_mask, /*score=*/0)};
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
-      ResultRetrieverV2::Create(doc_store.get(), schema_store_.get(),
+      ResultRetrieverV2::Create(document_store_.get(), schema_store_.get(),
                                 language_segmenter_.get(), normalizer_.get(),
                                 feature_flags_.get()));
 
@@ -1307,7 +1174,7 @@ TEST_P(ResultRetrieverV2Test,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
       /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *doc_store);
+      result_spec, *schema_store_, *document_store_);
 
   // First page: result1 should be returned.
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
@@ -1325,30 +1192,6 @@ TEST_P(ResultRetrieverV2Test,
   // No more results.
   EXPECT_FALSE(has_more_results2);
 }
-
-INSTANTIATE_TEST_SUITE_P(
-    ResultRetrieverV2Test, ResultRetrieverV2Test,
-    testing::Values(
-        FeatureFlags(/*allow_circular_schema_definitions=*/true,
-                     /*enable_scorable_properties=*/true,
-                     /*enable_embedding_quantization=*/true,
-                     /*enable_repeated_field_joins=*/true,
-                     /*enable_embedding_backup_generation=*/true,
-                     /*enable_schema_database=*/true,
-                     /*release_backup_schema_file_if_overlay_present=*/true,
-                     /*enable_strict_page_byte_size_limit=*/false,
-                     /*enable_smaller_decompression_buffer_size=*/true,
-                     /*enable_eigen_embedding_scoring=*/true),
-        FeatureFlags(/*allow_circular_schema_definitions=*/true,
-                     /*enable_scorable_properties=*/true,
-                     /*enable_embedding_quantization=*/true,
-                     /*enable_repeated_field_joins=*/true,
-                     /*enable_embedding_backup_generation=*/true,
-                     /*enable_schema_database=*/true,
-                     /*release_backup_schema_file_if_overlay_present=*/true,
-                     /*enable_strict_page_byte_size_limit=*/true,
-                     /*enable_smaller_decompression_buffer_size=*/true,
-                     /*enable_eigen_embedding_scoring=*/true)));
 
 }  // namespace
 

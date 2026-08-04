@@ -79,16 +79,15 @@ class Rfc822TokenIterator : public Tokenizer::Iterator {
   //   A vector of Tokens on success
   //   An empty vector if the token list is empty
   //   An empty vector if the index is past the end of the token list
-  std::vector<Token> GetTokens() const override {
-    std::vector<Token> result;
+  void GetTokens(std::vector<Token>* out_tokens) const override {
+    out_tokens->clear();
     if (token_index_ < tokens_.size() && token_index_ >= 0) {
       int index = token_index_;
       do {
-        result.push_back(tokens_[index]);
+        out_tokens->push_back(tokens_[index]);
       } while (++index < tokens_.size() &&
                tokens_[index].type != Token::Type::RFC822_TOKEN);
     }
-    return result;
   }
 
   bool ResetToTokenStartingAfter(int32_t utf32_offset) override {
@@ -154,16 +153,16 @@ class Rfc822TokenIterator : public Tokenizer::Iterator {
   // Returns a character iterator to the start of the token.
   libtextclassifier3::StatusOr<CharacterIterator> CalculateTokenStart()
       override {
-    CharacterIterator token_start = iterator_;
-    token_start.MoveToUtf8(GetTokens().at(0).text.begin() - text_.begin());
+    CharacterIterator token_start(text_);
+    token_start.MoveToUtf8(tokens_[token_index_].text.begin() - text_.begin());
     return token_start;
   }
 
   // Returns a character iterator to right after the end of the token.
   libtextclassifier3::StatusOr<CharacterIterator> CalculateTokenEndExclusive()
       override {
-    CharacterIterator token_end = iterator_;
-    token_end.MoveToUtf8(GetTokens().at(0).text.end() - text_.begin());
+    CharacterIterator token_end(text_);
+    token_end.MoveToUtf8(tokens_[token_index_].text.end() - text_.begin());
     return token_end;
   }
 
@@ -750,7 +749,13 @@ class Rfc822TokenIterator : public Tokenizer::Iterator {
   }
 
   void AdvanceCursor() {
-    iterator_.AdvanceToUtf32(iterator_.utf32_index() + 1);
+    if (!iterator_.AdvanceToUtf32(iterator_.utf32_index() + 1)) {
+      // CharacterIterator refused to advance (ill-formed byte, or U+FFFD prior
+      // to the i18n-utils fix). Force progress so the surrounding
+      // `while (utf8_index() < text_end_)` loops terminate.
+      iterator_.MoveToUtf8(
+          std::min<int>(iterator_.utf8_index() + 1, text_end_));
+    }
   }
 
   void AdvancePastWhitespace() {
@@ -787,8 +792,9 @@ libtextclassifier3::StatusOr<std::vector<Token>> Rfc822Tokenizer::TokenizeAll(
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iterator,
                          Tokenize(text));
   std::vector<Token> tokens;
+  std::vector<Token> batch_tokens;
   while (iterator->Advance()) {
-    std::vector<Token> batch_tokens = iterator->GetTokens();
+    iterator->GetTokens(&batch_tokens);
     tokens.insert(tokens.end(), batch_tokens.begin(), batch_tokens.end());
   }
   return tokens;
