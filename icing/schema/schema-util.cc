@@ -342,28 +342,39 @@ libtextclassifier3::Status ValidateAllAccountProperties(
   return libtextclassifier3::Status::OK;
 }
 
-void AddIncompatibleChangeToDelta(
+// Propagates schema type incompatibilities through the dependency graph.
+// Every type already present in `incompatible_delta` is treated as a seed: any
+// type that (transitively) depends on a seed is itself incompatible and gets
+// added to `incompatible_delta`. This lets callers collect all directly
+// incompatible types first and then propagate them in a single BFS pass,
+// rather than running a separate BFS per seed type.
+void PropagateIncompatibleChangeToDelta(
     std::unordered_set<std::string>& incompatible_delta,
-    const SchemaTypeConfigProto& old_type_config,
     const SchemaUtil::DependentMap& new_schema_dependent_map,
-    const SchemaUtil::TypeConfigMap& old_type_config_map,
-    const SchemaUtil::TypeConfigMap& new_type_config_map) {
-  // If this type is incompatible, then every type that depends on it might
-  // also be incompatible. Use the dependent map to mark those ones as
-  // incompatible too.
-  incompatible_delta.insert(old_type_config.schema_type());
-  auto dependent_types_itr =
-      new_schema_dependent_map.find(old_type_config.schema_type());
-  if (dependent_types_itr != new_schema_dependent_map.end()) {
+    const SchemaUtil::TypeConfigMap& old_type_config_map) {
+  // Seed the BFS queue with all types that are already marked incompatible.
+  std::queue<std::string_view> queue;
+  for (const std::string& incompatible_type : incompatible_delta) {
+    queue.push(incompatible_type);
+  }
+
+  while (!queue.empty()) {
+    std::string_view curr_type = queue.front();
+    queue.pop();
+    auto dependent_types_itr = new_schema_dependent_map.find(curr_type);
+    if (dependent_types_itr == new_schema_dependent_map.end()) {
+      continue;
+    }
     for (const auto& [dependent_type, _] : dependent_types_itr->second) {
-      // The types from new_schema that depend on the current
-      // old_type_config may not present in old_schema.
-      // Those types will be listed at schema_delta.schema_types_new
-      // instead.
+      // The types from new_schema that depend on the current type may not be
+      // present in old_schema. Those types will be listed at
+      // schema_delta.schema_types_new instead.
       std::string dependent_type_str(dependent_type);
       if (old_type_config_map.find(dependent_type_str) !=
           old_type_config_map.end()) {
-        incompatible_delta.insert(std::move(dependent_type_str));
+        if (incompatible_delta.insert(std::move(dependent_type_str)).second) {
+          queue.push(dependent_type);
+        }
       }
     }
   }
@@ -1845,21 +1856,18 @@ SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     }
 
     if (is_incompatible) {
-      AddIncompatibleChangeToDelta(schema_delta.schema_types_incompatible,
-                                   old_type_config, new_schema_dependent_map,
-                                   old_type_config_map, new_type_config_map);
+      schema_delta.schema_types_incompatible.insert(
+          old_type_config.schema_type());
     }
 
     if (is_index_incompatible) {
-      AddIncompatibleChangeToDelta(schema_delta.schema_types_index_incompatible,
-                                   old_type_config, new_schema_dependent_map,
-                                   old_type_config_map, new_type_config_map);
+      schema_delta.schema_types_index_incompatible.insert(
+          old_type_config.schema_type());
     }
 
     if (is_join_incompatible) {
-      AddIncompatibleChangeToDelta(schema_delta.schema_types_join_incompatible,
-                                   old_type_config, new_schema_dependent_map,
-                                   old_type_config_map, new_type_config_map);
+      schema_delta.schema_types_join_incompatible.insert(
+          old_type_config.schema_type());
     }
 
     // Scorable-property inconsistent types are already added to the schema
@@ -1880,6 +1888,18 @@ SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     // come up in future iterations through the old schema types because the old
     // type config has unique types.
     new_type_config_map.erase(old_type_config.schema_type());
+  }
+
+  // Now that all directly-incompatible types have been collected, propagate
+  // each kind of incompatibility through the schema dependency graph in a
+  // single BFS pass per delta set (instead of one BFS per seed type).
+  for (std::unordered_set<std::string>* delta_set : {
+           &schema_delta.schema_types_incompatible,
+           &schema_delta.schema_types_index_incompatible,
+           &schema_delta.schema_types_join_incompatible,
+       }) {
+    PropagateIncompatibleChangeToDelta(*delta_set, new_schema_dependent_map,
+                                       old_type_config_map);
   }
 
   // Any types that are still present in the new_type_config_map are newly added
