@@ -15,7 +15,9 @@
 #ifndef ICING_SCORING_SCORED_DOCUMENT_HITS_RANKER_H_
 #define ICING_SCORING_SCORED_DOCUMENT_HITS_RANKER_H_
 
+#include <memory>
 #include <unordered_set>
+#include <vector>
 
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/store/document-id.h"
@@ -58,6 +60,20 @@ class ScoredDocumentHitsRanker {
   // ScoredDocumentHits, then no action will be taken. Otherwise truncates the
   // the remaining ScoredDocumentHits to the given size.
   virtual void TruncateHitsTo(int new_size) = 0;
+
+  // Optimizes DocumentId in the ranker according to document_id_old_to_new, and
+  // transfers out all the data to a new ScoredDocumentHitsRanker.
+  //
+  // Note: the reason why we force to transfer out the data after optimization:
+  //   - Some underlying data structures are not iterable, so we have to pop all
+  //     elements out before converting the ids. For example,
+  //     PriorityQueueScoredDocumentHitsRanker uses std::priority_queue.
+  //   - After popping all elements out, they're already ranked (sorted), so
+  //     there is no need to push them back to the original data structure.
+  //   - Instead, a more efficient data structure (e.g. ReverseVectorNoRanker)
+  //     can be used to store the ranked elements.
+  virtual std::unique_ptr<ScoredDocumentHitsRanker> OptimizeAndTransfer(
+      const std::vector<DocumentId>& document_id_old_to_new) && = 0;
 
   // Returns DocumentIds of the top K documents according to the ranking policy.
   // - For ScoredDocumentHit, this returns the DocumentIds of the top K

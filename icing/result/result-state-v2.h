@@ -25,6 +25,8 @@
 #include "icing/absl_ports/thread_annotations.h"
 #include "icing/proto/search.pb.h"
 #include "icing/result/result-adjustment-info.h"
+#include "icing/result/result-utils.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-store.h"
 
@@ -39,7 +41,8 @@ class ResultStateV2 {
       std::unique_ptr<ScoredDocumentHitsRanker> scored_document_hits_ranker_in,
       std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
       std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
-      const ResultSpecProto& result_spec, const DocumentStore& document_store);
+      const ResultSpecProto& result_spec, const SchemaStore& schema_store,
+      const DocumentStore& document_store);
 
   ~ResultStateV2();
 
@@ -82,9 +85,9 @@ class ResultStateV2 {
     return child_adjustment_info_.get();
   }
 
-  const std::unordered_map<int32_t, int>& entry_id_group_id_map() const
-      ICING_SHARED_LOCKS_REQUIRED(mutex) {
-    return entry_id_group_id_map_;
+  const std::unordered_map<result_utils::ResultGroupingEntryId, int>&
+  entry_id_group_index_map() const ICING_SHARED_LOCKS_REQUIRED(mutex) {
+    return entry_id_group_index_map_;
   }
 
   int32_t num_per_page() const ICING_SHARED_LOCKS_REQUIRED(mutex) {
@@ -119,8 +122,8 @@ class ResultStateV2 {
   std::unique_ptr<ScoredDocumentHitsRanker> scored_document_hits_ranker
       ICING_GUARDED_BY(mutex);
 
-  // The count of remaining results to return for a group where group id is the
-  // index.
+  // The count of remaining results to return for a group. The index is assigned
+  // by entry_id_group_index_map_.
   std::vector<int> group_result_limits ICING_GUARDED_BY(mutex);
 
   // Number of results that have already been returned.
@@ -139,10 +142,10 @@ class ResultStateV2 {
   std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info_
       ICING_GUARDED_BY(mutex);
 
-  // A map between result grouping entry id and the id of the group that it
+  // A map between result grouping entry id and the index of the group that it
   // appears in.
-  std::unordered_map<int32_t, int> entry_id_group_id_map_
-      ICING_GUARDED_BY(mutex);
+  std::unordered_map<result_utils::ResultGroupingEntryId, int>
+      entry_id_group_index_map_ ICING_GUARDED_BY(mutex);
 
   // Number of results to return in each page.
   int32_t num_per_page_ ICING_GUARDED_BY(mutex);

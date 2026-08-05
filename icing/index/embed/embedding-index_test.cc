@@ -88,7 +88,7 @@ static constexpr std::string_view kDefaultSchemaName = "type";
 
 }  // namespace
 
-class EmbeddingIndexTest : public Test {
+class EmbeddingIndexTest : public Test, public EmbeddingIndexTestPeer {
  protected:
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
@@ -170,6 +170,44 @@ class EmbeddingIndexTest : public Test {
     schema_store_.reset();
     embedding_index_.reset();
     filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+  }
+
+  using IvfContextManager = ::icing::lib::EmbeddingIndex::IvfContextManager;
+  using IvfMetadata = ::icing::lib::EmbeddingIndex::IvfMetadata;
+
+  libtextclassifier3::StatusOr<IvfMetadata> GetMetadata(
+      const IvfContextManager& ivf_context, EmbeddingIndex* index = nullptr) {
+    if (index == nullptr) index = embedding_index_.get();
+    return ivf_context.GetMetadata(index);
+  }
+
+  libtextclassifier3::Status SetMetadata(const IvfContextManager& ivf_context,
+                                         const IvfMetadata& metadata,
+                                         EmbeddingIndex* index = nullptr) {
+    if (index == nullptr) index = embedding_index_.get();
+    return ivf_context.SetMetadata(index, metadata);
+  }
+
+  libtextclassifier3::StatusOr<std::vector<uint32_t>>
+  GetClosestClusterIdsByDistance(const IvfContextManager& ivf_context,
+                                 const PropertyProto::VectorProto& query_vector,
+                                 uint32_t num_clusters,
+                                 EmbeddingIndex* index = nullptr) {
+    if (index == nullptr) index = embedding_index_.get();
+    return ivf_context.GetClosestClusterIdsByDistance(index, query_vector,
+                                                      num_clusters);
+  }
+
+  bool PostingListExists(std::string_view key) {
+    return GetPostingListMapper()->Get(key).ok();
+  }
+
+  static uint32_t GetNumShards(const EmbeddingIndex* index) {
+    return index->info().num_shards;
+  }
+
+  static void SetNumShards(uint32_t num_shards, EmbeddingIndex* index) {
+    index->info().num_shards = num_shards;
   }
 
   libtextclassifier3::StatusOr<bool> IndexContainsMetadataOnly() {
@@ -375,7 +413,7 @@ TEST_F(EmbeddingIndexTest,
         std::unique_ptr<EmbeddingIndex> embedding_index,
         EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
                                feature_flags_.get(), /*num_shards=*/1));
-    embedding_index->info().num_shards = 0;
+    SetNumShards(0, embedding_index.get());
     ICING_ASSERT_OK(embedding_index->PersistToDisk());
   }
 
@@ -387,7 +425,7 @@ TEST_F(EmbeddingIndexTest,
 
   // 3. Check that num_shards in the header is now 1.
   EXPECT_EQ(embedding_index->num_shards(), 1);
-  EXPECT_EQ(embedding_index->info().num_shards, 1);
+  EXPECT_EQ(GetNumShards(embedding_index.get()), 1);
 
   filesystem_.DeleteDirectoryRecursively(embedding_index_dir.c_str());
 }
@@ -404,7 +442,7 @@ TEST_F(EmbeddingIndexTest,
         std::unique_ptr<EmbeddingIndex> embedding_index,
         EmbeddingIndex::Create(&filesystem_, embedding_index_dir, &clock_,
                                feature_flags_.get(), /*num_shards=*/1));
-    embedding_index->info().num_shards = 0;
+    SetNumShards(0, embedding_index.get());
     ICING_ASSERT_OK(embedding_index->PersistToDisk());
   }
 
@@ -530,10 +568,10 @@ TEST_F(EmbeddingIndexTest, GetEmbeddingVectorShouldFailWhenOutOfRange) {
 
   EmbeddingHit embedding_hit(basic_hit, /*location=*/0);
   uint32_t dimension = 3;
-  ICING_ASSERT_OK(embedding_index_->GetEmbeddingVector(embedding_hit, dimension,
-                                                       default_shard_id_));
-  EXPECT_THAT(embedding_index_->GetEmbeddingVector(embedding_hit, dimension + 1,
-                                                   default_shard_id_),
+  ICING_ASSERT_OK(GetEmbeddingVector(embedding_index_.get(), embedding_hit,
+                                     dimension, default_shard_id_));
+  EXPECT_THAT(GetEmbeddingVector(embedding_index_.get(), embedding_hit,
+                                 dimension + 1, default_shard_id_),
               StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
 }
 
@@ -547,10 +585,10 @@ TEST_F(EmbeddingIndexTest,
 
   EmbeddingHit embedding_hit(basic_hit, /*location=*/0);
   uint32_t dimension = 3;
-  ICING_ASSERT_OK(embedding_index_->GetQuantizedEmbeddingVector(
-      embedding_hit, dimension, default_shard_id_));
-  EXPECT_THAT(embedding_index_->GetQuantizedEmbeddingVector(
-                  embedding_hit, dimension + 1, default_shard_id_),
+  ICING_ASSERT_OK(GetQuantizedEmbeddingVector(
+      embedding_index_.get(), embedding_hit, dimension, default_shard_id_));
+  EXPECT_THAT(GetQuantizedEmbeddingVector(embedding_index_.get(), embedding_hit,
+                                          dimension + 1, default_shard_id_),
               StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
 }
 
@@ -620,8 +658,9 @@ TEST_F(EmbeddingIndexTest, AppendEmbeddingReferenceDirectly) {
       AppendEmbeddingVector(quantized_ref, /*dimension=*/4, default_shard_id_));
   EXPECT_EQ(quantized_location, 3 + sizeof(Quantizer));
 
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(3 + 4 + 2 * sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(3 + 4 + 2 * sizeof(Quantizer)));
 }
 
 TEST_F(EmbeddingIndexTest, AddSingleQuantizedEmbedding) {
@@ -636,8 +675,9 @@ TEST_F(EmbeddingIndexTest, AddSingleQuantizedEmbedding) {
   EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
                                         kDefaultModelSignature),
               IsOkAndHolds(ElementsAre(hit)));
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(3 + sizeof(Quantizer)));
   EXPECT_THAT(
       GetAndRestoreQuantizedEmbeddingVectorFromIndex(
           embedding_index_.get(), hit,
@@ -675,8 +715,9 @@ TEST_F(EmbeddingIndexTest, AddSinglePreQuantizedEmbedding) {
   EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
                                         kDefaultModelSignature),
               IsOkAndHolds(ElementsAre(hit)));
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(3 + sizeof(Quantizer)));
   EXPECT_THAT(
       GetAndRestoreQuantizedEmbeddingVectorFromIndex(
           embedding_index_.get(), hit,
@@ -759,8 +800,9 @@ TEST_F(EmbeddingIndexTest, AddMultipleQuantizedEmbeddingsInTheSameSection) {
   EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
                                         kDefaultModelSignature),
               IsOkAndHolds(ElementsAre(hit1, hit2)));
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(2 * (3 + sizeof(Quantizer))));  // Two quantized vectors
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(2 * (3 + sizeof(Quantizer))));  // Two quantized vectors
   EXPECT_THAT(
       GetAndRestoreQuantizedEmbeddingVectorFromIndex(
           embedding_index_.get(), hit1, /*dimension=*/3, kDefaultModelSignature,
@@ -940,7 +982,7 @@ TEST_F(EmbeddingIndexTest, ClearIndex) {
         GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
         ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
     EXPECT_THAT(
-        embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
+        GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
         Eq(3 + sizeof(Quantizer)));
     EXPECT_THAT(
         GetAndRestoreQuantizedEmbeddingVectorFromIndex(
@@ -949,18 +991,18 @@ TEST_F(EmbeddingIndexTest, ClearIndex) {
         IsOkAndHolds(
             Pointwise(FloatNear(kEpsQuantized), test_vector3_.values())));
     EXPECT_EQ(embedding_index_->last_added_document_id(), 2);
-    EXPECT_FALSE(embedding_index_->is_empty());
+    EXPECT_FALSE(is_empty(embedding_index_.get()));
     EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(false));
 
     // Check that clear works as expected.
     ICING_ASSERT_OK(embedding_index_->Clear());
-    EXPECT_TRUE(embedding_index_->is_empty());
+    EXPECT_TRUE(is_empty(embedding_index_.get()));
     EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
     EXPECT_THAT(
         GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
         IsEmpty());
     EXPECT_THAT(
-        embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
+        GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
         Eq(0));
     EXPECT_EQ(embedding_index_->last_added_document_id(), kInvalidDocumentId);
   }
@@ -996,7 +1038,7 @@ TEST_F(EmbeddingIndexTest, DiscardIndex) {
         GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
         ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
     EXPECT_THAT(
-        embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
+        GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
         Eq(3 + sizeof(Quantizer)));
     EXPECT_THAT(
         GetAndRestoreQuantizedEmbeddingVectorFromIndex(
@@ -1005,7 +1047,7 @@ TEST_F(EmbeddingIndexTest, DiscardIndex) {
         IsOkAndHolds(
             Pointwise(FloatNear(kEpsQuantized), test_vector3_.values())));
     EXPECT_EQ(embedding_index_->last_added_document_id(), 2);
-    EXPECT_FALSE(embedding_index_->is_empty());
+    EXPECT_FALSE(is_empty(embedding_index_.get()));
     EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(false));
 
     // Check that Discard works as expected.
@@ -1016,13 +1058,13 @@ TEST_F(EmbeddingIndexTest, DiscardIndex) {
         EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &clock_,
                                feature_flags_.get(),
                                /*num_shards=*/32));
-    EXPECT_TRUE(embedding_index_->is_empty());
+    EXPECT_TRUE(is_empty(embedding_index_.get()));
     EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
     EXPECT_THAT(
         GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
         IsEmpty());
     EXPECT_THAT(
-        embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
+        GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
         Eq(0));
     EXPECT_EQ(embedding_index_->last_added_document_id(), kInvalidDocumentId);
   }
@@ -1030,13 +1072,14 @@ TEST_F(EmbeddingIndexTest, DiscardIndex) {
 
 TEST_F(EmbeddingIndexTest, EmptyCommitIsOk) {
   ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
-  EXPECT_TRUE(embedding_index_->is_empty());
+  EXPECT_TRUE(is_empty(embedding_index_.get()));
   EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
   EXPECT_THAT(
       GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
       IsEmpty());
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(0));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(0));
 }
 
 TEST_F(EmbeddingIndexTest, MultipleCommits) {
@@ -1129,13 +1172,14 @@ TEST_F(EmbeddingIndexTest, EmptyOptimizeIsOk) {
       document_store_.get(), schema_store_.get(),
       /*document_id_old_to_new=*/{},
       /*new_last_added_document_id=*/kInvalidDocumentId));
-  EXPECT_TRUE(embedding_index_->is_empty());
+  EXPECT_TRUE(is_empty(embedding_index_.get()));
   EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
   EXPECT_THAT(
       GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
       IsEmpty());
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(0));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(0));
 }
 
 TEST_F(EmbeddingIndexTest, OptimizeSingleEmbeddingSingleDocument) {
@@ -1196,7 +1240,7 @@ TEST_F(EmbeddingIndexTest, OptimizeSingleEmbeddingSingleDocument) {
   EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
                                         kDefaultModelSignature),
               IsOkAndHolds(IsEmpty()));
-  EXPECT_TRUE(embedding_index_->is_empty());
+  EXPECT_TRUE(is_empty(embedding_index_.get()));
   EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
   EXPECT_THAT(
       GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
@@ -1217,8 +1261,9 @@ TEST_F(EmbeddingIndexTest, OptimizeSingleQuantizedEmbeddingSingleDocument) {
   EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
                                         kDefaultModelSignature),
               IsOkAndHolds(ElementsAre(hit)));
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(3 + sizeof(Quantizer)));
   EXPECT_THAT(
       GetAndRestoreQuantizedEmbeddingVectorFromIndex(
           embedding_index_.get(), hit, /*dimension=*/3, kDefaultModelSignature,
@@ -1238,8 +1283,9 @@ TEST_F(EmbeddingIndexTest, OptimizeSingleQuantizedEmbeddingSingleDocument) {
   EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
                                         kDefaultModelSignature),
               IsOkAndHolds(ElementsAre(hit)));
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(3 + sizeof(Quantizer)));
   EXPECT_THAT(
       GetAndRestoreQuantizedEmbeddingVectorFromIndex(
           embedding_index_.get(), hit, /*dimension=*/3, kDefaultModelSignature,
@@ -1261,8 +1307,9 @@ TEST_F(EmbeddingIndexTest, OptimizeSingleQuantizedEmbeddingSingleDocument) {
   EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
                                         kDefaultModelSignature),
               IsOkAndHolds(ElementsAre(hit)));
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(3 + sizeof(Quantizer)));
   EXPECT_THAT(
       GetAndRestoreQuantizedEmbeddingVectorFromIndex(
           embedding_index_.get(), hit, /*dimension=*/3, kDefaultModelSignature,
@@ -1281,13 +1328,14 @@ TEST_F(EmbeddingIndexTest, OptimizeSingleQuantizedEmbeddingSingleDocument) {
   EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
                                         kDefaultModelSignature),
               IsOkAndHolds(IsEmpty()));
-  EXPECT_TRUE(embedding_index_->is_empty());
+  EXPECT_TRUE(is_empty(embedding_index_.get()));
   EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
   EXPECT_THAT(
       GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
       IsEmpty());
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(0));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(0));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
 
@@ -1319,8 +1367,9 @@ TEST_F(EmbeddingIndexTest, OptimizeMultipleEmbeddingsSingleDocument) {
   EXPECT_THAT(
       GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
       ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(3 + sizeof(Quantizer)));
   EXPECT_THAT(GetAndRestoreQuantizedEmbeddingVectorFromIndex(
                   embedding_index_.get(), quantized_hit,
                   /*dimension=*/3, kDefaultModelSignature, kDefaultSchemaName),
@@ -1345,8 +1394,9 @@ TEST_F(EmbeddingIndexTest, OptimizeMultipleEmbeddingsSingleDocument) {
   EXPECT_THAT(
       GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
       ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(3 + sizeof(Quantizer)));
   EXPECT_THAT(GetAndRestoreQuantizedEmbeddingVectorFromIndex(
                   embedding_index_.get(), quantized_hit,
                   /*dimension=*/3, kDefaultModelSignature, kDefaultSchemaName),
@@ -1374,8 +1424,9 @@ TEST_F(EmbeddingIndexTest, OptimizeMultipleEmbeddingsSingleDocument) {
   EXPECT_THAT(
       GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
       ElementsAre(0.1, 0.2, 0.3, -0.1, -0.2, -0.3));
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(3 + sizeof(Quantizer)));
   EXPECT_THAT(GetAndRestoreQuantizedEmbeddingVectorFromIndex(
                   embedding_index_.get(), quantized_hit,
                   /*dimension=*/3, kDefaultModelSignature, kDefaultSchemaName),
@@ -1391,13 +1442,14 @@ TEST_F(EmbeddingIndexTest, OptimizeMultipleEmbeddingsSingleDocument) {
   EXPECT_THAT(GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
                                         kDefaultModelSignature),
               IsOkAndHolds(IsEmpty()));
-  EXPECT_TRUE(embedding_index_->is_empty());
+  EXPECT_TRUE(is_empty(embedding_index_.get()));
   EXPECT_THAT(IndexContainsMetadataOnly(), IsOkAndHolds(true));
   EXPECT_THAT(
       GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
       IsEmpty());
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(0));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(0));
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
 
@@ -1443,8 +1495,9 @@ TEST_F(EmbeddingIndexTest, OptimizeMultipleEmbeddingsMultipleDocument) {
   EXPECT_THAT(
       GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
       ElementsAre(0.1, 0.2, 0.3, 1, 2, 3, -0.1, -0.2, -0.3));
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(3 + sizeof(Quantizer)));
   EXPECT_THAT(
       GetAndRestoreQuantizedEmbeddingVectorFromIndex(
           embedding_index_.get(), quantized_hit,
@@ -1478,7 +1531,7 @@ TEST_F(EmbeddingIndexTest, OptimizeMultipleEmbeddingsMultipleDocument) {
         GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
         ElementsAre(-0.1, -0.2, -0.3, 0.1, 0.2, 0.3, 1, 2, 3));
     EXPECT_THAT(
-        embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
+        GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
         Eq(3 + sizeof(Quantizer)));
     EXPECT_THAT(
         GetAndRestoreQuantizedEmbeddingVectorFromIndex(
@@ -1506,8 +1559,9 @@ TEST_F(EmbeddingIndexTest, OptimizeMultipleEmbeddingsMultipleDocument) {
   EXPECT_THAT(
       GetRawEmbeddingDataFromIndex(embedding_index_.get(), default_shard_id_),
       ElementsAre(-0.1, -0.2, -0.3));
-  EXPECT_THAT(embedding_index_->GetTotalQuantizedVectorSize(default_shard_id_),
-              Eq(3 + sizeof(Quantizer)));
+  EXPECT_THAT(
+      GetTotalQuantizedVectorSize(embedding_index_.get(), default_shard_id_),
+      Eq(3 + sizeof(Quantizer)));
   EXPECT_THAT(
       GetAndRestoreQuantizedEmbeddingVectorFromIndex(
           embedding_index_.get(), quantized_hit,
@@ -1719,16 +1773,15 @@ TEST_F(EmbeddingIndexTest, ShardFileShouldBeLazilyCreated) {
 }
 
 TEST_F(EmbeddingIndexTest, IvfContextManager_Empty) {
-  EmbeddingIndex::IvfContextManager ivf_context(kDefaultDimension,
-                                                kDefaultModelSignature);
+  IvfContextManager ivf_context(kDefaultDimension, kDefaultModelSignature);
   // Get and Set metadata will be rejected for empty index.
-  EXPECT_THAT(ivf_context.GetMetadata(embedding_index_.get()),
+  EXPECT_THAT(GetMetadata(ivf_context, embedding_index_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(ivf_context.SetMetadata(embedding_index_.get(),
-                                      EmbeddingIndex::IvfMetadata{}),
+  EXPECT_THAT(SetMetadata(ivf_context, IvfMetadata(), embedding_index_.get()),
               StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
-  EXPECT_THAT(ivf_context.GetClosestClusterIdsByDistance(
-                  embedding_index_.get(), test_vector1_, /*k=*/1),
+  EXPECT_THAT(GetClosestClusterIdsByDistance(ivf_context, test_vector1_,
+                                             /*num_clusters=*/1,
+                                             embedding_index_.get()),
               IsOkAndHolds(IsEmpty()));
 }
 
@@ -1738,29 +1791,29 @@ TEST_F(EmbeddingIndexTest, IvfContextManager) {
       BasicHit(/*section_id=*/0, /*document_id=*/0), test_vector1_,
       QUANTIZATION_TYPE_NONE, kDefaultSchemaName));
 
-  EmbeddingIndex::IvfContextManager ivf_context(kDefaultDimension,
-                                                kDefaultModelSignature);
+  IvfContextManager ivf_context(kDefaultDimension, kDefaultModelSignature);
 
   // Initial metadata should be empty (all 0s)
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata metadata,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   EXPECT_EQ(metadata.num_clusters, 0);
   EXPECT_EQ(metadata.current_size, 0);
   EXPECT_EQ(metadata.last_ivf_build_size, 0);
 
   // Test GetClosestClusterIdsByDistance
-  EXPECT_THAT(ivf_context.GetClosestClusterIdsByDistance(
-                  embedding_index_.get(), test_vector1_, /*k=*/1),
+  EXPECT_THAT(GetClosestClusterIdsByDistance(ivf_context, test_vector1_,
+                                             /*num_clusters=*/1,
+                                             embedding_index_.get()),
               IsOkAndHolds(IsEmpty()));
 
   // Set and get metadata
   metadata.num_clusters = 5;
   metadata.current_size = 10;
   metadata.last_ivf_build_size = 8;
-  ICING_EXPECT_OK(ivf_context.SetMetadata(embedding_index_.get(), metadata));
+  ICING_EXPECT_OK(SetMetadata(ivf_context, metadata, embedding_index_.get()));
 
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata retrieved_metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata retrieved_metadata,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   EXPECT_EQ(retrieved_metadata.num_clusters, 5);
   EXPECT_EQ(retrieved_metadata.current_size, 10);
   EXPECT_EQ(retrieved_metadata.last_ivf_build_size, 8);
@@ -1770,8 +1823,7 @@ TEST_F(EmbeddingIndexTest, IvfContextManager) {
             absl_ports::StrCat(ivf_context.base_key(),
                                embedding_util::kIvfPostingListKeySeparator,
                                encode_util::EncodeIntToCString(42)));
-  EXPECT_EQ(EmbeddingIndex::IvfContextManager(ivf_context.base_key())
-                .GetPostingListKey(42),
+  EXPECT_EQ(IvfContextManager(ivf_context.base_key()).GetPostingListKey(42),
             absl_ports::StrCat(ivf_context.base_key(),
                                embedding_util::kIvfPostingListKeySeparator,
                                encode_util::EncodeIntToCString(42)));
@@ -2058,12 +2110,12 @@ TEST_F(EmbeddingIndexTest, IvfContextManager_GetClosestClusterIds_NotBuilt) {
 
   std::vector<std::string> keys = GetKnownBaseKeys(/*is_ivf=*/true);
   ASSERT_EQ(keys.size(), 1);
-  EmbeddingIndex::IvfContextManager ivf_context(keys[0]);
+  IvfContextManager ivf_context(keys[0]);
 
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::vector<uint32_t> clusters,
-      ivf_context.GetClosestClusterIdsByDistance(embedding_index_.get(),
-                                                 test_vector1_, /*k=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<uint32_t> clusters,
+                             GetClosestClusterIdsByDistance(
+                                 ivf_context, test_vector1_, /*num_clusters=*/1,
+                                 embedding_index_.get()));
   EXPECT_THAT(clusters, IsEmpty());
 }
 
@@ -2099,32 +2151,33 @@ TEST_F(EmbeddingIndexTest, IvfContextManager_GetClosestClusterIds) {
 
   std::vector<std::string> keys = GetKnownBaseKeys(/*is_ivf=*/true);
   ASSERT_EQ(keys.size(), 1);
-  EmbeddingIndex::IvfContextManager ivf_context(keys[0]);
+  IvfContextManager ivf_context(keys[0]);
 
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata metadata,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   uint32_t num_clusters = metadata.num_clusters;
   ASSERT_EQ(num_clusters, 2);
 
   // Test k = 0
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::vector<uint32_t> empty_clusters,
-      ivf_context.GetClosestClusterIdsByDistance(embedding_index_.get(),
-                                                 test_vector1_, /*k=*/0));
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<uint32_t> empty_clusters,
+                             GetClosestClusterIdsByDistance(
+                                 ivf_context, test_vector1_, /*num_clusters=*/0,
+                                 embedding_index_.get()));
   EXPECT_THAT(empty_clusters, IsEmpty());
 
   // Test k = 1 (this previously caused a crash when k < num_clusters)
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::vector<uint32_t> top_1_clusters,
-      ivf_context.GetClosestClusterIdsByDistance(embedding_index_.get(),
-                                                 test_vector1_, /*k=*/1));
+  ICING_ASSERT_OK_AND_ASSIGN(std::vector<uint32_t> top_1_clusters,
+                             GetClosestClusterIdsByDistance(
+                                 ivf_context, test_vector1_, /*num_clusters=*/1,
+                                 embedding_index_.get()));
   EXPECT_EQ(top_1_clusters.size(), 1);
 
   // Test k > num_clusters
-  ICING_ASSERT_OK_AND_ASSIGN(std::vector<uint32_t> all_clusters,
-                             ivf_context.GetClosestClusterIdsByDistance(
-                                 embedding_index_.get(), test_vector1_,
-                                 /*k=*/num_clusters + 5));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::vector<uint32_t> all_clusters,
+      GetClosestClusterIdsByDistance(ivf_context, test_vector1_,
+                                     /*num_clusters=*/num_clusters + 5,
+                                     embedding_index_.get()));
   EXPECT_EQ(all_clusters.size(), num_clusters);
 }
 
@@ -2141,9 +2194,9 @@ TEST_F(EmbeddingIndexTest, BufferEmbeddingIvf_IntoDeltaStoreWhenNotBuilt) {
   ASSERT_EQ(keys.size(), 1);
   std::string base_key = keys[0];
 
-  EmbeddingIndex::IvfContextManager ivf_context(base_key);
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  IvfContextManager ivf_context(base_key);
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata metadata,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   EXPECT_EQ(metadata.current_size, 1);
   EXPECT_EQ(metadata.last_ivf_build_size, 0);
   EXPECT_EQ(metadata.num_clusters, 0);
@@ -2151,7 +2204,7 @@ TEST_F(EmbeddingIndexTest, BufferEmbeddingIvf_IntoDeltaStoreWhenNotBuilt) {
   // Verify it went to the delta store.
   std::string delta_store_key =
       ivf_context.GetPostingListKey(embedding_util::kIvfDeltaStoreClusterId);
-  ICING_EXPECT_OK(GetPostingListMapper()->Get(delta_store_key));
+  EXPECT_TRUE(PostingListExists(delta_store_key));
 
   EmbeddingHit hit(BasicHit(/*section_id=*/0, /*document_id=*/0),
                    /*location=*/0);
@@ -2186,9 +2239,9 @@ TEST_F(EmbeddingIndexTest, MaintainIvf_BuildsClustersCorrectly) {
   ASSERT_EQ(keys.size(), 1);
   std::string base_key = keys[0];
 
-  EmbeddingIndex::IvfContextManager ivf_context(base_key);
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  IvfContextManager ivf_context(base_key);
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata metadata,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   EXPECT_EQ(metadata.current_size, 2);
   EXPECT_EQ(metadata.last_ivf_build_size, 2);
   EXPECT_GT(metadata.num_clusters, 0);
@@ -2196,8 +2249,7 @@ TEST_F(EmbeddingIndexTest, MaintainIvf_BuildsClustersCorrectly) {
   // The delta store posting list shouldn't even exist anymore.
   std::string delta_store_key =
       ivf_context.GetPostingListKey(embedding_util::kIvfDeltaStoreClusterId);
-  EXPECT_THAT(GetPostingListMapper()->Get(delta_store_key),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_FALSE(PostingListExists(delta_store_key));
 
   // Accessing it via the high-level API should return an empty set.
   EXPECT_THAT(
@@ -2210,7 +2262,7 @@ TEST_F(EmbeddingIndexTest, MaintainIvf_BuildsClustersCorrectly) {
   // hits.
   std::string centroids_key =
       ivf_context.GetPostingListKey(embedding_util::kIvfCentroidsClusterId);
-  ICING_EXPECT_OK(GetPostingListMapper()->Get(centroids_key));
+  EXPECT_TRUE(PostingListExists(centroids_key));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<EmbeddingHit> centroid_hits,
@@ -2256,9 +2308,9 @@ TEST_F(EmbeddingIndexTest, MaintainIvf_BuildsMultipleClusters) {
   ASSERT_EQ(keys.size(), 1);
   std::string base_key = keys[0];
 
-  EmbeddingIndex::IvfContextManager ivf_context(base_key);
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  IvfContextManager ivf_context(base_key);
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata metadata,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   EXPECT_EQ(metadata.current_size, 4);
   EXPECT_EQ(metadata.last_ivf_build_size, 4);
   EXPECT_GT(metadata.num_clusters, 1);
@@ -2266,14 +2318,13 @@ TEST_F(EmbeddingIndexTest, MaintainIvf_BuildsMultipleClusters) {
   // The delta store posting list shouldn't even exist anymore.
   std::string delta_store_key =
       ivf_context.GetPostingListKey(embedding_util::kIvfDeltaStoreClusterId);
-  EXPECT_THAT(GetPostingListMapper()->Get(delta_store_key),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_FALSE(PostingListExists(delta_store_key));
 
   // The centroids posting list must exist and contain exactly num_clusters
   // hits.
   std::string centroids_key =
       ivf_context.GetPostingListKey(embedding_util::kIvfCentroidsClusterId);
-  ICING_EXPECT_OK(GetPostingListMapper()->Get(centroids_key));
+  EXPECT_TRUE(PostingListExists(centroids_key));
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<EmbeddingHit> centroid_hits,
@@ -2319,9 +2370,9 @@ TEST_F(EmbeddingIndexTest, BufferEmbeddingIvf_WithSameDocIdAndSectionId) {
   ASSERT_EQ(keys.size(), 1);
   std::string base_key = keys[0];
 
-  EmbeddingIndex::IvfContextManager ivf_context(base_key);
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  IvfContextManager ivf_context(base_key);
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata metadata,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   // current_size should be 3.
   EXPECT_EQ(metadata.current_size, 3);
 }
@@ -2365,11 +2416,11 @@ TEST_F(EmbeddingIndexTest, MaintainIvf_SortsAllHitsAcrossClusters) {
   std::vector<std::string> keys = GetKnownBaseKeys(/*is_ivf=*/true);
   ASSERT_EQ(keys.size(), 1);
   std::string base_key = keys[0];
-  EmbeddingIndex::IvfContextManager ivf_context(base_key);
+  IvfContextManager ivf_context(base_key);
 
   // Check metadata
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata metadata,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   EXPECT_EQ(metadata.last_ivf_build_size, 100);
   EXPECT_EQ(metadata.current_size, 100);
   EXPECT_EQ(metadata.num_clusters, 50);
@@ -2387,7 +2438,7 @@ TEST_F(EmbeddingIndexTest, MaintainIvf_SortsAllHitsAcrossClusters) {
 
   // Check metadata
   ICING_ASSERT_OK_AND_ASSIGN(metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+                             GetMetadata(ivf_context, embedding_index_.get()));
   EXPECT_EQ(metadata.last_ivf_build_size, 100);
   EXPECT_EQ(metadata.current_size, 100);
   EXPECT_EQ(metadata.num_clusters, 1);
@@ -2424,17 +2475,16 @@ TEST_F(EmbeddingIndexTest, BufferEmbeddingIvf_IntoClustersWhenBuilt) {
   ASSERT_EQ(keys.size(), 1);
   std::string base_key = keys[0];
 
-  EmbeddingIndex::IvfContextManager ivf_context(base_key);
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  IvfContextManager ivf_context(base_key);
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata metadata,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   // current_size increases from 2 to 3, but last_ivf_build_size remains 2.
   EXPECT_EQ(metadata.current_size, 3);
   EXPECT_EQ(metadata.last_ivf_build_size, 2);
 
   std::string delta_store_key =
       ivf_context.GetPostingListKey(embedding_util::kIvfDeltaStoreClusterId);
-  EXPECT_THAT(GetPostingListMapper()->Get(delta_store_key),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_FALSE(PostingListExists(delta_store_key));
 
   // The delta store is still completely empty over the API check.
   EXPECT_THAT(
@@ -2480,9 +2530,9 @@ TEST_F(EmbeddingIndexTest, MaintainIvf_RebuildsWhenThresholdMet) {
   ASSERT_EQ(keys.size(), 1);
   std::string base_key = keys[0];
 
-  EmbeddingIndex::IvfContextManager ivf_context(base_key);
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  IvfContextManager ivf_context(base_key);
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata metadata,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   // Upon successful rebuild, last_ivf_build_size snaps to current_size.
   EXPECT_EQ(metadata.current_size, 3);
   EXPECT_EQ(metadata.last_ivf_build_size, 3);
@@ -2569,9 +2619,9 @@ TEST_F(EmbeddingIndexTest, MaintainIvf_BuildsClustersCorrectly_LargeDataset) {
   ASSERT_EQ(keys.size(), 1);
   std::string base_key = keys[0];
 
-  EmbeddingIndex::IvfContextManager ivf_context(base_key);
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  IvfContextManager ivf_context(base_key);
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata metadata,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   // Verifying sizing and limits.
   EXPECT_EQ(metadata.current_size, num_embeddings);
   EXPECT_EQ(metadata.last_ivf_build_size, num_embeddings);
@@ -2580,8 +2630,7 @@ TEST_F(EmbeddingIndexTest, MaintainIvf_BuildsClustersCorrectly_LargeDataset) {
   // The delta store posting list shouldn't exist.
   std::string delta_store_key =
       ivf_context.GetPostingListKey(embedding_util::kIvfDeltaStoreClusterId);
-  EXPECT_THAT(GetPostingListMapper()->Get(delta_store_key),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_FALSE(PostingListExists(delta_store_key));
 
   // The centroids posting list must exist and contain exactly num_clusters
   // hits.
@@ -2657,9 +2706,9 @@ TEST_F(EmbeddingIndexTest,
   ASSERT_EQ(keys.size(), 1);
   std::string base_key = keys[0];
 
-  EmbeddingIndex::IvfContextManager ivf_context(base_key);
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  IvfContextManager ivf_context(base_key);
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata metadata,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   // Verifying sizing and limits.
   EXPECT_EQ(metadata.current_size, num_embeddings);
   EXPECT_EQ(metadata.last_ivf_build_size, num_embeddings);
@@ -2668,8 +2717,7 @@ TEST_F(EmbeddingIndexTest,
   // The delta store posting list shouldn't exist.
   std::string delta_store_key =
       ivf_context.GetPostingListKey(embedding_util::kIvfDeltaStoreClusterId);
-  EXPECT_THAT(GetPostingListMapper()->Get(delta_store_key),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_FALSE(PostingListExists(delta_store_key));
 
   // The centroids posting list must exist and contain exactly num_clusters
   // hits.
@@ -2728,10 +2776,10 @@ TEST_F(EmbeddingIndexTest, BufferEmbeddingIvf_RebuildsAfterMultipleBatches) {
   std::vector<std::string> keys = GetKnownBaseKeys(/*is_ivf=*/true);
   ASSERT_EQ(keys.size(), 1);
   std::string base_key = keys[0];
-  EmbeddingIndex::IvfContextManager ivf_context(base_key);
+  IvfContextManager ivf_context(base_key);
 
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata m1,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata m1,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   EXPECT_EQ(m1.current_size, 15);
   EXPECT_EQ(m1.last_ivf_build_size, 15);
 
@@ -2762,8 +2810,8 @@ TEST_F(EmbeddingIndexTest, BufferEmbeddingIvf_RebuildsAfterMultipleBatches) {
   ICING_ASSERT_OK(embedding_index_->MaintainAllIvf(
       *document_store_, *schema_store_, maintain_options2));
 
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata m2,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata m2,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   // Size grew but build size remains static
   EXPECT_EQ(m2.current_size, 22);
   EXPECT_EQ(m2.last_ivf_build_size, 15);
@@ -2797,8 +2845,8 @@ TEST_F(EmbeddingIndexTest, BufferEmbeddingIvf_RebuildsAfterMultipleBatches) {
       *document_store_, *schema_store_, maintain_options_rebuild));
 
   // Validate successful consecutive cluster rebuilding.
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata m3,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata m3,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   EXPECT_EQ(m3.current_size, 27);
   // Rebuild occurred. last_ivf_build_size snapped forward.
   EXPECT_EQ(m3.last_ivf_build_size, 27);
@@ -2840,16 +2888,16 @@ TEST_F(EmbeddingIndexTest, TransferIndex_WithIvfMetadata) {
   ASSERT_EQ(keys.size(), 1);
   std::string base_key = keys[0];
 
-  EmbeddingIndex::IvfContextManager ivf_context(base_key);
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  IvfContextManager ivf_context(base_key);
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata metadata,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   EXPECT_EQ(metadata.current_size, 2);
   EXPECT_EQ(metadata.last_ivf_build_size, 2);
   EXPECT_GT(metadata.num_clusters, 0);
 
   std::string centroids_key =
       ivf_context.GetPostingListKey(embedding_util::kIvfCentroidsClusterId);
-  ICING_EXPECT_OK(GetPostingListMapper()->Get(centroids_key));
+  EXPECT_TRUE(PostingListExists(centroids_key));
 }
 
 TEST_F(EmbeddingIndexTest, MaintainIvf_IgnoresNotFoundDuringDeletion) {
@@ -2874,11 +2922,10 @@ TEST_F(EmbeddingIndexTest, MaintainIvf_IgnoresNotFoundDuringDeletion) {
   ASSERT_EQ(keys.size(), 1);
   std::string base_key = keys[0];
 
-  EmbeddingIndex::IvfContextManager ivf_context(base_key);
+  IvfContextManager ivf_context(base_key);
   std::string delta_store_key =
       ivf_context.GetPostingListKey(embedding_util::kIvfDeltaStoreClusterId);
-  EXPECT_THAT(GetPostingListMapper()->Get(delta_store_key),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_FALSE(PostingListExists(delta_store_key));
 
   // Add another cluster directly to surpass the rebuild threshold so that it
   // forces a rebuild. 3 >= 2 * (1.0 + 0.2), which crosses the 2.4 threshold.
@@ -2897,8 +2944,8 @@ TEST_F(EmbeddingIndexTest, MaintainIvf_IgnoresNotFoundDuringDeletion) {
   ICING_EXPECT_OK(embedding_index_->MaintainAllIvf(
       *document_store_, *schema_store_, maintain_options));
 
-  ICING_ASSERT_OK_AND_ASSIGN(EmbeddingIndex::IvfMetadata metadata,
-                             ivf_context.GetMetadata(embedding_index_.get()));
+  ICING_ASSERT_OK_AND_ASSIGN(IvfMetadata metadata,
+                             GetMetadata(ivf_context, embedding_index_.get()));
   EXPECT_EQ(metadata.current_size, 3);
   EXPECT_EQ(metadata.last_ivf_build_size, 3);
 }
