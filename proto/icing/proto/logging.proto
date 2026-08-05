@@ -28,7 +28,7 @@ option objc_class_prefix = "ICNG";
 //
 // Note: this enum DOES NOT align with AppSearch's CallType enum.
 message IcingApiCallType {
-  // Next tag: 33
+  // Next tag: 35
   enum Code {
     UNKNOWN = 0;
     PERSIST_TO_DISK = 1;
@@ -63,6 +63,8 @@ message IcingApiCallType {
     GET_DEBUG_INFO = 30;
     RESET = 31;
     CLEAR_AND_DESTROY = 32;
+    HANDLE_EXPIRED_DOCUMENTS = 33;
+    MAINTAIN_ANN_INDEX = 34;
   }
 }
 
