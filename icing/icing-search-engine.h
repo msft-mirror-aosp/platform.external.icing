@@ -818,6 +818,18 @@ class IcingSearchEngine {
       PersistType::Code persist_type, PersistToDiskStatsProto* persist_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
+  // Helper method to persist all data, compile the latency, and transform the
+  // status into the result proto.
+  //
+  // @param persist_type: The type of persistence guarantee that PersistToDisk
+  //                      should provide.
+  // @param persist_to_disk_result: The NON-null object to populate status and
+  //                                stats.
+  void PersistToDiskAndTransformStatusLocked(
+      PersistType::Code persist_type,
+      PersistToDiskResultProto* persist_to_disk_result)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
   // Helper method to persist derived data (excluding document store) with
   // RECOVERY_PROOF mode.
   //

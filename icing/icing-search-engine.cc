@@ -93,6 +93,7 @@
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-manager.h"
+#include "icing/result/result-utils.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/advanced_scoring/score-expression.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
@@ -161,7 +162,8 @@ constexpr std::string_view kDatabaseStablenessLogFilename =
 constexpr int kMaxUnsuccessfulInitAttempts = 5;
 
 libtextclassifier3::Status ValidateResultSpec(
-    const DocumentStore* document_store, const ResultSpecProto& result_spec) {
+    const SchemaStore* schema_store, const DocumentStore* document_store,
+    const ResultSpecProto& result_spec) {
   if (result_spec.num_per_page() < 0) {
     return absl_ports::InvalidArgumentError(
         "ResultSpecProto.num_per_page cannot be negative.");
@@ -181,7 +183,7 @@ libtextclassifier3::Status ValidateResultSpec(
         "ResultSpecProto.num_to_score cannot be non-positive.");
   }
   // Validate ResultGroupings.
-  std::unordered_set<int32_t> unique_entry_ids;
+  std::unordered_set<result_utils::ResultGroupingEntryId> unique_entry_ids;
   ResultSpecProto::ResultGroupingType result_grouping_type =
       result_spec.result_group_type();
   for (const ResultSpecProto::ResultGrouping& result_grouping :
@@ -194,9 +196,10 @@ libtextclassifier3::Status ValidateResultSpec(
          result_grouping.entry_groupings()) {
       const std::string& name_space = entry.namespace_();
       const std::string& schema = entry.schema();
-      std::optional<int32_t> entry_id =
-          document_store->GetResultGroupingEntryId(result_grouping_type,
-                                                   name_space, schema);
+      std::optional<result_utils::ResultGroupingEntryId> entry_id =
+          result_utils::EncodeResultGroupingEntryId(
+              *schema_store, *document_store, result_grouping_type, name_space,
+              schema);
       if (!entry_id.has_value()) {
         continue;
       }
@@ -587,7 +590,8 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_schema_definition_deduping(),
                      options_.enable_delete_propagation_from(),
                      options_.enable_account_property_incompatibility_check(),
-                     options_.schema_store_release_cached_proto_after_use()),
+                     options_.schema_store_release_cached_proto_after_use(),
+                     options_.remove_schema_store_move_assignment()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -1184,7 +1188,7 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
   }
 
   result_state_manager_ = std::make_unique<ResultStateManager>(
-      performance_configuration_.max_num_total_hits, *document_store_);
+      performance_configuration_.max_num_total_hits);
 
   return status;
 }
@@ -1588,7 +1592,10 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
   set_schema_stats->set_schema_store_set_schema_latency_ms(
       overall_timer.timer().GetElapsedMilliseconds());
   set_schema_stats->set_schema_proto_byte_size(
-      set_schema_result.schema_proto_byte_size);
+      set_schema_result.set_schema_stats.schema_proto_byte_size);
+  set_schema_stats->set_schema_store_reinitialization_latency_ms(
+      set_schema_result.set_schema_stats
+          .schema_reinitialization_latency_ms);
 
   libtextclassifier3::Status status;
   if (set_schema_result.success) {
@@ -1923,18 +1930,17 @@ BatchPutResultProto IcingSearchEngine::BatchPut(
 
   WriteDatabaseStablenessLog(IcingApiCallType::BATCH_PUT);
 
+  if (options_.auto_flush() &&
+      put_document_request.persist_type() == PersistType::UNKNOWN) {
+    // If auto_flush is enabled, override the persist type to RECOVERY_PROOF
+    // when type is not set
+    put_document_request.set_persist_type(PersistType::RECOVERY_PROOF);
+  }
+
   if (put_document_request.persist_type() != PersistType::UNKNOWN) {
-    // Measure the latency of the persist process.
-    std::unique_ptr<Timer> persist_timer = clock_->GetNewTimer();
-    PersistToDiskStatsProto* persist_stats =
-        batch_put_result_proto.mutable_persist_to_disk_result_proto()
-            ->mutable_persist_stats();
-    auto status =
-        PersistToDiskLocked(put_document_request.persist_type(), persist_stats);
-    TransformStatus(
-        status, batch_put_result_proto.mutable_persist_to_disk_result_proto()
-                    ->mutable_status());
-    persist_stats->set_latency_ms(persist_timer->GetElapsedMilliseconds());
+    PersistToDiskAndTransformStatusLocked(
+        put_document_request.persist_type(),
+        batch_put_result_proto.mutable_persist_to_disk_result_proto());
   }
 
   batch_put_result_proto.mutable_status()->set_code(StatusProto::OK);
@@ -2389,6 +2395,12 @@ DeleteResultProto IcingSearchEngine::Delete(const std::string_view name_space,
     return result_proto;
   }
 
+  if (options_.auto_flush()) {
+    PersistToDiskAndTransformStatusLocked(
+        PersistType::RECOVERY_PROOF,
+        result_proto.mutable_persist_to_disk_result_proto());
+  }
+
   result_status->set_code(StatusProto::OK);
   return result_proto;
 }
@@ -2422,6 +2434,12 @@ DeleteByNamespaceResultProto IcingSearchEngine::DeleteByNamespace(
   }
 
   WriteDatabaseStablenessLog(IcingApiCallType::DELETE_BY_NAMESPACE);
+
+  if (options_.auto_flush()) {
+    PersistToDiskAndTransformStatusLocked(
+        PersistType::RECOVERY_PROOF,
+        delete_result.mutable_persist_to_disk_result_proto());
+  }
 
   result_status->set_code(StatusProto::OK);
   delete_stats->set_latency_ms(delete_timer->GetElapsedMilliseconds());
@@ -2458,6 +2476,12 @@ DeleteBySchemaTypeResultProto IcingSearchEngine::DeleteBySchemaType(
   }
 
   WriteDatabaseStablenessLog(IcingApiCallType::DELETE_BY_SCHEMA_TYPE);
+
+  if (options_.auto_flush()) {
+    PersistToDiskAndTransformStatusLocked(
+        PersistType::RECOVERY_PROOF,
+        delete_result.mutable_persist_to_disk_result_proto());
+  }
 
   result_status->set_code(StatusProto::OK);
   delete_stats->set_latency_ms(delete_timer->GetElapsedMilliseconds());
@@ -2611,6 +2635,12 @@ DeleteByQueryResultProto IcingSearchEngine::DeleteByQuery(
   }
   delete_stats->set_num_terms(term_count);
 
+  if (options_.auto_flush()) {
+    PersistToDiskAndTransformStatusLocked(
+        PersistType::RECOVERY_PROOF,
+        result_proto.mutable_persist_to_disk_result_proto());
+  }
+
   if (num_deleted > 0) {
     result_proto.mutable_status()->set_code(StatusProto::OK);
   } else {
@@ -2706,6 +2736,10 @@ MaintainAnnIndexResultProto IcingSearchEngine::MaintainAnnIndex(
   if (iterations_or.ok()) {
     result_proto.set_actual_iterations(iterations_or.ValueOrDie());
   }
+
+  // Write database stableness log.
+  WriteDatabaseStablenessLog(IcingApiCallType::MAINTAIN_ANN_INDEX);
+
   TransformStatus(iterations_or.status(), result_status);
   result_proto.set_latency_ms(maintain_timer->GetElapsedMilliseconds());
   return result_proto;
@@ -3260,6 +3294,18 @@ libtextclassifier3::Status IcingSearchEngine::PersistToDiskLocked(
   return libtextclassifier3::Status::OK;
 }
 
+void IcingSearchEngine::PersistToDiskAndTransformStatusLocked(
+    PersistType::Code persist_type,
+    PersistToDiskResultProto* persist_to_disk_result) {
+  // Measure the latency of the persist process.
+  std::unique_ptr<Timer> persist_timer = clock_->GetNewTimer();
+  PersistToDiskStatsProto* persist_stats =
+      persist_to_disk_result->mutable_persist_stats();
+  auto status = PersistToDiskLocked(persist_type, persist_stats);
+  TransformStatus(status, persist_to_disk_result->mutable_status());
+  persist_stats->set_latency_ms(persist_timer->GetElapsedMilliseconds());
+}
+
 libtextclassifier3::Status
 IcingSearchEngine::PersistDerivedDataRecoveryProofLocked(
     PersistToDiskStatsProto* persist_stats) {
@@ -3404,8 +3450,8 @@ SearchResultProto IcingSearchEngine::SearchLocked(
   }
   index_->PublishQueryStats(query_stats);
 
-  libtextclassifier3::Status status =
-      ValidateResultSpec(document_store_.get(), result_spec);
+  libtextclassifier3::Status status = ValidateResultSpec(
+      schema_store_.get(), document_store_.get(), result_spec);
   if (!status.ok()) {
     TransformStatus(status, result_status);
     return result_proto;
@@ -3594,7 +3640,7 @@ SearchResultProto IcingSearchEngine::SearchLocked(
   libtextclassifier3::StatusOr<std::pair<uint64_t, PageResult>>
       page_result_info_or = result_state_manager_->CacheAndRetrieveFirstPage(
           std::move(ranker), std::move(parent_result_adjustment_info),
-          std::move(child_result_adjustment_info), result_spec,
+          std::move(child_result_adjustment_info), result_spec, *schema_store_,
           *document_store_, *result_retriever, current_time_ms, query_stats);
   if (!page_result_info_or.ok()) {
     TransformStatus(page_result_info_or.status(), result_status);
@@ -3950,6 +3996,12 @@ IcingSearchEngine::HandleExpiredDocumentsLocked() {
   *result_proto.mutable_deleted_document_group_info() =
       std::move(expired_docs_group_info).SerializeToProto();
 
+  // Write database stableness log if needed.
+  if (result_proto.num_expired_documents() > 0 ||
+      result_proto.num_propagated_deleted_documents() > 0) {
+    WriteDatabaseStablenessLog(IcingApiCallType::HANDLE_EXPIRED_DOCUMENTS);
+  }
+
   result_status->set_code(StatusProto::OK);
   return result_proto;
 }
@@ -4202,7 +4254,7 @@ IcingSearchEngine::OptimizeDocumentStore(
     }
     document_store_ = std::move(create_result_or.ValueOrDie().document_store);
     result_state_manager_ = std::make_unique<ResultStateManager>(
-        performance_configuration_.max_num_total_hits, *document_store_);
+        performance_configuration_.max_num_total_hits);
 
     // Potential data loss
     // TODO(b/147373249): Find a way to detect true data loss error
@@ -4231,7 +4283,7 @@ IcingSearchEngine::OptimizeDocumentStore(
       std::move(create_result_or).ValueOrDie();
   document_store_ = std::move(create_result.document_store);
   result_state_manager_ = std::make_unique<ResultStateManager>(
-      performance_configuration_.max_num_total_hits, *document_store_);
+      performance_configuration_.max_num_total_hits);
 
   // Deletes tmp directory
   if (!filesystem_->DeleteDirectoryRecursively(

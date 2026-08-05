@@ -86,9 +86,9 @@ DocumentWrapper CreateDocument(int document_id) {
 class ResultStateManagerThreadSafetyTest : public testing::Test {
  protected:
   ResultStateManagerThreadSafetyTest()
-      : test_dir_(GetTestTempDir() + "/icing") {
-    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
-  }
+      : test_dir_(GetTestTempDir() + "/icing"),
+        schema_store_dir_(test_dir_ + "/schema_store"),
+        document_store_dir_(test_dir_ + "/document_store") {}
 
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
@@ -99,6 +99,11 @@ class ResultStateManagerThreadSafetyTest : public testing::Test {
               GetTestFilePath("icing/icu.dat")));
     }
 
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
+
     clock_ = std::make_unique<FakeClock>();
 
     language_segmenter_factory::SegmenterOptions options(ULOC_US);
@@ -107,7 +112,7 @@ class ResultStateManagerThreadSafetyTest : public testing::Test {
         language_segmenter_factory::Create(std::move(options)));
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_, SchemaStore::Create(&filesystem_, test_dir_,
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
                                            clock_.get(), feature_flags_.get()));
     SchemaProto schema;
     schema.add_types()->set_schema_type("Document");
@@ -122,8 +127,8 @@ class ResultStateManagerThreadSafetyTest : public testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
         DocumentStore::Create(
-            &filesystem_, test_dir_, clock_.get(), schema_store_.get(),
-            feature_flags_.get(),
+            &filesystem_, document_store_dir_, clock_.get(),
+            schema_store_.get(), feature_flags_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
             /*pre_mapping_fbv=*/false,
             /*use_persistent_hash_map=*/true,
@@ -143,13 +148,21 @@ class ResultStateManagerThreadSafetyTest : public testing::Test {
   }
 
   void TearDown() override {
-    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+    document_store_.reset();
+    normalizer_.reset();
+    schema_store_.reset();
+    language_segmenter_.reset();
     clock_.reset();
+    feature_flags_.reset();
+
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
   std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   const std::string test_dir_;
+  const std::string schema_store_dir_;
+  const std::string document_store_dir_;
   std::unique_ptr<FakeClock> clock_;
   std::unique_ptr<LanguageSegmenter> language_segmenter_;
   std::unique_ptr<SchemaStore> schema_store_;
@@ -179,8 +192,7 @@ TEST_F(ResultStateManagerThreadSafetyTest,
   }
 
   constexpr int kNumPerPage = 100;
-  ResultStateManager result_state_manager(/*max_total_hits=*/kNumDocuments,
-                                          *document_store_);
+  ResultStateManager result_state_manager(/*max_total_hits=*/kNumDocuments);
 
   // Retrieve the first page.
   // Documents are ordered by score *ascending*, so the first page should
@@ -192,8 +204,8 @@ TEST_F(ResultStateManagerThreadSafetyTest,
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/false),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(kNumPerPage), *document_store_, *result_retriever_,
-          clock_->GetSystemTimeMilliseconds()));
+          CreateResultSpec(kNumPerPage), *schema_store_, *document_store_,
+          *result_retriever_, clock_->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
   for (int i = 0; i < kNumPerPage; ++i) {
     ASSERT_THAT(page_result_info1.second.results[i].score(), Eq(i));
@@ -283,8 +295,7 @@ TEST_F(ResultStateManagerThreadSafetyTest, InvalidateResultStateWhileUsing) {
   }
 
   constexpr int kNumPerPage = 100;
-  ResultStateManager result_state_manager(/*max_total_hits=*/kNumDocuments,
-                                          *document_store_);
+  ResultStateManager result_state_manager(/*max_total_hits=*/kNumDocuments);
 
   // Retrieve the first page.
   // Documents are ordered by score *ascending*, so the first page should
@@ -296,8 +307,8 @@ TEST_F(ResultStateManagerThreadSafetyTest, InvalidateResultStateWhileUsing) {
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/false),
           /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(kNumPerPage), *document_store_, *result_retriever_,
-          clock_->GetSystemTimeMilliseconds()));
+          CreateResultSpec(kNumPerPage), *schema_store_, *document_store_,
+          *result_retriever_, clock_->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
   for (int i = 0; i < kNumPerPage; ++i) {
     ASSERT_THAT(page_result_info1.second.results[i].score(), Eq(i));
@@ -400,7 +411,7 @@ TEST_F(ResultStateManagerThreadSafetyTest, MultipleResultStates) {
   constexpr int kNumThreads = 50;
   constexpr int kNumPerPage = 30;
   ResultStateManager result_state_manager(
-      /*max_total_hits=*/kNumDocuments * kNumThreads, *document_store_);
+      /*max_total_hits=*/kNumDocuments * kNumThreads);
 
   // Create kNumThreads threads to:
   // - Call CacheAndRetrieveFirstPage() once to create its own ResultState.
@@ -429,7 +440,7 @@ TEST_F(ResultStateManagerThreadSafetyTest, MultipleResultStates) {
                 std::move(scored_document_hits_copy), /*is_descending=*/false),
             /*parent_adjustment_info=*/nullptr,
             /*child_adjustment_info=*/nullptr, CreateResultSpec(kNumPerPage),
-            *document_store_, *result_retriever,
+            *schema_store_, *document_store_, *result_retriever,
             clock_->GetSystemTimeMilliseconds()));
     EXPECT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
     for (int i = 0; i < kNumPerPage; ++i) {

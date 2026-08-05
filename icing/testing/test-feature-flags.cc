@@ -32,6 +32,7 @@ FeatureFlags GetTestFeatureFlags() {
       .set_enable_delete_propagation_from(true)
       .set_enable_account_property_incompatibility_check(true)
       .set_schema_store_release_cached_proto_after_use(true)
+      .set_remove_schema_store_move_assignment(true)
       .Build();
 }
 
