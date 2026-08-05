@@ -1,4 +1,4 @@
-// Copyright (C) 2022 Google LLC
+// Copyright (C) 2026 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
+#include "icing/scoring/reverse-vector-no-ranker.h"
 
 #include <memory>
 #include <utility>
@@ -50,7 +50,7 @@ std::vector<JoinedScoredDocumentHit> PopAll(ScoredDocumentHitsRanker& ranker) {
   return hits;
 }
 
-TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldGetCorrectSizeAndEmpty) {
+TEST(ReverseVectorNoRankerTest, ShouldGetCorrectSizeAndEmpty) {
   ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
                                  /*score=*/1);
   ScoredDocumentHit scored_hit_1(/*document_id=*/1, kSectionIdMaskNone,
@@ -58,9 +58,8 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldGetCorrectSizeAndEmpty) {
   ScoredDocumentHit scored_hit_2(/*document_id=*/2, kSectionIdMaskNone,
                                  /*score=*/1);
 
-  PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit> ranker(
-      {scored_hit_1, scored_hit_0, scored_hit_2},
-      /*is_descending=*/true);
+  ReverseVectorNoRanker<ScoredDocumentHit> ranker(
+      {scored_hit_1, scored_hit_0, scored_hit_2});
   EXPECT_THAT(ranker.size(), Eq(3));
   EXPECT_FALSE(ranker.empty());
 
@@ -77,7 +76,7 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldGetCorrectSizeAndEmpty) {
   EXPECT_TRUE(ranker.empty());
 }
 
-TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldRankInDescendingOrder) {
+TEST(ReverseVectorNoRankerTest, ShouldPopHitsInReverseVectorOrder) {
   ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
                                  /*score=*/1);
   ScoredDocumentHit scored_hit_1(/*document_id=*/1, kSectionIdMaskNone,
@@ -89,90 +88,27 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldRankInDescendingOrder) {
   ScoredDocumentHit scored_hit_4(/*document_id=*/4, kSectionIdMaskNone,
                                  /*score=*/1);
 
-  PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit> ranker(
-      {scored_hit_1, scored_hit_0, scored_hit_2, scored_hit_4, scored_hit_3},
-      /*is_descending=*/true);
+  ReverseVectorNoRanker<ScoredDocumentHit> ranker(
+      {scored_hit_1, scored_hit_0, scored_hit_2, scored_hit_4, scored_hit_3});
 
   EXPECT_THAT(ranker, SizeIs(5));
   std::vector<JoinedScoredDocumentHit> scored_document_hits = PopAll(ranker);
   EXPECT_THAT(
       scored_document_hits,
-      ElementsAre(EqualsJoinedScoredDocumentHit(converter(scored_hit_4)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_3)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_2)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_1)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_0))));
-}
-
-TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldRankInAscendingOrder) {
-  ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
-                                 /*score=*/1);
-  ScoredDocumentHit scored_hit_1(/*document_id=*/1, kSectionIdMaskNone,
-                                 /*score=*/1);
-  ScoredDocumentHit scored_hit_2(/*document_id=*/2, kSectionIdMaskNone,
-                                 /*score=*/1);
-  ScoredDocumentHit scored_hit_3(/*document_id=*/3, kSectionIdMaskNone,
-                                 /*score=*/1);
-  ScoredDocumentHit scored_hit_4(/*document_id=*/4, kSectionIdMaskNone,
-                                 /*score=*/1);
-
-  PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit> ranker(
-      {scored_hit_1, scored_hit_0, scored_hit_2, scored_hit_4, scored_hit_3},
-      /*is_descending=*/false);
-
-  EXPECT_THAT(ranker, SizeIs(5));
-  std::vector<JoinedScoredDocumentHit> scored_document_hits = PopAll(ranker);
-  EXPECT_THAT(
-      scored_document_hits,
-      ElementsAre(EqualsJoinedScoredDocumentHit(converter(scored_hit_0)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_1)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_2)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_3)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_4))));
-}
-
-TEST(PriorityQueueScoredDocumentHitsRankerTest,
-     ShouldRankDuplicateScoredDocumentHits) {
-  ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
-                                 /*score=*/1);
-  ScoredDocumentHit scored_hit_1(/*document_id=*/1, kSectionIdMaskNone,
-                                 /*score=*/1);
-  ScoredDocumentHit scored_hit_2(/*document_id=*/2, kSectionIdMaskNone,
-                                 /*score=*/1);
-  ScoredDocumentHit scored_hit_3(/*document_id=*/3, kSectionIdMaskNone,
-                                 /*score=*/1);
-  ScoredDocumentHit scored_hit_4(/*document_id=*/4, kSectionIdMaskNone,
-                                 /*score=*/1);
-
-  PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit> ranker(
-      {scored_hit_2, scored_hit_4, scored_hit_1, scored_hit_0, scored_hit_2,
-       scored_hit_2, scored_hit_4, scored_hit_3},
-      /*is_descending=*/true);
-
-  EXPECT_THAT(ranker, SizeIs(8));
-  std::vector<JoinedScoredDocumentHit> scored_document_hits = PopAll(ranker);
-  EXPECT_THAT(
-      scored_document_hits,
-      ElementsAre(EqualsJoinedScoredDocumentHit(converter(scored_hit_4)),
+      ElementsAre(EqualsJoinedScoredDocumentHit(converter(scored_hit_3)),
                   EqualsJoinedScoredDocumentHit(converter(scored_hit_4)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_3)),
                   EqualsJoinedScoredDocumentHit(converter(scored_hit_2)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_2)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_2)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_1)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_0))));
+                  EqualsJoinedScoredDocumentHit(converter(scored_hit_0)),
+                  EqualsJoinedScoredDocumentHit(converter(scored_hit_1))));
 }
 
-TEST(PriorityQueueScoredDocumentHitsRankerTest,
-     ShouldRankEmptyScoredDocumentHits) {
-  PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit> ranker(
-      /*scored_document_hits=*/{},
-      /*is_descending=*/true);
+TEST(ReverseVectorNoRankerTest, EmptyScoredDocumentHits) {
+  ReverseVectorNoRanker<ScoredDocumentHit> ranker(
+      /*scored_document_hits=*/{});
   EXPECT_THAT(ranker, IsEmpty());
 }
 
-TEST(PriorityQueueScoredDocumentHitsRankerTest,
-     ScoredDocumentHitsGetTopKDocumentIds) {
+TEST(ReverseVectorNoRankerTest, ScoredDocumentHitsGetTopKDocumentIds) {
   ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
                                  /*score=*/0);
   ScoredDocumentHit scored_hit_1(/*document_id=*/1, kSectionIdMaskNone,
@@ -183,16 +119,15 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest,
                                  /*score=*/3);
   ScoredDocumentHit scored_hit_4(/*document_id=*/4, kSectionIdMaskNone,
                                  /*score=*/2);
-  PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit> ranker(
-      {scored_hit_0, scored_hit_1, scored_hit_2, scored_hit_3, scored_hit_4},
-      /*is_descending=*/true);
+  ReverseVectorNoRanker<ScoredDocumentHit> ranker(
+      {scored_hit_0, scored_hit_1, scored_hit_2, scored_hit_3, scored_hit_4});
 
-  EXPECT_THAT(ranker.GetTopKDocumentIds(2), UnorderedElementsAre(2, 3));
+  EXPECT_THAT(ranker.GetTopKDocumentIds(2), UnorderedElementsAre(4, 3));
   EXPECT_THAT(ranker.GetTopKDocumentIds(5),
-              UnorderedElementsAre(4, 2, 3, 1, 0));
+              UnorderedElementsAre(4, 3, 2, 1, 0));
   // k > size
   EXPECT_THAT(ranker.GetTopKDocumentIds(10),
-              UnorderedElementsAre(4, 2, 3, 1, 0));
+              UnorderedElementsAre(4, 3, 2, 1, 0));
   // 0 and negative values should return empty.
   EXPECT_THAT(ranker.GetTopKDocumentIds(0), IsEmpty());
   EXPECT_THAT(ranker.GetTopKDocumentIds(-1), IsEmpty());
@@ -202,15 +137,14 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest,
   std::vector<JoinedScoredDocumentHit> scored_document_hits = PopAll(ranker);
   EXPECT_THAT(
       scored_document_hits,
-      ElementsAre(EqualsJoinedScoredDocumentHit(converter(scored_hit_2)),
+      ElementsAre(EqualsJoinedScoredDocumentHit(converter(scored_hit_4)),
                   EqualsJoinedScoredDocumentHit(converter(scored_hit_3)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_4)),
+                  EqualsJoinedScoredDocumentHit(converter(scored_hit_2)),
                   EqualsJoinedScoredDocumentHit(converter(scored_hit_1)),
                   EqualsJoinedScoredDocumentHit(converter(scored_hit_0))));
 }
 
-TEST(PriorityQueueScoredDocumentHitsRankerTest,
-     JoinedScoredDocumentHitsGetTopKDocumentIds) {
+TEST(ReverseVectorNoRankerTest, JoinedScoredDocumentHitsGetTopKDocumentIds) {
   ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
                                  /*score=*/0);
   ScoredDocumentHit scored_hit_1(/*document_id=*/1, kSectionIdMaskNone,
@@ -241,15 +175,14 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest,
       /*final_score=*/1, /*parent_scored_document_hit=*/scored_hit_7,
       /*child_scored_document_hits=*/{});
 
-  PriorityQueueScoredDocumentHitsRanker<JoinedScoredDocumentHit> ranker(
+  ReverseVectorNoRanker<JoinedScoredDocumentHit> ranker(
       {joined_scored_hit_0, joined_scored_hit_1, joined_scored_hit_2,
-       joined_scored_hit_3},
-      /*is_descending=*/true);
+       joined_scored_hit_3});
 
-  EXPECT_THAT(ranker.GetTopKDocumentIds(1), UnorderedElementsAre(3));
-  EXPECT_THAT(ranker.GetTopKDocumentIds(2), UnorderedElementsAre(3, 0));
+  EXPECT_THAT(ranker.GetTopKDocumentIds(1), UnorderedElementsAre(7));
+  EXPECT_THAT(ranker.GetTopKDocumentIds(2), UnorderedElementsAre(7, 6));
   // k > size
-  EXPECT_THAT(ranker.GetTopKDocumentIds(5), UnorderedElementsAre(3, 6, 0, 7));
+  EXPECT_THAT(ranker.GetTopKDocumentIds(5), UnorderedElementsAre(7, 6, 3, 0));
   // 0 and negative values should return empty.
   EXPECT_THAT(ranker.GetTopKDocumentIds(0), IsEmpty());
   EXPECT_THAT(ranker.GetTopKDocumentIds(-2), IsEmpty());
@@ -258,13 +191,13 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest,
   EXPECT_THAT(ranker, SizeIs(4));
   std::vector<JoinedScoredDocumentHit> scored_document_hits = PopAll(ranker);
   EXPECT_THAT(scored_document_hits,
-              ElementsAre(EqualsJoinedScoredDocumentHit(joined_scored_hit_1),
-                          EqualsJoinedScoredDocumentHit(joined_scored_hit_0),
+              ElementsAre(EqualsJoinedScoredDocumentHit(joined_scored_hit_3),
                           EqualsJoinedScoredDocumentHit(joined_scored_hit_2),
-                          EqualsJoinedScoredDocumentHit(joined_scored_hit_3)));
+                          EqualsJoinedScoredDocumentHit(joined_scored_hit_1),
+                          EqualsJoinedScoredDocumentHit(joined_scored_hit_0)));
 }
 
-TEST(PriorityQueueScoredDocumentHitsRankerTest,
+TEST(ReverseVectorNoRankerTest,
      ScoredDocumentHitsGetTopKChildDocumentIds_returnsEmpty) {
   ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
                                  /*score=*/0);
@@ -276,9 +209,8 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest,
                                  /*score=*/3);
   ScoredDocumentHit scored_hit_4(/*document_id=*/4, kSectionIdMaskNone,
                                  /*score=*/2);
-  PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit> ranker(
-      {scored_hit_0, scored_hit_1, scored_hit_2, scored_hit_3, scored_hit_4},
-      /*is_descending=*/true);
+  ReverseVectorNoRanker<ScoredDocumentHit> ranker(
+      {scored_hit_0, scored_hit_1, scored_hit_2, scored_hit_3, scored_hit_4});
 
   EXPECT_THAT(ranker.GetTopKChildDocumentIds(2), IsEmpty());
   EXPECT_THAT(ranker.GetTopKChildDocumentIds(5), IsEmpty());
@@ -293,14 +225,14 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest,
   std::vector<JoinedScoredDocumentHit> scored_document_hits = PopAll(ranker);
   EXPECT_THAT(
       scored_document_hits,
-      ElementsAre(EqualsJoinedScoredDocumentHit(converter(scored_hit_2)),
+      ElementsAre(EqualsJoinedScoredDocumentHit(converter(scored_hit_4)),
                   EqualsJoinedScoredDocumentHit(converter(scored_hit_3)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_4)),
+                  EqualsJoinedScoredDocumentHit(converter(scored_hit_2)),
                   EqualsJoinedScoredDocumentHit(converter(scored_hit_1)),
                   EqualsJoinedScoredDocumentHit(converter(scored_hit_0))));
 }
 
-TEST(PriorityQueueScoredDocumentHitsRankerTest,
+TEST(ReverseVectorNoRankerTest,
      JoinedScoredDocumentHitsGetTopKChildDocumentIds) {
   ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
                                  /*score=*/0);
@@ -332,17 +264,16 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest,
       /*final_score=*/1, /*parent_scored_document_hit=*/scored_hit_7,
       /*child_scored_document_hits=*/{});
 
-  PriorityQueueScoredDocumentHitsRanker<JoinedScoredDocumentHit> ranker(
+  ReverseVectorNoRanker<JoinedScoredDocumentHit> ranker(
       {joined_scored_hit_0, joined_scored_hit_1, joined_scored_hit_2,
-       joined_scored_hit_3},
-      /*is_descending=*/true);
+       joined_scored_hit_3});
 
-  EXPECT_THAT(ranker.GetTopKChildDocumentIds(1), UnorderedElementsAre(1, 4, 5));
+  EXPECT_THAT(ranker.GetTopKChildDocumentIds(1), UnorderedElementsAre(5, 4, 1));
   EXPECT_THAT(ranker.GetTopKChildDocumentIds(2),
-              UnorderedElementsAre(1, 2, 4, 5));
+              UnorderedElementsAre(5, 4, 1, 2));
   // k > size
   EXPECT_THAT(ranker.GetTopKChildDocumentIds(5),
-              UnorderedElementsAre(1, 2, 4, 5));
+              UnorderedElementsAre(5, 4, 1, 2));
   // 0 and negative values should return empty.
   EXPECT_THAT(ranker.GetTopKChildDocumentIds(0), IsEmpty());
   EXPECT_THAT(ranker.GetTopKChildDocumentIds(-2), IsEmpty());
@@ -351,13 +282,13 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest,
   EXPECT_THAT(ranker, SizeIs(4));
   std::vector<JoinedScoredDocumentHit> scored_document_hits = PopAll(ranker);
   EXPECT_THAT(scored_document_hits,
-              ElementsAre(EqualsJoinedScoredDocumentHit(joined_scored_hit_1),
-                          EqualsJoinedScoredDocumentHit(joined_scored_hit_0),
+              ElementsAre(EqualsJoinedScoredDocumentHit(joined_scored_hit_3),
                           EqualsJoinedScoredDocumentHit(joined_scored_hit_2),
-                          EqualsJoinedScoredDocumentHit(joined_scored_hit_3)));
+                          EqualsJoinedScoredDocumentHit(joined_scored_hit_1),
+                          EqualsJoinedScoredDocumentHit(joined_scored_hit_0)));
 }
 
-TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldTruncateToNewSize) {
+TEST(ReverseVectorNoRankerTest, ShouldTruncateToNewSize) {
   ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
                                  /*score=*/1);
   ScoredDocumentHit scored_hit_1(/*document_id=*/1, kSectionIdMaskNone,
@@ -369,9 +300,8 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldTruncateToNewSize) {
   ScoredDocumentHit scored_hit_4(/*document_id=*/4, kSectionIdMaskNone,
                                  /*score=*/1);
 
-  PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit> ranker(
-      {scored_hit_1, scored_hit_0, scored_hit_2, scored_hit_4, scored_hit_3},
-      /*is_descending=*/true);
+  ReverseVectorNoRanker<ScoredDocumentHit> ranker(
+      {scored_hit_1, scored_hit_0, scored_hit_2, scored_hit_4, scored_hit_3});
   ASSERT_THAT(ranker, SizeIs(5));
 
   ranker.TruncateHitsTo(/*new_size=*/3);
@@ -379,12 +309,12 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldTruncateToNewSize) {
   std::vector<JoinedScoredDocumentHit> scored_document_hits = PopAll(ranker);
   EXPECT_THAT(
       scored_document_hits,
-      ElementsAre(EqualsJoinedScoredDocumentHit(converter(scored_hit_4)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_3)),
+      ElementsAre(EqualsJoinedScoredDocumentHit(converter(scored_hit_3)),
+                  EqualsJoinedScoredDocumentHit(converter(scored_hit_4)),
                   EqualsJoinedScoredDocumentHit(converter(scored_hit_2))));
 }
 
-TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldTruncateToZero) {
+TEST(ReverseVectorNoRankerTest, ShouldTruncateToZero) {
   ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
                                  /*score=*/1);
   ScoredDocumentHit scored_hit_1(/*document_id=*/1, kSectionIdMaskNone,
@@ -396,16 +326,15 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldTruncateToZero) {
   ScoredDocumentHit scored_hit_4(/*document_id=*/4, kSectionIdMaskNone,
                                  /*score=*/1);
 
-  PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit> ranker(
-      {scored_hit_1, scored_hit_0, scored_hit_2, scored_hit_4, scored_hit_3},
-      /*is_descending=*/true);
+  ReverseVectorNoRanker<ScoredDocumentHit> ranker(
+      {scored_hit_1, scored_hit_0, scored_hit_2, scored_hit_4, scored_hit_3});
   ASSERT_THAT(ranker, SizeIs(5));
 
   ranker.TruncateHitsTo(/*new_size=*/0);
   EXPECT_THAT(ranker, IsEmpty());
 }
 
-TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldNotTruncateToNegative) {
+TEST(ReverseVectorNoRankerTest, ShouldNotTruncateToNegative) {
   ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
                                  /*score=*/1);
   ScoredDocumentHit scored_hit_1(/*document_id=*/1, kSectionIdMaskNone,
@@ -417,9 +346,8 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldNotTruncateToNegative) {
   ScoredDocumentHit scored_hit_4(/*document_id=*/4, kSectionIdMaskNone,
                                  /*score=*/1);
 
-  PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit> ranker(
-      {scored_hit_1, scored_hit_0, scored_hit_2, scored_hit_4, scored_hit_3},
-      /*is_descending=*/true);
+  ReverseVectorNoRanker<ScoredDocumentHit> ranker(
+      {scored_hit_1, scored_hit_0, scored_hit_2, scored_hit_4, scored_hit_3});
   ASSERT_THAT(ranker, SizeIs(Eq(5)));
 
   ranker.TruncateHitsTo(/*new_size=*/-1);
@@ -428,14 +356,14 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest, ShouldNotTruncateToNegative) {
   std::vector<JoinedScoredDocumentHit> scored_document_hits = PopAll(ranker);
   EXPECT_THAT(
       scored_document_hits,
-      ElementsAre(EqualsJoinedScoredDocumentHit(converter(scored_hit_4)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_3)),
+      ElementsAre(EqualsJoinedScoredDocumentHit(converter(scored_hit_3)),
+                  EqualsJoinedScoredDocumentHit(converter(scored_hit_4)),
                   EqualsJoinedScoredDocumentHit(converter(scored_hit_2)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_1)),
-                  EqualsJoinedScoredDocumentHit(converter(scored_hit_0))));
+                  EqualsJoinedScoredDocumentHit(converter(scored_hit_0)),
+                  EqualsJoinedScoredDocumentHit(converter(scored_hit_1))));
 }
 
-TEST(PriorityQueueScoredDocumentHitsRankerTest, OptimizeAndTransfer) {
+TEST(ReverseVectorNoRankerTest, OptimizeAndTransfer) {
   ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
                                  /*score=*/100);
   ScoredDocumentHit scored_hit_1(/*document_id=*/1, kSectionIdMaskNone,
@@ -453,10 +381,9 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest, OptimizeAndTransfer) {
   ScoredDocumentHit scored_hit_7(/*document_id=*/7, kSectionIdMaskNone,
                                  /*score=*/107);
 
-  PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit> ranker(
+  ReverseVectorNoRanker<ScoredDocumentHit> ranker(
       {scored_hit_6, scored_hit_1, scored_hit_0, scored_hit_7, scored_hit_2,
-       scored_hit_5, scored_hit_4, scored_hit_3},
-      /*is_descending=*/false);
+       scored_hit_5, scored_hit_4, scored_hit_3});
 
   // Create a mapping from old document ids to new document ids.
   // 0 -> kInvalidDocumentId
@@ -483,22 +410,21 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest, OptimizeAndTransfer) {
   EXPECT_THAT(
       scored_document_hits,
       ElementsAre(EqualsJoinedScoredDocumentHit(converter(ScoredDocumentHit(
-                      /*document_id=*/0, kSectionIdMaskNone,
-                      /*score=*/101))),  // 1 -> 0
-                  EqualsJoinedScoredDocumentHit(converter(ScoredDocumentHit(
                       /*document_id=*/1, kSectionIdMaskNone,
                       /*score=*/104))),  // 4 -> 1
                   EqualsJoinedScoredDocumentHit(converter(ScoredDocumentHit(
                       /*document_id=*/2, kSectionIdMaskNone,
                       /*score=*/105))),  // 5 -> 2
                   EqualsJoinedScoredDocumentHit(converter(ScoredDocumentHit(
+                      /*document_id=*/0, kSectionIdMaskNone,
+                      /*score=*/101))),  // 1 -> 0
+                  EqualsJoinedScoredDocumentHit(converter(ScoredDocumentHit(
                       /*document_id=*/3, kSectionIdMaskNone,
                       /*score=*/106)))  // 6 -> 3
                   ));
 }
 
-TEST(PriorityQueueScoredDocumentHitsRankerTest,
-     OptimizeAndTransfer_allHitsDeleted) {
+TEST(ReverseVectorNoRankerTest, OptimizeAndTransfer_allHitsDeleted) {
   ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
                                  /*score=*/100);
   ScoredDocumentHit scored_hit_1(/*document_id=*/1, kSectionIdMaskNone,
@@ -512,10 +438,9 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest,
   ScoredDocumentHit scored_hit_5(/*document_id=*/5, kSectionIdMaskNone,
                                  /*score=*/105);
 
-  PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit> ranker(
-      {scored_hit_1, scored_hit_0, scored_hit_2, scored_hit_5, scored_hit_4,
-       scored_hit_3},
-      /*is_descending=*/false);
+  ReverseVectorNoRanker<ScoredDocumentHit> ranker({scored_hit_1, scored_hit_0,
+                                                   scored_hit_2, scored_hit_5,
+                                                   scored_hit_4, scored_hit_3});
 
   // Create a mapping from old document ids to new document ids.
   // 0 -> kInvalidDocumentId
@@ -538,15 +463,13 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest,
   EXPECT_THAT(scored_document_hits, IsEmpty());
 }
 
-TEST(PriorityQueueScoredDocumentHitsRankerTest,
-     OptimizeAndTransfer_outOfBoundDocId) {
+TEST(ReverseVectorNoRankerTest, OptimizeAndTransfer_outOfBoundDocId) {
   ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
                                  /*score=*/100);
   ScoredDocumentHit scored_hit_1(/*document_id=*/1, kSectionIdMaskNone,
                                  /*score=*/101);
 
-  PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit> ranker(
-      {scored_hit_1, scored_hit_0}, /*is_descending=*/false);
+  ReverseVectorNoRanker<ScoredDocumentHit> ranker({scored_hit_1, scored_hit_0});
 
   // Create a mapping from old document ids to new document ids.
   // 0 -> kInvalidDocumentId
@@ -568,8 +491,7 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest,
                   ));
 }
 
-TEST(PriorityQueueScoredDocumentHitsRankerTest,
-     OptimizeAndTransfer_joinedScoredDocumentHit) {
+TEST(ReverseVectorNoRankerTest, OptimizeAndTransfer_joinedScoredDocumentHit) {
   ScoredDocumentHit parent_scored_document_hit1(/*document_id=*/4,
                                                 /*section_id_mask=*/49,
                                                 /*score=*/104);
@@ -619,8 +541,8 @@ TEST(PriorityQueueScoredDocumentHitsRankerTest,
       /*final_score=*/39.21, std::move(parent_scored_document_hit3),
       std::move(child_scored_document_hits3));
 
-  PriorityQueueScoredDocumentHitsRanker<JoinedScoredDocumentHit> ranker(
-      {joined_hit1, joined_hit2, joined_hit3}, /*is_descending=*/false);
+  ReverseVectorNoRanker<JoinedScoredDocumentHit> ranker(
+      {joined_hit1, joined_hit2, joined_hit3});
 
   // Create a mapping from old document ids to new document ids.
   // 0 -> kInvalidDocumentId

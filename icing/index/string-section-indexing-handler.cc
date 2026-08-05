@@ -20,6 +20,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/index.h"
 #include "icing/proto/logging.pb.h"
 #include "icing/proto/schema.pb.h"
@@ -78,6 +79,12 @@ libtextclassifier3::Status StringSectionIndexingHandler::Handle(
               normalizer_.NormalizeTerm(token);
           status = editor.BufferTerm(normalized_term.text,
                                      section.metadata.term_match_type);
+      }
+
+      if (absl_ports::IsInvalidArgument(status)) {
+        ICING_LOG(WARNING) << "Failed to add an invalid token to the index: "
+                           << status.error_message() << ". Skip this token.";
+        status = libtextclassifier3::Status::OK;
       }
 
       if (!status.ok()) {

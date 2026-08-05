@@ -132,6 +132,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_document_store_namespace_id_fingerprint(true);
   icing_options.set_enable_delete_propagation_from(false);
+  icing_options.set_remove_schema_store_move_assignment(true);
   return icing_options;
 }
 
@@ -5136,6 +5137,11 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaStatsArePopulated) {
       set_schema_result.set_schema_stats().schema_store_set_schema_latency_ms(),
       Eq(1000));
   EXPECT_GT(set_schema_result.set_schema_stats().schema_proto_byte_size(), 0);
+  if (GetDefaultIcingOptions().remove_schema_store_move_assignment()) {
+    EXPECT_THAT(set_schema_result.set_schema_stats()
+                    .schema_store_reinitialization_latency_ms(),
+                Eq(1000));
+  }
 
   // Put a document to trigger index restoration later.
   DocumentProto message_document =
@@ -5190,6 +5196,11 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaStatsArePopulated) {
                   .scorable_property_cache_regeneration_latency_ms(),
               Eq(1000));
   EXPECT_GT(set_schema_result.set_schema_stats().schema_proto_byte_size(), 0);
+  if (GetDefaultIcingOptions().remove_schema_store_move_assignment()) {
+    EXPECT_THAT(set_schema_result.set_schema_stats()
+                    .schema_store_reinitialization_latency_ms(),
+                Eq(1000));
+  }
 
   // Clear schema -- this should trigger and update document store and set
   // latencies for document store update schema
@@ -5207,8 +5218,11 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaStatsArePopulated) {
   EXPECT_THAT(set_schema_result.set_schema_stats()
                   .document_store_optimized_update_schema_latency_ms(),
               Eq(1000));
-  EXPECT_THAT(set_schema_result.set_schema_stats().schema_proto_byte_size(),
-              Eq(0));
+  if (GetDefaultIcingOptions().remove_schema_store_move_assignment()) {
+    EXPECT_THAT(set_schema_result.set_schema_stats()
+                    .schema_store_reinitialization_latency_ms(),
+                Eq(1000));
+  }
 }
 
 TEST_F(IcingSearchEngineSchemaTest,

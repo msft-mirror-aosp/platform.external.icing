@@ -124,6 +124,8 @@ class MonkeyDocumentGenerator {
   std::string GetUri() const;
   std::string GetUriWithRange(int l, int r) const;
 
+  int GetRandomInt32Value() const;
+
   int GetNumTokens() const;
 
   int GetNumVectors(PropertyConfigProto::Cardinality::Code cardinality) const;
