@@ -20,14 +20,20 @@ namespace icing {
 namespace lib {
 
 FeatureFlags GetTestFeatureFlags() {
-  return FeatureFlags(/*enable_circular_schema_definitions=*/true,
-                      /*enable_scorable_properties=*/true,
-                      /*enable_embedding_quantization=*/true,
-                      /*enable_repeated_field_joins=*/true,
-                      /*enable_embedding_backup_generation=*/true,
-                      /*enable_schema_database=*/true,
-                      /*release_backup_schema_file_if_overlay_present=*/true,
-                      /*enable_strict_page_byte_size_limit=*/true);
+  return FeatureFlagsBuilder()
+      .set_allow_circular_schema_definitions(true)
+      .set_enable_repeated_field_joins(true)
+      .set_enable_embedding_backup_generation(true)
+      .set_enable_optimize_improvements(true)
+      .set_expired_document_purge_threshold_ms(0)
+      .set_enable_non_existent_qualified_id_join(true)
+      .set_enable_skip_set_schema_type_equality_check(true)
+      .set_enable_schema_definition_deduping(true)
+      .set_enable_delete_propagation_from(true)
+      .set_enable_account_property_incompatibility_check(true)
+      .set_schema_store_release_cached_proto_after_use(true)
+      .set_remove_schema_store_move_assignment(true)
+      .Build();
 }
 
 }  // namespace lib
