@@ -15,13 +15,15 @@
 #include "icing/result/result-state-v2.h"
 
 #include <atomic>
-#include <cstdint>
 #include <memory>
-#include <string>
+#include <optional>
+#include <utility>
 #include <vector>
 
 #include "icing/proto/search.pb.h"
 #include "icing/result/result-adjustment-info.h"
+#include "icing/result/result-utils.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-store.h"
 
@@ -32,7 +34,8 @@ ResultStateV2::ResultStateV2(
     std::unique_ptr<ScoredDocumentHitsRanker> scored_document_hits_ranker_in,
     std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
     std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
-    const ResultSpecProto& result_spec, const DocumentStore& document_store)
+    const ResultSpecProto& result_spec, const SchemaStore& schema_store,
+    const DocumentStore& document_store)
     : scored_document_hits_ranker(std::move(scored_document_hits_ranker_in)),
       num_returned(0),
       parent_adjustment_info_(std::move(parent_adjustment_info)),
@@ -46,19 +49,18 @@ ResultStateV2::ResultStateV2(
       result_group_type_(result_spec.result_group_type()) {
   for (const ResultSpecProto::ResultGrouping& result_grouping :
        result_spec.result_groupings()) {
-    int group_id = group_result_limits.size();
+    int new_group_index = static_cast<int>(group_result_limits.size());
     group_result_limits.push_back(result_grouping.max_results());
     for (const ResultSpecProto::ResultGrouping::Entry& entry :
          result_grouping.entry_groupings()) {
-      const std::string& name_space = entry.namespace_();
-      const std::string& schema = entry.schema();
-      auto entry_id_or = document_store.GetResultGroupingEntryId(
-          result_group_type_, name_space, schema);
-      if (!entry_id_or.ok()) {
+      std::optional<result_utils::ResultGroupingEntryId> entry_id =
+          result_utils::EncodeResultGroupingEntryId(
+              schema_store, document_store, result_group_type_,
+              entry.namespace_(), entry.schema());
+      if (!entry_id.has_value()) {
         continue;
       }
-      int32_t entry_id = entry_id_or.ValueOrDie();
-      entry_id_group_id_map_.insert({entry_id, group_id});
+      entry_id_group_index_map_.insert({*entry_id, new_group_index});
     }
   }
 }

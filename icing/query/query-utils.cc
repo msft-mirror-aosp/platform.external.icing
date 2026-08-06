@@ -14,13 +14,16 @@
 
 #include "icing/query/query-utils.h"
 
+#include <cstdint>
+#include <memory>
 #include <string_view>
 #include <unordered_set>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
-#include "icing/index/iterator/doc-hit-info-iterator-filter.h"
+#include "icing/index/iterator/document-filter-predicate.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-filter-data.h"
+#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/store/namespace-id.h"
 
@@ -59,25 +62,85 @@ std::unordered_set<SchemaTypeId> ConvertExactSchemaTypeToIds(
   return ids;
 }
 
+class DocumentFilterPredicateBySchemaAndNamespace
+    : public DocumentFilterPredicate {
+ public:
+  DocumentFilterPredicateBySchemaAndNamespace(
+      const SearchSpecProto& search_spec, const DocumentStore& document_store,
+      const SchemaStore& schema_store, int64_t current_time_ms)
+      : document_store_(document_store), current_time_ms_(current_time_ms) {
+    // Precompute all the NamespaceIds
+    filter_by_namespace_id_enabled = !search_spec.namespace_filters().empty();
+    target_namespace_ids = ConvertNamespaceToIds(document_store, search_spec);
+
+    // Precompute all the SchemaTypeIds
+    filter_by_schema_type_id_enabled =
+        !search_spec.schema_type_filters().empty();
+    target_schema_type_ids =
+        ConvertExactSchemaTypeToIds(schema_store, search_spec);
+  }
+
+  bool operator()(DocumentId document_id) const override {
+    // Try to get the DocumentFilterData
+    auto document_filter_data = document_store_.GetAliveDocumentFilterData(
+        document_id, current_time_ms_);
+    if (!document_filter_data) {
+      // Didn't find the DocumentFilterData in the filter cache. This could be
+      // because the Document doesn't exist or the DocumentId isn't valid or the
+      // filter cache is in some invalid state. This is bad, but not the query's
+      // responsibility to fix, so just skip this result for now.
+      return false;
+    }
+    // We should be guaranteed that filter data exists now.
+    if (filter_by_namespace_id_enabled &&
+        target_namespace_ids.count(document_filter_data->namespace_id()) == 0) {
+      // Doesn't match one of the specified namespaces.
+      return false;
+    }
+
+    if (filter_by_schema_type_id_enabled &&
+        target_schema_type_ids.count(document_filter_data->schema_type_id()) ==
+            0) {
+      // Doesn't match one of the specified schema types.
+      return false;
+    }
+
+    return true;
+  }
+
+ private:
+  // List of namespace ids that documents must have.
+  // filter_by_namespace_id_enabled=false means that all namespaces are valid,
+  // and no documents will be filtered out.
+  //
+  // Note that if we want to reference the strings in namespaces later, ensure
+  // that the caller who passed the Options class outlives the
+  // DocHitInfoIteratorFilter.
+  std::unordered_set<NamespaceId> target_namespace_ids;
+
+  // List of schema type ids that documents must have.
+  // filter_by_schema_type_id_enabled=false means that all schema types are
+  // valid, and no documents will be filtered out.
+  //
+  // Note that if we want to reference the strings in schema types later,
+  // ensure that the caller who passed the Options class outlives the
+  // DocHitInfoIteratorFilter.
+  std::unordered_set<SchemaTypeId> target_schema_type_ids;
+
+  bool filter_by_schema_type_id_enabled = false;
+  bool filter_by_namespace_id_enabled = false;
+
+  const DocumentStore& document_store_;
+  int64_t current_time_ms_;
+};
+
 }  // namespace
 
-DocHitInfoIteratorFilter::Options GetFilterOptions(
+std::unique_ptr<DocumentFilterPredicate> GetFilterPredicateBySchemaAndNamespace(
     const SearchSpecProto& search_spec, const DocumentStore& document_store,
-    const SchemaStore& schema_store) {
-  DocHitInfoIteratorFilter::Options options;
-
-  // Precompute all the NamespaceIds
-  options.filter_by_namespace_id_enabled =
-      !search_spec.namespace_filters().empty();
-  options.target_namespace_ids =
-      ConvertNamespaceToIds(document_store, search_spec);
-
-  // Precompute all the SchemaTypeIds
-  options.filter_by_schema_type_id_enabled =
-      !search_spec.schema_type_filters().empty();
-  options.target_schema_type_ids =
-      ConvertExactSchemaTypeToIds(schema_store, search_spec);
-  return options;
+    const SchemaStore& schema_store, int64_t current_time_ms) {
+  return std::make_unique<DocumentFilterPredicateBySchemaAndNamespace>(
+      search_spec, document_store, schema_store, current_time_ms);
 }
 
 }  // namespace lib

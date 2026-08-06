@@ -32,9 +32,12 @@
 #include "icing/file/persistent-storage.h"
 #include "icing/join/document-join-id-pair.h"
 #include "icing/join/qualified-id-join-index.h"
+#include "icing/join/qualified-id.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
+#include "icing/store/key-mapper.h"
 #include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/util/crc32.h"
@@ -143,8 +146,8 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
 
   ~QualifiedIdJoinIndexImplV3() override;
 
-  // Puts new join data into the index: adds a new child document and its
-  // referenced parent documents into the join index.
+  // (Deprecated) Puts new join data into the index: adds a new child document
+  // and its referenced parent documents into the join index.
   //
   // Returns:
   //   - OK on success
@@ -154,13 +157,31 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
       const DocumentJoinIdPair& child_document_join_id_pair,
       std::vector<DocumentId>&& parent_document_ids) override;
 
-  // Gets the list of joinable children for the given parent document id.
+  // Puts new join data into the index using qualified ids: adds a new child
+  // document and its referenced parent documents into the join index.
+  //
+  // Internally, this function will update both the qualified id map and the
+  // document id map (if the parent document has a valid document id).
   //
   // Returns:
-  //   - A list of children's DocumentJoinIdPair on success
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if child_document_join_id_pair is invalid
+  //   - Any FileBackedVector or KeyMapper errors
+  libtextclassifier3::Status Put(
+      const DocumentStore* document_store,
+      const DocumentJoinIdPair& child_document_join_id_pair,
+      std::vector<QualifiedId>&& parent_qualified_ids) override;
+
+  // Gets an array view of all joinable children for the given parent document
+  // id.
+  //
+  // Returns:
+  //   - A DocumentJoinIdPairArrayView object on success. If there is no edge
+  //     for a valid node_id, then an array view with data() == nullptr and
+  //     size() == 0 will be returned
   //   - Any FileBackedVector errors
-  libtextclassifier3::StatusOr<std::vector<DocumentJoinIdPair>> Get(
-      DocumentId parent_document_id) const override;
+  libtextclassifier3::StatusOr<DocumentJoinIdPairArrayView>
+  GetDocumentJoinIdPairArrayView(DocumentId parent_document_id) const override;
 
   // Migrates existing join data for a parent document from old_document_id to
   // new_document_id.
@@ -175,6 +196,22 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
   //   - Any FileBackedVector errors
   libtextclassifier3::Status MigrateParent(DocumentId old_document_id,
                                            DocumentId new_document_id) override;
+
+  // Migrates existing join data for a parent document from its qualified id to
+  // a new document id. This is used when a document that was previously
+  // referenced as a "missing parent" (by its qualified id) is indexed and
+  // assigned a document id.
+  //
+  // Note: The entry in the parent qualified id map will be kept as is, since
+  // the qualified id is the source of truth.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if new_document_id is invalid
+  //   - Any FileBackedVector or KeyMapper errors
+  libtextclassifier3::Status MigrateParent(
+      const QualifiedId& parent_qualified_id,
+      DocumentId new_document_id) override;
 
   // v2 only API. Returns UNIMPLEMENTED_ERROR.
   libtextclassifier3::Status Put(
@@ -193,6 +230,7 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
   }
 
   libtextclassifier3::Status Optimize(
+      const DocumentStore* document_store,
       const std::vector<DocumentId>& document_id_old_to_new,
       const std::vector<NamespaceId>& namespace_id_old_to_new,
       DocumentId new_last_added_document_id) override;
@@ -235,6 +273,8 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
       std::unique_ptr<MemoryMappedFile> metadata_mmapped_file,
       std::unique_ptr<FileBackedVector<ArrayInfo>>
           parent_document_id_to_child_array_info,
+      std::unique_ptr<KeyMapper<ArrayInfo>>
+          parent_qualified_id_to_child_array_info,
       std::unique_ptr<FileBackedVector<DocumentJoinIdPair>>
           child_document_join_id_pair_array,
       const FeatureFlags& feature_flags)
@@ -242,6 +282,8 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
         metadata_mmapped_file_(std::move(metadata_mmapped_file)),
         parent_document_id_to_child_array_info_(
             std::move(parent_document_id_to_child_array_info)),
+        parent_qualified_id_to_child_array_info_(
+            std::move(parent_qualified_id_to_child_array_info)),
         child_document_join_id_pair_array_(
             std::move(child_document_join_id_pair_array)),
         feature_flags_(feature_flags),
@@ -259,10 +301,11 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
                           std::string working_path,
                           const FeatureFlags& feature_flags);
 
-  // Appends a list of new child DocumentJoinIdPair to the parent's
+  // (Deprecated) Appends a list of new child DocumentJoinIdPair to the parent's
   // DocumentJoinIdPair (extensible) array. If the array is invalid or doesn't
   // have enough space for new elements, then extend it and set the new array
-  // info.
+  // info. This function then updates (and only updates) the
+  // parent_document_id_to_child_array_info_ map.
   //
   // Returns:
   //   - OK on success
@@ -271,6 +314,41 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
   //   - Any FileBackedVector errors
   libtextclassifier3::Status AppendChildDocumentJoinIdPairsForParent(
       DocumentId parent_document_id,
+      std::vector<DocumentJoinIdPair>&& child_document_join_id_pairs);
+
+  // Appends a list of new child DocumentJoinIdPair to the parent's (by its
+  // qualified id) DocumentJoinIdPair (extensible) array. If the array is
+  // invalid or doesn't have enough space for new elements, then extend it and
+  // set the new array info. This function then updates the
+  // parent_qualified_id_to_child_array_info_ map. If the parent document has a
+  // valid document id, it also updates the
+  // parent_document_id_to_child_array_info_ map.
+  //
+  // Returns:
+  //   - OK on success
+  //   - RESOURCE_EXHAUSTED_ERROR if the new # of elements exceed
+  //     kMaxNumChildrenPerParent
+  //   - Any FileBackedVector or KeyMapper errors
+  libtextclassifier3::Status AppendChildDocumentJoinIdPairsForParent(
+      std::string_view parent_qualified_id_str, DocumentId parent_document_id,
+      std::vector<DocumentJoinIdPair>&& child_document_join_id_pairs);
+
+  libtextclassifier3::Status AppendChildDocumentJoinIdPairsForParent(
+      const QualifiedId& parent_qualified_id, DocumentId parent_document_id,
+      std::vector<DocumentJoinIdPair>&& child_document_join_id_pairs) {
+    return AppendChildDocumentJoinIdPairsForParent(
+        parent_qualified_id.ToString(), parent_document_id,
+        std::move(child_document_join_id_pairs));
+  }
+
+  // Appends a list of new child DocumentJoinIdPair to an extensible array
+  // and returns the new ArrayInfo.
+  //
+  // Returns:
+  //   - New ArrayInfo on success
+  //   - Any FileBackedVector errors
+  libtextclassifier3::StatusOr<ArrayInfo> AppendToChildArray(
+      const ArrayInfo& current_array_info,
       std::vector<DocumentJoinIdPair>&& child_document_join_id_pairs);
 
   // Extends the parent document id to child array info if necessary, according
@@ -326,8 +404,23 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
   //   - OK on success
   //   - INTERNAL_ERROR on I/O error
   libtextclassifier3::Status TransferIndex(
+      const DocumentStore& document_store,
       const std::vector<DocumentId>& document_id_old_to_new,
       QualifiedIdJoinIndexImplV3* new_index) const;
+
+  // Gets all child DocumentJoinIdPairs according to array_info, transfers child
+  // document ids according to document_id_old_to_new, and returns a new vector
+  // of DocumentJoinIdPairs. Invalid child document ids will be skipped.
+  //
+  // Returns:
+  //   - A vector of remapped DocumentJoinIdPairs on success
+  //   - INTERNAL_ERROR if any child document id is out of range of
+  //     document_id_old_to_new
+  //   - Any FileBackedVector errors
+  libtextclassifier3::StatusOr<std::vector<DocumentJoinIdPair>>
+  GetTransferredChildDocumentJoinIdPairs(
+      const QualifiedIdJoinIndexImplV3::ArrayInfo& array_info,
+      const std::vector<DocumentId>& document_id_old_to_new) const;
 
   libtextclassifier3::Status PersistMetadataToDisk() override;
 
@@ -383,6 +476,17 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
   // extensible array contains the parent's joinable children information.
   std::unique_ptr<FileBackedVector<ArrayInfo>>
       parent_document_id_to_child_array_info_;
+
+  // Storage for mapping a parent's qualified id to the ArrayInfo. With the
+  // feature flag `enable_non_existent_qualified_id_join` on, this is the
+  // source of truth for the join index. The ArrayInfo points to an extensible
+  // array stored in child_document_join_id_pair_array_, and the extensible
+  // array contains the parent's joinable children information.
+  //
+  // The parent_document_id_to_child_array_info_ map shares the same ArrayInfo
+  // with this mapper, for documents with valid document ids.
+  std::unique_ptr<KeyMapper<ArrayInfo>>
+      parent_qualified_id_to_child_array_info_;
 
   // Storage for DocumentJoinIdPair.
   // - It is a collection of multiple extensible arrays for parents.

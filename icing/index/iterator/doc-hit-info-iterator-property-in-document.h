@@ -15,10 +15,8 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_PROPERTY_IN_DOCUMENT_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_PROPERTY_IN_DOCUMENT_H_
 
-#include <cstdint>
 #include <memory>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -34,10 +32,8 @@ namespace lib {
 // post-processes metadata hits added by PropertyExistenceIndexingHandler.
 // Specifically, it filters out hits that are not recognized as metadata, and
 // always set hit_section_ids_mask to 0.
-//
-// It is marked as a subclass of DocHitInfoLeafIterator because section
-// restriction should not be passed down to meta_hit_iterator.
-class DocHitInfoIteratorPropertyInDocument : public DocHitInfoLeafIterator {
+class DocHitInfoIteratorPropertyInDocument
+    : public DocHitInfoIteratorSectionRestrictionNotApplicable {
  public:
   explicit DocHitInfoIteratorPropertyInDocument(
       std::unique_ptr<DocHitInfoIterator> meta_hit_iterator);
@@ -45,6 +41,10 @@ class DocHitInfoIteratorPropertyInDocument : public DocHitInfoLeafIterator {
   libtextclassifier3::Status Advance() override;
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override;
+
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {&meta_hit_iterator_};
+  }
 
   CallStats GetCallStats() const override {
     return meta_hit_iterator_->GetCallStats();

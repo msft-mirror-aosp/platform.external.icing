@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <initializer_list>
+#include <random>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -24,7 +25,11 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/embed/embedding-hit.h"
 #include "icing/index/embed/embedding-index.h"
+#include "icing/index/embed/embedding-query-results.h"
 #include "icing/proto/document.pb.h"
+#include "icing/schema/schema-store.h"
+#include "icing/store/document-id.h"
+#include "icing/util/embedding-util.h"
 
 namespace icing {
 namespace lib {
@@ -45,19 +50,93 @@ inline PropertyProto::VectorProto CreateVector(
   return CreateVector(model_signature, values...);
 }
 
+template <typename RandomEngine>
+inline PropertyProto::VectorProto GetRandomVector(
+    RandomEngine& random, std::string_view model_signature,
+    uint32_t dimension) {
+  PropertyProto::VectorProto vector;
+  vector.set_model_signature(std::string(model_signature));
+  std::uniform_real_distribution<float> value_dist(-10.0, 10.0);
+  for (uint32_t i = 0; i < dimension; ++i) {
+    vector.add_values(value_dist(random));
+  }
+  return vector;
+}
+
 libtextclassifier3::StatusOr<std::vector<EmbeddingHit>>
 GetEmbeddingHitsFromIndex(const EmbeddingIndex* embedding_index,
-                          uint32_t dimension, std::string_view model_signature);
+                          uint32_t dimension, std::string_view model_signature,
+                          const std::vector<uint32_t>& cluster_ids = {
+                              embedding_util::kLinearSearchClusterId});
 
-std::vector<float> GetRawEmbeddingDataFromIndex(
-    const EmbeddingIndex* embedding_index);
+class EmbeddingIndexTestPeer {
+ public:
+  // Get the shard id according to the given information.
+  // If cluster_id is kLinearSearchClusterId, this is the shard id for the base
+  // linear search index. Otherwise, this is the shard id according to the
+  // given IVF cluster.
+  static uint32_t GetShardId(
+      const EmbeddingIndex* embedding_index, uint32_t dimension,
+      std::string_view model_signature, std::string_view schema_name,
+      uint32_t cluster_id = embedding_util::kLinearSearchClusterId) {
+    std::string key;
+    if (cluster_id != embedding_util::kLinearSearchClusterId) {
+      key = EmbeddingIndex::IvfContextManager(dimension, model_signature)
+                .GetPostingListKey(cluster_id);
+    } else {
+      key = embedding_util::GetPostingListKey(dimension, model_signature);
+    }
+    return embedding_index->GetShardId(
+        embedding_util::GetPostingListKeyHash(key),
+        SchemaStore::GetSchemaNameHash(schema_name));
+  }
 
-// Gets the quantized embedding vector from the index based on the given hit,
-// and returns the dequantized version of the vector.
-libtextclassifier3::StatusOr<std::vector<float>>
-GetAndRestoreQuantizedEmbeddingVectorFromIndex(
-    const EmbeddingIndex* embedding_index, const EmbeddingHit& hit,
-    uint32_t dimension);
+  static bool is_empty(const EmbeddingIndex* embedding_index) {
+    return embedding_index->is_empty();
+  }
+
+  static std::vector<float> GetRawEmbeddingDataFromIndex(
+      const EmbeddingIndex* embedding_index, uint32_t shard_id);
+
+  // Gets the quantized embedding vector from the index based on the given hit,
+  // and returns the dequantized version of the vector.
+  static libtextclassifier3::StatusOr<std::vector<float>>
+  GetAndRestoreQuantizedEmbeddingVectorFromIndex(
+      const EmbeddingIndex* embedding_index, const EmbeddingHit& hit,
+      uint32_t dimension, std::string_view model_signature,
+      std::string_view schema_name,
+      uint32_t cluster_id = embedding_util::kLinearSearchClusterId);
+
+  static int32_t GetTotalQuantizedVectorSize(
+      const EmbeddingIndex* embedding_index, uint32_t shard_id) {
+    if (embedding_index->is_empty() ||
+        shard_id >= embedding_index->num_shards_ ||
+        embedding_index->quantized_embedding_vectors_[shard_id] == nullptr) {
+      return 0;
+    }
+    return embedding_index->quantized_embedding_vectors_[shard_id]
+        ->num_elements();
+  }
+
+  static libtextclassifier3::StatusOr<const float*> GetEmbeddingVector(
+      const EmbeddingIndex* index, const EmbeddingHit& hit, uint32_t dimension,
+      uint32_t shard_id) {
+    return index->GetEmbeddingVector(hit, dimension, shard_id);
+  }
+
+  static libtextclassifier3::StatusOr<const char*> GetQuantizedEmbeddingVector(
+      const EmbeddingIndex* index, const EmbeddingHit& hit, uint32_t dimension,
+      uint32_t shard_id) {
+    return index->GetQuantizedEmbeddingVector(hit, dimension, shard_id);
+  }
+};
+
+// Gets or creates the EmbeddingMatchInfos in embedding_query_results for the
+// given query_vector_index, metric_type, and document.
+EmbeddingMatchInfos& GetOrCreateEmbeddingMatchInfosForDocument(
+    EmbeddingQueryResults& embedding_query_results, int query_vector_index,
+    SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
+    DocumentId doc_id);
 
 }  // namespace lib
 }  // namespace icing

@@ -25,12 +25,15 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/index/embed/quantizer.h"
 #include "icing/legacy/core/icing-string-util.h"
+#include "icing/portable/platform.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/schema-util.h"
 #include "icing/store/document-filter-data.h"
+#include "icing/util/embedding-util.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
@@ -77,19 +80,22 @@ libtextclassifier3::Status DocumentValidator::Validate(
 
   // TODO(b/144458732): Implement a more robust version of
   // ICING_ASSIGN_OR_RETURN that can support error logging.
-  auto type_config_or = schema_store_->GetSchemaTypeConfig(document.schema());
+  libtextclassifier3::StatusOr<
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder>
+      type_config_or =
+          schema_store_->GetSchemaTypeConfigHolder(document.schema());
   if (!type_config_or.ok()) {
     ICING_LOG(ERROR) << type_config_or.status().error_message()
-                     << "Error while validating document ("
+                     << " Error while validating document ("
                      << document.namespace_() << ", " << document.uri() << ")";
     return type_config_or.status();
   }
-  const SchemaTypeConfigProto* type_config =
+  SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config =
       std::move(type_config_or).ValueOrDie();
 
   int32_t num_required_properties_actual = 0;
   SchemaUtil::ParsedPropertyConfigs parsed_property_configs =
-      SchemaUtil::ParsePropertyConfigs(*type_config);
+      SchemaUtil::ParsePropertyConfigs(type_config.properties());
   std::unordered_set<std::string_view> unique_properties;
 
   for (const PropertyProto& property : document.properties()) {
@@ -114,7 +120,8 @@ libtextclassifier3::Status DocumentValidator::Validate(
           document.namespace_(), ", ", document.uri(),
           ") of type: ", document.schema(), "."));
     }
-    const PropertyConfigProto& property_config = *property_iter->second;
+    const PropertyConfigProto& property_config =
+        *property_iter->second.property_config;
 
     // Get the property value size according to data type.
     int value_size = 0;
@@ -140,11 +147,53 @@ libtextclassifier3::Status DocumentValidator::Validate(
       value_size = property.vector_values_size();
       for (const PropertyProto::VectorProto& vector_value :
            property.vector_values()) {
-        if (vector_value.values_size() == 0) {
+        if (vector_value.quantized_values().size() <= sizeof(Quantizer) &&
+            !vector_value.quantized_values().empty()) {
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Property '", property.name(),
+              "' has 'quantized_values' of invalid length for key: (",
+              document.namespace_(), ", ", document.uri(), ")."));
+        }
+        bool has_values = vector_value.values_size() > 0;
+        bool has_quantized_values = !vector_value.quantized_values().empty();
+        // Clients can change quantization_type in their schema, meaning that
+        // previously valid documents could become invalid if we make it an
+        // error.We log a warning instead of an error here to avoid breaking
+        // existing documents, and let it pass validation.
+        //
+        // The monkey test may intentionally trigger this case, causing
+        // excessive logs. We suppress this warning in test environments to
+        // reduce noise.
+        if (has_quantized_values &&
+            property_config.embedding_indexing_config().quantization_type() !=
+                EmbeddingIndexingConfig::QuantizationType::QUANTIZE_8_BIT &&
+            !IsTestEnvironment()) {
+          ICING_LOG(WARNING)
+              << "Property '" << property.name()
+              << "' has 'quantized_values' set but schema quantization_type is "
+                 "not QUANTIZE_8_BIT for key: ("
+              << document.namespace_() << ", " << document.uri() << ").";
+        }
+        if (has_values && has_quantized_values) {
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Property '", property.name(),
+              "' has both 'values' and 'quantized_values' set for key: (",
+              document.namespace_(), ", ", document.uri(), ")."));
+        }
+        if (!has_values && !has_quantized_values) {
           return absl_ports::InvalidArgumentError(absl_ports::StrCat(
               "Property '", property.name(),
               "' contains empty vectors for key: (", document.namespace_(),
               ", ", document.uri(), ")."));
+        }
+        if (vector_value.model_signature().find(
+                embedding_util::kIvfPostingListKeySeparator) !=
+            std::string::npos) {
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Property '", property.name(),
+              "' contains model_signature with invalid "
+              "kIvfPostingListKeySeparator for key: (",
+              document.namespace_(), ", ", document.uri(), ")."));
         }
       }
     } else if (property_config.data_type() ==
