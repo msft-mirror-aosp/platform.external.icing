@@ -3136,7 +3136,7 @@ TEST_F(SchemaStoreTest, IndexedPropertyChangeRequiresReindexingOk) {
   // Set the compatible schema
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_index_incompatible_by_name.insert("email");
+  result.schema_types_term_index_incompatible_by_name.insert("email");
   EXPECT_THAT(schema_store->SetSchema(
                   schema, /*ignore_errors_and_delete_documents=*/false),
               IsOkAndHolds(EqualsSetSchemaResultIgnoringStats(result)));
@@ -3205,7 +3205,7 @@ TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
   // 'person' is index incompatible.
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_index_incompatible_by_name.insert("person");
+  result.schema_types_term_index_incompatible_by_name.insert("person");
   EXPECT_THAT(
       schema_store->SetSchema(nested_index_schema,
                               /*ignore_errors_and_delete_documents=*/false),
@@ -3221,7 +3221,7 @@ TEST_F(SchemaStoreTest, IndexNestedDocumentsChangeRequiresReindexingOk) {
   // to 'person' is index incompatible.
   result = SchemaStore::SetSchemaResult();
   result.success = true;
-  result.schema_types_index_incompatible_by_name.insert("person");
+  result.schema_types_term_index_incompatible_by_name.insert("person");
   EXPECT_THAT(
       schema_store->SetSchema(no_nested_index_schema,
                               /*ignore_errors_and_delete_documents=*/false),
@@ -3426,10 +3426,10 @@ TEST_F(SchemaStoreTest, SetSchemaWithIndexIncompatibleNestedTypesOk) {
                                .Build();
 
   // SetSchema should succeed, and only ContactPoint should be in
-  // schema_types_index_incompatible_by_name.
+  // schema_types_term_index_incompatible_by_name.
   SchemaStore::SetSchemaResult expected_result;
   expected_result.success = true;
-  expected_result.schema_types_index_incompatible_by_name.insert(
+  expected_result.schema_types_term_index_incompatible_by_name.insert(
       "ContactPoint");
   expected_result.schema_types_new_by_name.insert("Person");
   EXPECT_THAT(
@@ -3559,7 +3559,7 @@ TEST_F(SchemaStoreTest, SetSchemaWithAddedIndexableNestedTypeOk) {
   //   document property could also contain a joinable property.
   SchemaStore::SetSchemaResult expected_result;
   expected_result.success = true;
-  expected_result.schema_types_index_incompatible_by_name.insert("Person");
+  expected_result.schema_types_term_index_incompatible_by_name.insert("Person");
   expected_result.schema_types_join_incompatible_by_name.insert("Person");
 
   EXPECT_THAT(

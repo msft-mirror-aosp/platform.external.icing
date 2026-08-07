@@ -3980,24 +3980,25 @@ TEST_P(QueryVisitorTest, SemanticSearchANNFunctionAllPhases) {
       query, TERM_MATCH_PREFIX, query_vectors, EMBEDDING_METRIC_DOT_PRODUCT);
   search_spec.set_embedding_query_nprobe(5);
 
-  ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
-                             ProcessQuery(search_spec, root_node.get()));
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                               ProcessQuery(search_spec, root_node.get()));
 
-  DocHitInfoIterator* itr = query_results.root_iterator.get();
-  ICING_ASSERT_OK(itr->Advance());
-  EXPECT_THAT(
-      itr->doc_hit_info(),
-      EqualsDocHitInfo(kDocumentId1, std::vector<SectionId>{kSectionId0}));
-  ICING_ASSERT_OK(itr->Advance());
-  EXPECT_THAT(
-      itr->doc_hit_info(),
-      EqualsDocHitInfo(kDocumentId0, std::vector<SectionId>{kSectionId0}));
-  EXPECT_FALSE(itr->Advance().ok());
+    DocHitInfoIterator* itr = query_results.root_iterator.get();
+    ICING_ASSERT_OK(itr->Advance());
+    EXPECT_THAT(
+        itr->doc_hit_info(),
+        EqualsDocHitInfo(kDocumentId1, std::vector<SectionId>{kSectionId0}));
+    ICING_ASSERT_OK(itr->Advance());
+    EXPECT_THAT(
+        itr->doc_hit_info(),
+        EqualsDocHitInfo(kDocumentId0, std::vector<SectionId>{kSectionId0}));
+    EXPECT_FALSE(itr->Advance().ok());
 
-  EXPECT_THAT(query_results.root_iterator->GetCallStats()
-                  .embedding_stats.num_ann_embeddings_scored,
-              testing::Eq(2));
-
+    EXPECT_THAT(query_results.root_iterator->GetCallStats()
+                    .embedding_stats.num_ann_embeddings_scored,
+                testing::Eq(2));
+  }
   // 2. Perform IVF clustering and testing with built clusters.
   MaintainAnnIndexOptions maintain_options;
   maintain_options.set_min_size_for_ivf(2);
@@ -4005,22 +4006,24 @@ TEST_P(QueryVisitorTest, SemanticSearchANNFunctionAllPhases) {
   ICING_ASSERT_OK(embedding_index_->MaintainAllIvf(
       *document_store_, *schema_store_, maintain_options));
 
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             ProcessQuery(search_spec, root_node.get()));
-  itr = query_results.root_iterator.get();
-  ICING_ASSERT_OK(itr->Advance());
-  EXPECT_THAT(
-      itr->doc_hit_info(),
-      EqualsDocHitInfo(kDocumentId1, std::vector<SectionId>{kSectionId0}));
-  ICING_ASSERT_OK(itr->Advance());
-  EXPECT_THAT(
-      itr->doc_hit_info(),
-      EqualsDocHitInfo(kDocumentId0, std::vector<SectionId>{kSectionId0}));
-  EXPECT_FALSE(itr->Advance().ok());
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                               ProcessQuery(search_spec, root_node.get()));
+    DocHitInfoIterator* itr = query_results.root_iterator.get();
+    ICING_ASSERT_OK(itr->Advance());
+    EXPECT_THAT(
+        itr->doc_hit_info(),
+        EqualsDocHitInfo(kDocumentId1, std::vector<SectionId>{kSectionId0}));
+    ICING_ASSERT_OK(itr->Advance());
+    EXPECT_THAT(
+        itr->doc_hit_info(),
+        EqualsDocHitInfo(kDocumentId0, std::vector<SectionId>{kSectionId0}));
+    EXPECT_FALSE(itr->Advance().ok());
 
-  EXPECT_THAT(query_results.root_iterator->GetCallStats()
-                  .embedding_stats.num_ann_embeddings_scored,
-              testing::Eq(2));
+    EXPECT_THAT(query_results.root_iterator->GetCallStats()
+                    .embedding_stats.num_ann_embeddings_scored,
+                testing::Eq(2));
+  }
 
   // 3. Stress test with multiple vectors.
   for (int i = 2; i < 100; ++i) {
@@ -4046,13 +4049,15 @@ TEST_P(QueryVisitorTest, SemanticSearchANNFunctionAllPhases) {
   search_spec = CreateSearchSpec(StressQuery, TERM_MATCH_PREFIX, query_vectors,
                                  EMBEDDING_METRIC_DOT_PRODUCT);
   search_spec.set_embedding_query_nprobe(200);
-  ICING_ASSERT_OK_AND_ASSIGN(query_results,
-                             ProcessQuery(search_spec, stress_node.get()));
-  EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), SizeIs(100));
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(QueryResults query_results,
+                               ProcessQuery(search_spec, stress_node.get()));
+    EXPECT_THAT(GetDocumentIds(query_results.root_iterator.get()), SizeIs(100));
 
-  EXPECT_THAT(query_results.root_iterator->GetCallStats()
-                  .embedding_stats.num_ann_embeddings_scored,
-              testing::Eq(100));
+    EXPECT_THAT(query_results.root_iterator->GetCallStats()
+                    .embedding_stats.num_ann_embeddings_scored,
+                testing::Eq(100));
+  }
 }
 
 TEST_P(QueryVisitorTest,

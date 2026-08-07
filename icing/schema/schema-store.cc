@@ -1194,8 +1194,12 @@ SchemaStore::SetSchemaWithDatabaseOverride(
     result.schema_types_new_by_name = std::move(schema_delta.schema_types_new);
     result.schema_types_changed_fully_compatible_by_name =
         std::move(schema_delta.schema_types_changed_fully_compatible);
-    result.schema_types_index_incompatible_by_name =
-        std::move(schema_delta.schema_types_index_incompatible);
+    result.schema_types_term_index_incompatible_by_name =
+        std::move(schema_delta.schema_types_term_index_incompatible);
+    result.schema_types_integer_index_incompatible_by_name =
+        std::move(schema_delta.schema_types_integer_index_incompatible);
+    result.schema_types_embedding_index_incompatible_by_name =
+        std::move(schema_delta.schema_types_embedding_index_incompatible);
     result.schema_types_join_incompatible_by_name =
         std::move(schema_delta.schema_types_join_incompatible);
     result.schema_types_scorable_property_inconsistent_by_name =
@@ -1235,8 +1239,12 @@ SchemaStore::SetSchemaWithDatabaseOverride(
   result.schema_types_new_by_name = std::move(schema_delta.schema_types_new);
   result.schema_types_changed_fully_compatible_by_name =
       std::move(schema_delta.schema_types_changed_fully_compatible);
-  result.schema_types_index_incompatible_by_name =
-      std::move(schema_delta.schema_types_index_incompatible);
+  result.schema_types_term_index_incompatible_by_name =
+      std::move(schema_delta.schema_types_term_index_incompatible);
+  result.schema_types_integer_index_incompatible_by_name =
+      std::move(schema_delta.schema_types_integer_index_incompatible);
+  result.schema_types_embedding_index_incompatible_by_name =
+      std::move(schema_delta.schema_types_embedding_index_incompatible);
   result.schema_types_join_incompatible_by_name =
       std::move(schema_delta.schema_types_join_incompatible);
   result.schema_types_scorable_property_inconsistent_by_name =
@@ -1929,7 +1937,9 @@ libtextclassifier3::StatusOr<SchemaProto> SchemaStore::BuildDedupedSchemaProto(
   changed_types.reserve(
       schema_delta.schema_types_changed_fully_compatible.size() +
       schema_delta.schema_types_incompatible.size() +
-      schema_delta.schema_types_index_incompatible.size() +
+      schema_delta.schema_types_term_index_incompatible.size() +
+      schema_delta.schema_types_integer_index_incompatible.size() +
+      schema_delta.schema_types_embedding_index_incompatible.size() +
       schema_delta.schema_types_join_incompatible.size() +
       schema_delta.schema_types_scorable_property_inconsistent.size());
   changed_types.insert(
@@ -1937,8 +1947,15 @@ libtextclassifier3::StatusOr<SchemaProto> SchemaStore::BuildDedupedSchemaProto(
       schema_delta.schema_types_changed_fully_compatible.end());
   changed_types.insert(schema_delta.schema_types_incompatible.begin(),
                        schema_delta.schema_types_incompatible.end());
-  changed_types.insert(schema_delta.schema_types_index_incompatible.begin(),
-                       schema_delta.schema_types_index_incompatible.end());
+  changed_types.insert(
+      schema_delta.schema_types_term_index_incompatible.begin(),
+      schema_delta.schema_types_term_index_incompatible.end());
+  changed_types.insert(
+      schema_delta.schema_types_integer_index_incompatible.begin(),
+      schema_delta.schema_types_integer_index_incompatible.end());
+  changed_types.insert(
+      schema_delta.schema_types_embedding_index_incompatible.begin(),
+      schema_delta.schema_types_embedding_index_incompatible.end());
   changed_types.insert(schema_delta.schema_types_join_incompatible.begin(),
                        schema_delta.schema_types_join_incompatible.end());
   changed_types.insert(

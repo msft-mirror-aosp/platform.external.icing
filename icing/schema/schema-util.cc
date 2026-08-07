@@ -380,6 +380,74 @@ void PropagateIncompatibleChangeToDelta(
   }
 }
 
+constexpr uint8_t kTermIndexMask = 1 << 0;
+constexpr uint8_t kIntegerIndexMask = 1 << 1;
+constexpr uint8_t kEmbeddingIndexMask = 1 << 2;
+constexpr uint8_t kAllIndexMask =
+    kTermIndexMask | kIntegerIndexMask | kEmbeddingIndexMask;
+
+// Returns a bitmask representing all index types (Term/String, Integer, and
+// Embedding/Vector) that are present in the given root_type_config and any of
+// its nested schema types (via DataType::DOCUMENT properties).
+//
+// When a schema type undergoes section ID reassignment (e.g. due to adding,
+// removing, or modifying indexed properties in either the schema type itself
+// or one of its nested document types), we need to determine which index trees
+// (Term, Integer, Embedding) are actually used by this schema type tree.
+// Instead of blindly marking all three index trees as incompatible, we use
+// this function to accurately check which index types are present in both the
+// old and new schema definitions. Only the specific indexes that are actually
+// present are marked as incompatible and cleared during a fine-grained schema
+// rebuild.
+//
+// NOTE: When a DOCUMENT property uses indexable_nested_properties_list rather
+// than index_nested_properties=true, this function conservatively inspects ALL
+// indexed properties of the child schema type (not just those listed). This
+// is a safe over-approximation: it may mark an index type as needing a
+// rebuild when it wasn't strictly affected, but it will never fail to mark
+// an index type that does need rebuilding.
+uint8_t GetIndexTypesMask(const SchemaTypeConfigProto& root_type_config,
+                          const SchemaUtil::TypeConfigMap& type_config_map) {
+  uint8_t mask = 0;
+  std::unordered_set<std::string_view> visited;
+  std::queue<const SchemaTypeConfigProto*> queue;
+
+  visited.insert(root_type_config.schema_type());
+  queue.push(&root_type_config);
+
+  while (!queue.empty()) {
+    const SchemaTypeConfigProto* current_config = queue.front();
+    queue.pop();
+    for (const PropertyConfigProto& property : current_config->properties()) {
+      if (!SchemaUtil::IsIndexedProperty(property)) {
+        continue;
+      }
+      if (property.data_type() == PropertyConfigProto::DataType::STRING) {
+        mask |= kTermIndexMask;
+      } else if (property.data_type() == PropertyConfigProto::DataType::INT64) {
+        mask |= kIntegerIndexMask;
+      } else if (property.data_type() ==
+                 PropertyConfigProto::DataType::VECTOR) {
+        mask |= kEmbeddingIndexMask;
+      } else if (property.data_type() ==
+                 PropertyConfigProto::DataType::DOCUMENT) {
+        auto child_itr = type_config_map.find(property.schema_type());
+        // If the property is a nested document, push the child schema type to
+        // the queue to recursively inspect its properties. Use visited set to
+        // prevent infinite cycles (e.g. A -> B -> A).
+        if (child_itr != type_config_map.end() &&
+            visited.insert(child_itr->second.schema_type()).second) {
+          queue.push(&child_itr->second);
+        }
+      }
+      if (mask == kAllIndexMask) {
+        return mask;
+      }
+    }
+  }
+  return mask;
+}
+
 // Returns if C1 <= C2 based on the following rule, where C1 and C2 are
 // cardinalities that can be one of REPEATED, OPTIONAL, or REQUIRED.
 //
@@ -1671,6 +1739,8 @@ SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
   BuildTypeConfigMap(old_schema, &old_type_config_map);
   BuildTypeConfigMap(new_schema, &new_type_config_map);
 
+  std::unordered_set<std::string> section_id_changed_types;
+
   // The scorable properties feature has been fully rolled out.
   FindScorablePropertyInconsistentTypes(
       old_type_config_map, new_type_config_map, new_schema_dependent_map,
@@ -1708,8 +1778,14 @@ SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
         old_type_config.properties_size() !=
         new_schema_type_and_config->second.properties_size();
     bool is_incompatible = false;
-    bool is_index_incompatible = false;
+    bool is_term_index_incompatible = false;
+    bool is_integer_index_incompatible = false;
+    bool is_embedding_index_incompatible = false;
     bool is_join_incompatible = false;
+    // Track whether the schema type has undergone any changes that affect how
+    // section IDs are assigned or mapped to properties (e.g. changes in nested
+    // document indexing config or changes in the set of indexed properties).
+    bool is_section_id_mapping_changed = false;
     for (int position = 0; position < old_type_config.properties_size();
          ++position) {
       const PropertyConfigProto& old_property_config =
@@ -1754,7 +1830,7 @@ SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
             ".", old_property_config.property_name(),
             "' was not defined in new schema");
         is_incompatible = true;
-        is_index_incompatible |= is_indexed_property;
+        is_section_id_mapping_changed |= is_indexed_property;
         is_join_incompatible |=
             is_joinable_property || is_nested_document_property;
         continue;
@@ -1785,17 +1861,26 @@ SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
       // Any change in the indexed property requires a reindexing
       if (!AreStringIndexingConfigsEqual(
               old_property_config.string_indexing_config(),
-              new_property_config->string_indexing_config()) ||
-          !AreIntegerIndexingConfigsEqual(
+              new_property_config->string_indexing_config())) {
+        is_term_index_incompatible = true;
+      }
+      if (!AreIntegerIndexingConfigsEqual(
               old_property_config.integer_indexing_config(),
-              new_property_config->integer_indexing_config()) ||
-          !AreDocumentIndexingConfigsEqual(
-              old_property_config.document_indexing_config(),
-              new_property_config->document_indexing_config()) ||
-          !AreEmbeddingIndexingConfigsEqual(
+              new_property_config->integer_indexing_config())) {
+        is_integer_index_incompatible = true;
+      }
+      if (!AreEmbeddingIndexingConfigsEqual(
               old_property_config.embedding_indexing_config(),
               new_property_config->embedding_indexing_config())) {
-        is_index_incompatible = true;
+        is_embedding_index_incompatible = true;
+      }
+      if (!AreDocumentIndexingConfigsEqual(
+              old_property_config.document_indexing_config(),
+              new_property_config->document_indexing_config())) {
+        // Changes to nested document indexing configs (such as toggling
+        // index_nested_properties) alter which child properties get indexed and
+        // thus change section ID assignment for this schema type.
+        is_section_id_mapping_changed = true;
       }
 
       if (!AreJoinableConfigsEqual(old_property_config.joinable_config(),
@@ -1818,16 +1903,19 @@ SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
       is_incompatible = true;
     }
 
-    // If we've gained any new indexed properties (this includes gaining new
-    // indexed nested document properties), then the section ids may change.
-    // Since the section ids are stored in the index, we'll need to
-    // reindex everything.
-    if (!IsSubset(new_parsed_property_configs.indexed_properties,
-                  old_indexed_properties)) {
+    // Check if the set of indexed properties has changed in any way (gained new
+    // indexed properties, removed existing indexed properties, or modified
+    // indexable status of properties).
+    if (old_indexed_properties !=
+        new_parsed_property_configs.indexed_properties) {
+      is_section_id_mapping_changed = true;
+    }
+
+    if (is_section_id_mapping_changed) {
       ICING_LOG(INFO) << "Set of indexed properties in schema type '"
                       << old_type_config.schema_type()
-                      << "' has changed, required reindexing.";
-      is_index_incompatible = true;
+                      << "' has changed, requiring section ID remapping.";
+      section_id_changed_types.insert(old_type_config.schema_type());
     }
 
     // If we've gained any new joinable properties, then the joinable property
@@ -1860,8 +1948,18 @@ SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
           old_type_config.schema_type());
     }
 
-    if (is_index_incompatible) {
-      schema_delta.schema_types_index_incompatible.insert(
+    if (is_term_index_incompatible) {
+      schema_delta.schema_types_term_index_incompatible.insert(
+          old_type_config.schema_type());
+    }
+
+    if (is_integer_index_incompatible) {
+      schema_delta.schema_types_integer_index_incompatible.insert(
+          old_type_config.schema_type());
+    }
+
+    if (is_embedding_index_incompatible) {
+      schema_delta.schema_types_embedding_index_incompatible.insert(
           old_type_config.schema_type());
     }
 
@@ -1878,35 +1976,71 @@ SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
             old_type_config.schema_type()) !=
             schema_delta.schema_types_scorable_property_inconsistent.end();
 
-    if (!is_incompatible && !is_index_incompatible && !is_join_incompatible &&
+    if (!is_incompatible && !is_section_id_mapping_changed &&
+        !is_term_index_incompatible && !is_integer_index_incompatible &&
+        !is_embedding_index_incompatible && !is_join_incompatible &&
         !is_scorable_property_cache_incompatible && has_property_changed) {
       schema_delta.schema_types_changed_fully_compatible.insert(
           old_type_config.schema_type());
     }
-
-    // Lastly, remove this type from the map. We know that this type can't
-    // come up in future iterations through the old schema types because the old
-    // type config has unique types.
-    new_type_config_map.erase(old_type_config.schema_type());
   }
 
   // Now that all directly-incompatible types have been collected, propagate
   // each kind of incompatibility through the schema dependency graph in a
   // single BFS pass per delta set (instead of one BFS per seed type).
   for (std::unordered_set<std::string>* delta_set : {
+           &section_id_changed_types,
            &schema_delta.schema_types_incompatible,
-           &schema_delta.schema_types_index_incompatible,
+           &schema_delta.schema_types_term_index_incompatible,
+           &schema_delta.schema_types_integer_index_incompatible,
+           &schema_delta.schema_types_embedding_index_incompatible,
            &schema_delta.schema_types_join_incompatible,
        }) {
     PropagateIncompatibleChangeToDelta(*delta_set, new_schema_dependent_map,
                                        old_type_config_map);
   }
 
-  // Any types that are still present in the new_type_config_map are newly added
-  // types.
+  // For all schema types affected by section ID reassignment (either directly
+  // altered or propagated via dependencies), accurately determine which index
+  // types (Term, Integer, Embedding) are actually present in their schema
+  // trees.
+  //
+  // We compute the bitwise OR of index masks across both the old and new schema
+  // definitions (old_mask | new_mask). This ensures that if a property type was
+  // present in the old schema but removed in the new schema, we still mark that
+  // specific old index type as incompatible to correctly clear or reset stale
+  // index data during a fine-grained rebuild.
+  for (const std::string& type_name : section_id_changed_types) {
+    uint8_t index_mask = 0;
+    if (!feature_flags.enable_fine_grained_index_rebuild()) {
+      index_mask = kAllIndexMask;
+    } else {
+      auto old_itr = old_type_config_map.find(type_name);
+      if (old_itr != old_type_config_map.end()) {
+        index_mask |= GetIndexTypesMask(old_itr->second, old_type_config_map);
+      }
+      auto new_itr = new_type_config_map.find(type_name);
+      if (new_itr != new_type_config_map.end()) {
+        index_mask |= GetIndexTypesMask(new_itr->second, new_type_config_map);
+      }
+    }
+
+    if ((index_mask & kTermIndexMask) != 0) {
+      schema_delta.schema_types_term_index_incompatible.insert(type_name);
+    }
+    if ((index_mask & kIntegerIndexMask) != 0) {
+      schema_delta.schema_types_integer_index_incompatible.insert(type_name);
+    }
+    if ((index_mask & kEmbeddingIndexMask) != 0) {
+      schema_delta.schema_types_embedding_index_incompatible.insert(type_name);
+    }
+  }
+
   schema_delta.schema_types_new.reserve(new_type_config_map.size());
   for (auto& kvp : new_type_config_map) {
-    schema_delta.schema_types_new.insert(std::move(kvp.first));
+    if (old_type_config_map.find(kvp.first) == old_type_config_map.end()) {
+      schema_delta.schema_types_new.insert(kvp.first);
+    }
   }
 
   return schema_delta;
