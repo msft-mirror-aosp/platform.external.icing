@@ -149,7 +149,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 60
+// Next tag: 62
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -565,6 +565,34 @@ message IcingSearchEngineOptions {
   // Whether to remove schema store's move assignment and instead use in-place
   // re-initialization during SchemaStore::SetSchema().
   optional bool remove_schema_store_move_assignment = 59;
+
+  // Whether to enable fine-grained index rebuilding when schema changes occur.
+  //
+  // When index-incompatible schema changes occur during SetSchema (e.g.,
+  // adding, removing, or modifying indexed properties):
+  // - If false, all search indices (Term, Integer, and Embedding indices) are
+  //   unconditionally cleared and rebuilt.
+  // - If true, SetSchema performs selective, index-type-specific clearing and
+  //   rebuilding based on which specific index types (Term, Integer, or
+  //   Embedding) are actually affected by the incompatible schema changes.
+  //
+  // Examples when enable_fine_grained_index_rebuild is true:
+  // - Direct index config modification: If the SetSchema request only modifies
+  //   the term_match_type of an existing string property (e.g., changing from
+  //   EXACT_ONLY to PREFIX) and no other properties are changed, then only the
+  //   Term index will be cleared and rebuilt. The Integer and Embedding indices
+  //   will remain intact.
+  // - Section ID reassignment: If a section ID reassignment occurs in a schema
+  //   type (e.g., when adding or removing an indexable property), but that
+  //   schema type only contains indexable string properties both before and
+  //   after the update, then only the Term index will be cleared and rebuilt.
+  //   Existing Integer and Embedding indices will be preserved intact without
+  //   reindexing.
+  optional bool enable_fine_grained_index_rebuild = 60;
+
+  // Whether to unblock read requests during ANN index maintenance (k-means
+  // calculation).
+  optional bool enable_read_during_ann_maintenance = 61;
 
   reserved 2, 20, 25;
 }
