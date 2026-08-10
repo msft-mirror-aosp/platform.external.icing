@@ -149,7 +149,7 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 58
+// Next tag: 60
 message IcingSearchEngineOptions {
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
@@ -556,6 +556,15 @@ message IcingSearchEngineOptions {
   // slower subsequent calls to GetSchema() (which will need to reload from
   // disk).
   optional bool schema_store_release_cached_proto_after_use = 57;
+
+  // Whether to enable auto flush for icing. If set to true,
+  // put_document_request.persist_type will be set to RECOVERY_PROOF for
+  // BatchPut.
+  optional bool auto_flush = 58 [default = false];
+
+  // Whether to remove schema store's move assignment and instead use in-place
+  // re-initialization during SchemaStore::SetSchema().
+  optional bool remove_schema_store_move_assignment = 59;
 
   reserved 2, 20, 25;
 }

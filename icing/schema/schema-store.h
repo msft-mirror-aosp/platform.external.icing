@@ -175,6 +175,15 @@ class SchemaStore {
     bool dirty_;
   };
 
+  struct SetSchemaStats {
+    // Byte size of the full schema proto written by this SetSchema call.
+    int64_t schema_proto_byte_size = 0;
+
+    // Latency for reloading the schema store from the newly written schema
+    // proto during the last step of a schema change.
+    int32_t schema_reinitialization_latency_ms = 0;
+  };
+
   // Holds information on what may have been affected by the new schema. This is
   // generally data that other classes may depend on from the SchemaStore,
   // so that we can know if we should go update those classes as well.
@@ -247,8 +256,8 @@ class SchemaStore {
     std::unordered_set<std::string>
         schema_types_scorable_property_inconsistent_by_name;
 
-    // Byte size of the full schema proto written by this SetSchema call.
-    int64_t schema_proto_byte_size = 0;
+    // Stats and latencies for the SetSchema call.
+    SetSchemaStats set_schema_stats = {};
   };
 
   struct ExpandedTypePropertyMask {
@@ -701,6 +710,9 @@ class SchemaStore {
   explicit SchemaStore(const Filesystem* filesystem, std::string base_dir,
                        const Clock* clock, const FeatureFlags* feature_flags);
 
+  // Resets the schema store.
+  void Reset();
+
   // Deletes the overlay schema and ensures that the Header is correctly set.
   //
   // RETURNS:
@@ -809,7 +821,8 @@ class SchemaStore {
   // Returns:
   //   OK on success
   //   INTERNAL on I/O error.
-  libtextclassifier3::Status ApplySchemaChange(SchemaProto new_schema);
+  libtextclassifier3::Status ApplySchemaChange(
+      SchemaProto new_schema, SetSchemaStats* set_schema_stats);
 
   libtextclassifier3::Status CheckSchemaSet() const {
     return has_schema_successfully_set_
@@ -972,9 +985,9 @@ class SchemaStore {
       std::vector<SchemaTypeConfigProto>&& new_types_vector,
       const SchemaUtil::SchemaDelta& schema_delta) const;
 
-  const Filesystem* filesystem_;
+  const Filesystem* filesystem_;  // Does not own.
   std::string base_dir_;
-  const Clock* clock_;
+  const Clock* clock_;                 // Does not own.
   const FeatureFlags* feature_flags_;  // Does not own.
 
   // Used internally to indicate whether the class has been successfully
@@ -1066,6 +1079,12 @@ class SchemaStore {
 
     // Releases the cached schema_file_ FileBackedProto instance.
     void ReleaseCachedSchemaFile() { schema_file_.reset(); }
+
+    // Resets both the cached FileBackedProto and the cached checksum.
+    void Reset() {
+      schema_file_.reset();
+      checksum_.reset();
+    }
 
     // Returns true if the schema_file_ FileBackedProto instance is cached (i.e.
     // already initialized and parsed from disk).
