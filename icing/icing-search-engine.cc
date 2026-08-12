@@ -591,7 +591,9 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.enable_delete_propagation_from(),
                      options_.enable_account_property_incompatibility_check(),
                      options_.schema_store_release_cached_proto_after_use(),
-                     options_.remove_schema_store_move_assignment()),
+                     options_.remove_schema_store_move_assignment(),
+                     options_.enable_fine_grained_index_rebuild(),
+                     options_.enable_read_during_ann_maintenance()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -1567,12 +1569,30 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         std::move(compatible_type));
   }
 
-  bool index_incompatible =
-      !set_schema_result.schema_types_index_incompatible_by_name.empty();
-  for (const std::string& index_incompatible_type :
-       set_schema_result.schema_types_index_incompatible_by_name) {
-    result_proto.add_index_incompatible_changed_schema_types(
-        std::move(index_incompatible_type));
+  bool term_index_incompatible =
+      !set_schema_result.schema_types_term_index_incompatible_by_name.empty();
+  bool integer_index_incompatible =
+      !set_schema_result.schema_types_integer_index_incompatible_by_name
+           .empty();
+  bool embedding_index_incompatible =
+      !set_schema_result.schema_types_embedding_index_incompatible_by_name
+           .empty();
+  bool any_index_incompatible = term_index_incompatible ||
+                                integer_index_incompatible ||
+                                embedding_index_incompatible;
+  if (any_index_incompatible) {
+    std::unordered_set<std::string> index_incompatible_types;
+    for (const auto* incompatible_types :
+         {&set_schema_result.schema_types_term_index_incompatible_by_name,
+          &set_schema_result.schema_types_integer_index_incompatible_by_name,
+          &set_schema_result
+               .schema_types_embedding_index_incompatible_by_name}) {
+      index_incompatible_types.insert(incompatible_types->begin(),
+                                      incompatible_types->end());
+    }
+    for (const std::string& type : index_incompatible_types) {
+      result_proto.add_index_incompatible_changed_schema_types(type);
+    }
   }
 
   // Join index is incompatible and needs rebuild if:
@@ -1650,12 +1670,39 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
             set_schema_stats->set_index_restoration_latency_ms(t);
           });
 
-      if (lost_previous_schema || index_incompatible) {
-        // Clears search indices
+      if (lost_previous_schema ||
+          (!options_.enable_fine_grained_index_rebuild() &&
+           any_index_incompatible)) {
+        // Unconditionally clear all search indices (term, integer, embedding)
+        // when either:
+        // 1. We lost the previous schema (no baseline to diff against), or
+        // 2. Fine-grained rebuild is disabled and any index is incompatible.
         status = ClearSearchIndices();
         if (!status.ok()) {
           TransformStatus(status, result_status);
           return result_proto;
+        }
+      } else if (options_.enable_fine_grained_index_rebuild()) {
+        if (term_index_incompatible) {
+          status = index_->Reset();
+          if (!status.ok()) {
+            TransformStatus(status, result_status);
+            return result_proto;
+          }
+        }
+        if (integer_index_incompatible) {
+          status = integer_index_->Clear();
+          if (!status.ok()) {
+            TransformStatus(status, result_status);
+            return result_proto;
+          }
+        }
+        if (embedding_index_incompatible) {
+          status = embedding_index_->Clear();
+          if (!status.ok()) {
+            TransformStatus(status, result_status);
+            return result_proto;
+          }
         }
       }
 
@@ -1668,7 +1715,7 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         }
       }
 
-      if (lost_previous_schema || index_incompatible || join_incompatible) {
+      if (lost_previous_schema || any_index_incompatible || join_incompatible) {
         needs_flush_derived_files = true;
 
         IndexRestorationResult restore_result = RestoreIndexIfNeeded();
@@ -2720,16 +2767,39 @@ MaintainAnnIndexResultProto IcingSearchEngine::MaintainAnnIndex(
   StatusProto* result_status = result_proto.mutable_status();
   std::unique_ptr<Timer> maintain_timer = clock_->GetNewTimer();
 
-  absl_ports::unique_lock l(&mutex_);
+  if (options_.enable_read_during_ann_maintenance()) {
+    absl_ports::shared_lock l(&mutex_);
+    MaintainAnnIndexLocked(options, maintain_timer.get(), result_status,
+                           result_proto);
+  } else {
+    absl_ports::unique_lock l(&mutex_);
+    MaintainAnnIndexLocked(options, maintain_timer.get(), result_status,
+                           result_proto);
+  }
+
+  // Write database stableness log. This mutates shared state and therefore
+  // requires holding the mutex exclusively. The maintenance above may run under
+  // a shared lock (when read-during-maintenance is enabled), so we acquire a
+  // dedicated exclusive lock here.
+  {
+    absl_ports::unique_lock l(&mutex_);
+    WriteDatabaseStablenessLog(IcingApiCallType::MAINTAIN_ANN_INDEX);
+  }
+  return result_proto;
+}
+
+void IcingSearchEngine::MaintainAnnIndexLocked(
+    const MaintainAnnIndexOptions& options, Timer* maintain_timer,
+    StatusProto* result_status, MaintainAnnIndexResultProto& result_proto) {
   if (!initialized_) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("IcingSearchEngine has not been initialized!");
-    return result_proto;
+    return;
   }
   if (embedding_index_ == nullptr) {
     result_status->set_code(StatusProto::FAILED_PRECONDITION);
     result_status->set_message("Embedding search is not enabled!");
-    return result_proto;
+    return;
   }
   auto iterations_or = embedding_index_->MaintainAllIvf(
       *document_store_, *schema_store_, options);
@@ -2737,12 +2807,8 @@ MaintainAnnIndexResultProto IcingSearchEngine::MaintainAnnIndex(
     result_proto.set_actual_iterations(iterations_or.ValueOrDie());
   }
 
-  // Write database stableness log.
-  WriteDatabaseStablenessLog(IcingApiCallType::MAINTAIN_ANN_INDEX);
-
   TransformStatus(iterations_or.status(), result_status);
   result_proto.set_latency_ms(maintain_timer->GetElapsedMilliseconds());
-  return result_proto;
 }
 
 // Optimizes Icing's storage

@@ -35,6 +35,23 @@ namespace lib {
 
 // Used to hold information needed across multiple pagination requests of the
 // same query. Stored in ResultStateManager.
+//
+// Each member (except the mutex) belongs to one of the following categories:
+// - HITS: matched document information.
+// - ADJUSTMENT_INFO: snippet and projection information.
+// - GROUPING: result grouping information.
+// - PAGINATION: pagination information.
+// - OTHER
+//
+// Each member (except the mutex) will have at least one of the following tags:
+// - CONSTANT: The member is constant and will not change after initialization.
+// - STATEFUL: The member is stateful.
+//   - May be changed when fetching next page. E.g. counters.
+//   - Or may be changed when optimizing. E.g. entry_id_group_index_map.
+// - NEED_OPTIMIZE: The member contains Icing internal ids or other information
+//   that needs to remap during optimization.
+// - EXTERNAL_DEP: The member is a dependent (pointer or reference to a
+//   variable) outside of the class.
 class ResultStateV2 {
  public:
   explicit ResultStateV2(
@@ -60,35 +77,6 @@ class ResultStateV2 {
   // It has to be called when we change scored_document_hits_ranker.
   void IncrementNumTotalHits(int increment_by)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex);
-
-  // Returns a nullable pointer to parent adjustment info.
-  ResultAdjustmentInfo* parent_adjustment_info()
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex) {
-    return parent_adjustment_info_.get();
-  }
-
-  // Returns a nullable pointer to parent adjustment info.
-  const ResultAdjustmentInfo* parent_adjustment_info() const
-      ICING_SHARED_LOCKS_REQUIRED(mutex) {
-    return parent_adjustment_info_.get();
-  }
-
-  // Returns a nullable pointer to child adjustment info.
-  ResultAdjustmentInfo* child_adjustment_info()
-      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex) {
-    return child_adjustment_info_.get();
-  }
-
-  // Returns a nullable pointer to child adjustment info.
-  const ResultAdjustmentInfo* child_adjustment_info() const
-      ICING_SHARED_LOCKS_REQUIRED(mutex) {
-    return child_adjustment_info_.get();
-  }
-
-  const std::unordered_map<result_utils::ResultGroupingEntryId, int>&
-  entry_id_group_index_map() const ICING_SHARED_LOCKS_REQUIRED(mutex) {
-    return entry_id_group_index_map_;
-  }
 
   int32_t num_per_page() const ICING_SHARED_LOCKS_REQUIRED(mutex) {
     return num_per_page_;
@@ -118,58 +106,91 @@ class ResultStateV2 {
   // ResultState itself to correctly modify these fields. Thus, we make them
   // public, so users of this class can modify them directly.
 
+  // Category: HITS.
   // The scored document hits ranker.
+  //
+  // STATEFUL, NEED_OPTIMIZE.
   std::unique_ptr<ScoredDocumentHitsRanker> scored_document_hits_ranker
       ICING_GUARDED_BY(mutex);
 
-  // The count of remaining results to return for a group. The index is assigned
-  // by entry_id_group_index_map_.
-  std::vector<int> group_result_limits ICING_GUARDED_BY(mutex);
-
-  // Number of results that have already been returned.
-  int num_returned ICING_GUARDED_BY(mutex);
-
- private:
+  // Category: ADJUSTMENT_INFO.
   // Adjustment information for parent documents, including snippet and
   // projection. Can be nullptr if there is no adjustment info for parent
   // documents.
-  std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info_
+  //
+  // STATEFUL, NEED_OPTIMIZE.
+  std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info
       ICING_GUARDED_BY(mutex);
 
+  // Category: ADJUSTMENT_INFO.
   // Adjustment information for child documents, including snippet and
   // projection. This is only used for join query. Can be nullptr if there is no
   // adjustment info for child documents.
-  std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info_
+  //
+  // STATEFUL, NEED_OPTIMIZE.
+  std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info
       ICING_GUARDED_BY(mutex);
 
+  // Category: GROUPING.
   // A map between result grouping entry id and the index of the group that it
   // appears in.
+  //
+  // STATEFUL, NEED_OPTIMIZE.
   std::unordered_map<result_utils::ResultGroupingEntryId, int>
-      entry_id_group_index_map_ ICING_GUARDED_BY(mutex);
+      entry_id_group_index_map ICING_GUARDED_BY(mutex);
 
+  // Category: GROUPING.
+  // The count of remaining results to return for a group. The index is assigned
+  // by entry_id_group_index_map_.
+  //
+  // STATEFUL.
+  std::vector<int> group_result_limits ICING_GUARDED_BY(mutex);
+
+  // Category: PAGINATION.
+  // Number of results that have already been returned.
+  //
+  // STATEFUL.
+  int num_returned ICING_GUARDED_BY(mutex);
+
+ private:
+  // Category: PAGINATION.
   // Number of results to return in each page.
+  //
+  // CONSTANT.
   int32_t num_per_page_ ICING_GUARDED_BY(mutex);
 
+  // Category: PAGINATION.
   // The threshold of total bytes of all documents to cutoff, in order to limit
   // # of bytes in a single page.
   // Note that it doesn't guarantee the result # of bytes will be smaller, equal
   // to, or larger than the threshold. Instead, it is just a threshold to
   // cutoff, and only guarantees total bytes of search results won't exceed the
   // threshold too much.
+  //
+  // CONSTANT.
   int32_t num_total_bytes_per_page_threshold_ ICING_GUARDED_BY(mutex);
 
+  // Category: PAGINATION.
   // Max # of joined child documents to be attached in the result for each
   // parent document.
+  //
+  // CONSTANT.
   int32_t max_joined_children_per_parent_to_return_ ICING_GUARDED_BY(mutex);
 
+  // Category: GROUPING.
+  // Value that the search results will get grouped by.
+  //
+  // CONSTANT.
+  ResultSpecProto::ResultGroupingType result_group_type_
+      ICING_GUARDED_BY(mutex);
+
+  // Category: OTHER.
   // Pointer to a global counter to sum up the size of scored_document_hits in
   // all ResultStates.
   // Does not own.
+  //
+  // STATEFUL, EXTERNAL_DEP: scored_document_hits_ranker.
   std::atomic<int>* num_total_hits_ ICING_GUARDED_BY(mutex);
-
-  // Value that the search results will get grouped by.
-  ResultSpecProto::ResultGroupingType result_group_type_
-      ICING_GUARDED_BY(mutex);
 };
 
 }  // namespace lib

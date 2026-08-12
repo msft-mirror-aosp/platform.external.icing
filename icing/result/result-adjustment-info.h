@@ -27,6 +27,7 @@
 #include "icing/result/snippet-context.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -54,6 +55,10 @@ struct ResultAdjustmentInfo {
       const EmbeddingQueryResults& embedding_query_results,
       std::unordered_set<DocumentId> documents_to_snippet_hint,
       SectionRestrictQueryTermsMap query_terms);
+
+  // Converts the ids in the result adjustment info to new ones according to the
+  // optimize_result.
+  void Optimize(const DocumentStore::OptimizeResult& optimize_result);
 };
 
 }  // namespace lib

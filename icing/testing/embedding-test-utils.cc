@@ -23,6 +23,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/mutex.h"
 #include "icing/index/embed/embedding-hit.h"
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/embedding-query-results.h"
@@ -53,6 +54,8 @@ GetEmbeddingHitsFromIndex(const EmbeddingIndex* embedding_index,
                              embedding_hit_accessor,
                          std::move(embedding_hit_accessor_or));
 
+  ICING_RETURN_IF_ERROR(embedding_hit_accessor->AssertSharedLockHeld());
+
   while (true) {
     ICING_ASSIGN_OR_RETURN(auto batch,
                            embedding_hit_accessor->GetNextHitsBatch());
@@ -67,6 +70,8 @@ GetEmbeddingHitsFromIndex(const EmbeddingIndex* embedding_index,
 
 std::vector<float> EmbeddingIndexTestPeer::GetRawEmbeddingDataFromIndex(
     const EmbeddingIndex* embedding_index, uint32_t shard_id) {
+  absl_ports::shared_lock l(&embedding_index->mutex_);
+
   if (embedding_index->is_empty() || shard_id >= embedding_index->num_shards_ ||
       embedding_index->embedding_vectors_[shard_id] == nullptr) {
     return std::vector<float>();
@@ -80,6 +85,8 @@ EmbeddingIndexTestPeer::GetAndRestoreQuantizedEmbeddingVectorFromIndex(
     const EmbeddingIndex* embedding_index, const EmbeddingHit& hit,
     uint32_t dimension, std::string_view model_signature,
     std::string_view schema_name, uint32_t cluster_id) {
+  absl_ports::shared_lock l(&embedding_index->mutex_);
+
   std::string key;
   if (cluster_id != embedding_util::kLinearSearchClusterId) {
     key = EmbeddingIndex::IvfContextManager(dimension, model_signature)

@@ -1866,7 +1866,8 @@ TEST_P(SchemaStoreDeduplicationTest, SetSchemaChangeCanonicalTypes_ok) {
   expected_result.success = true;
   expected_result.schema_types_changed_fully_compatible_by_name.insert(
       "db1/message");
-  expected_result.schema_types_index_incompatible_by_name.insert("db1/email");
+  expected_result.schema_types_term_index_incompatible_by_name.insert(
+      "db1/email");
   if (db_scoped_set_schema) {
     ICING_ASSERT_OK_AND_ASSIGN(
         SchemaStore::SetSchemaResult actual_result,

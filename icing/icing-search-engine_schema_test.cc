@@ -3726,9 +3726,15 @@ TEST_F(IcingSearchEngineSchemaTest,
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
   set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
+  std::sort(set_schema_result.mutable_incompatible_schema_types()->begin(),
+            set_schema_result.mutable_incompatible_schema_types()->end());
+  std::sort(set_schema_result.mutable_index_incompatible_changed_schema_types()
+                ->begin(),
+            set_schema_result.mutable_index_incompatible_changed_schema_types()
+                ->end());
   expected_set_schema_result = SetSchemaResultProto();
-  expected_set_schema_result.mutable_incompatible_schema_types()->Add("Person");
   expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_incompatible_schema_types()->Add("Person");
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Email");
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
@@ -5566,6 +5572,758 @@ TEST_F(IcingSearchEngineSchemaTest,
 
   EXPECT_THAT(set_schema_result.status().code(),
               Eq(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildDisabledClearsAllIndices) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(false);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddStringProperty("name", "foo")
+                               .AddInt64Property("age", 25)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Modify string property indexing option (change TERM_MATCH_EXACT to
+  // TERM_MATCH_PREFIX). This triggers term index incompatibility without
+  // changing the set of indexed properties or section id assignment.
+  // When fine grained rebuild is disabled (false), any incompatible index tree
+  // causes all search indices (term, integer, embedding) to be cleared and
+  // marked as restored/rebuilt.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(true));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledOnlyClearsTermIndex) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddStringProperty("name", "foo")
+                               .AddInt64Property("age", 25)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Modify string property indexing option (change TERM_MATCH_EXACT to
+  // TERM_MATCH_PREFIX). This triggers term index incompatibility without
+  // changing section id assignment.
+  // When fine grained rebuild is enabled (true), only the term index tree
+  // is cleared and re-indexed. The integer and embedding index trees remain
+  // intact.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(false));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(false));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledOnlyClearsEmbeddingIndex) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  PropertyProto::VectorProto vector_proto;
+  vector_proto.add_values(1.0);
+  vector_proto.add_values(2.0);
+  vector_proto.set_model_signature("model");
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddStringProperty("name", "foo")
+                               .AddInt64Property("age", 25)
+                               .AddVectorProperty("embedding", vector_proto)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Modify vector property indexing type (change LINEAR_SEARCH to
+  // APPROXIMATE_NEAREST_NEIGHBOR). This triggers embedding index
+  // incompatibility without changing section id assignment.
+  // When fine grained rebuild is enabled (true), only the embedding index tree
+  // is cleared and re-indexed. The term and integer index trees remain intact.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(
+                               EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(false));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(false));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(true));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledSectionIdChangeClearsUsedIndices) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddStringProperty("name", "foo")
+                               .AddInt64Property("age", 25)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Modify 'age' from indexed (RANGE) to unindexed (UNKNOWN).
+  // This changes the set of indexed properties in Person, altering section id
+  // assignment. Under our targeted section id change propagation, only the
+  // index trees that Person uses or previously used (term index and integer
+  // index) are marked as incompatible and re-indexed. The embedding index tree
+  // remains intact since Person has no embedding properties.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(false));
+}
+
+TEST_F(
+    IcingSearchEngineSchemaTest,
+    FineGrainedIndexRebuildEnabledNestedDocumentSectionIdChangeOnlyClearsUsedIndexTrees) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto person_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("email")
+                  .SetDataTypeDocument("Email",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaProto schema =
+      SchemaBuilder().AddType(email_type).AddType(person_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto email_doc = DocumentBuilder()
+                                .SetKey("namespace", "uri_email")
+                                .SetSchema("Email")
+                                .AddStringProperty("subject", "hello")
+                                .Build();
+  ASSERT_THAT(icing.Put(email_doc).status(), ProtoIsOk());
+
+  DocumentProto person_doc = DocumentBuilder()
+                                 .SetKey("namespace", "uri_person")
+                                 .SetSchema("Person")
+                                 .AddInt64Property("age", 30)
+                                 .AddDocumentProperty("email", email_doc)
+                                 .Build();
+  ASSERT_THAT(icing.Put(person_doc).status(), ProtoIsOk());
+
+  // Modify Email by adding a new indexed string property 'body'.
+  // This causes section id reassignment in Email, and propagates to Person via
+  // the index_nested_properties=true dependency.
+  // Because Person only contains INT64 (age) and STRING (via Email), neither
+  // Person nor Email contains any VECTOR/embedding properties. Thus,
+  // fine-grained rebuilding should clear Term and Integer indices while
+  // leaving the Embedding index completely untouched.
+  SchemaTypeConfigProto new_email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("body")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaProto new_schema =
+      SchemaBuilder().AddType(new_email_type).AddType(person_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(false));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledNoIncompatibleClearsNothing) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("idNumber")
+                           .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddStringProperty("name", "foo")
+                               .AddInt64Property("age", 25)
+                               .AddInt64Property("idNumber", 1001)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Modify non-indexed property (e.g. description or other non-indexing
+  // option). Neither term, integer, nor embedding index is incompatible. When
+  // fine grained rebuild is enabled (or disabled), no index tree is cleared or
+  // re-indexed.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("idNumber")
+                           .SetDescription("Unique employee ID number")
+                           .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(false));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(false));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(false));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledOnlyClearsIntegerIndex) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // A type whose ONLY indexed property is an int64 property. Toggling its
+  // numeric_match_type is the only way to make the Integer index incompatible,
+  // since RANGE is the sole indexed state for int64 properties.
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddInt64Property("age", 25)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Change 'age' from indexed (RANGE) to unindexed (UNKNOWN). Since 'age' is
+  // the only indexable property, only the Integer index tree is affected. The
+  // Term and Embedding index trees are preserved.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(false));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(false));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledMultipleIncompatibleClearsOnlyThose) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  PropertyProto::VectorProto vector_proto;
+  vector_proto.add_values(1.0);
+  vector_proto.add_values(2.0);
+  vector_proto.set_model_signature("model");
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddStringProperty("name", "foo")
+                               .AddInt64Property("age", 25)
+                               .AddVectorProperty("embedding", vector_proto)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Simultaneously change the term_match_type (Term incompatible) and the
+  // embedding_indexing_type (Embedding incompatible), without changing the
+  // section id assignment (all three properties remain indexed). Fine-grained
+  // rebuild should clear ONLY the Term and Embedding indices, and preserve the
+  // Integer index since 'age' is untouched.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(
+                               EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(false));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(true));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledPreservedIndexRemainsQueryable) {
+  // Verifies not just the restored flags, but that the actual index data is
+  // correct after a fine-grained rebuild: the rebuilt index returns results and
+  // the preserved (un-rebuilt) index still returns its original data.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Person")
+          .AddStringProperty("name", "John")
+          .AddInt64Property("age", 25)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Change only the term_match_type. This makes the Term index incompatible
+  // (it is cleared and rebuilt), while the Integer index is preserved intact.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  ASSERT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  ASSERT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+  ASSERT_THAT(set_schema_result.has_integer_index_restored(), Eq(false));
+
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+
+  // The rebuilt Term index must return the document (querying "name:John").
+  SearchSpecProto term_search_spec;
+  term_search_spec.set_query("name:John");
+  term_search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  SearchResultProto expected_term_result;
+  expected_term_result.mutable_status()->set_code(StatusProto::OK);
+  *expected_term_result.mutable_results()->Add()->mutable_document() = document;
+  EXPECT_THAT(
+      icing.Search(term_search_spec, GetDefaultScoringSpec(), result_spec),
+      EqualsSearchResultIgnoreStatsAndScores(expected_term_result));
+
+  // The preserved Integer index must still return the document without any
+  // reindexing (querying "age == 25").
+  SearchSpecProto integer_search_spec;
+  integer_search_spec.set_query("age == 25");
+  integer_search_spec.add_enabled_features(std::string(kNumericSearchFeature));
+  SearchResultProto expected_integer_result;
+  expected_integer_result.mutable_status()->set_code(StatusProto::OK);
+  *expected_integer_result.mutable_results()->Add()->mutable_document() =
+      document;
+  EXPECT_THAT(
+      icing.Search(integer_search_spec, GetDefaultScoringSpec(), result_spec),
+      EqualsSearchResultIgnoreStatsAndScores(expected_integer_result));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledReInitWithIncompatibleSchema) {
+  // Verifies that fine-grained rebuild works correctly across engine
+  // re-initialization: after creating data, destroying the engine, and
+  // re-initializing with a different schema.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+
+  // Phase 1: Create engine, set schema, put document.
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    SchemaTypeConfigProto schema_type =
+        SchemaTypeConfigBuilder()
+            .SetType("Person")
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("name")
+                    .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                    .SetCardinality(CARDINALITY_OPTIONAL))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName("age")
+                             .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                             .SetCardinality(CARDINALITY_OPTIONAL))
+            .Build();
+    SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+    DocumentProto document = DocumentBuilder()
+                                 .SetKey("namespace", "uri1")
+                                 .SetSchema("Person")
+                                 .AddStringProperty("name", "foo")
+                                 .AddInt64Property("age", 25)
+                                 .Build();
+    ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  // Phase 2: Re-initialize and update schema with term-only incompatible
+  // change. Fine-grained rebuild should still selectively clear only the
+  // Term index.
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    SchemaTypeConfigProto new_schema_type =
+        SchemaTypeConfigBuilder()
+            .SetType("Person")
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("name")
+                    .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                    .SetCardinality(CARDINALITY_OPTIONAL))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName("age")
+                             .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                             .SetCardinality(CARDINALITY_OPTIONAL))
+            .Build();
+    SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+    SetSchemaResultProto set_schema_result =
+        icing.SetSchema(new_schema,
+                        /*ignore_errors_and_delete_documents=*/false);
+    EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+    // Fine-grained should only rebuild the term index.
+    EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+    EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(false));
+    EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(false));
+  }
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledAllThreeIncompatibleClearsAll) {
+  // When all three index types are independently incompatible with
+  // fine-grained rebuild enabled, each index should be individually cleared
+  // and rebuilt.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  PropertyProto::VectorProto vector_proto;
+  vector_proto.add_values(1.0);
+  vector_proto.add_values(2.0);
+  vector_proto.set_model_signature("model");
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddStringProperty("name", "foo")
+                               .AddInt64Property("age", 25)
+                               .AddVectorProperty("embedding", vector_proto)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Simultaneously change:
+  // - term_match_type (Term incompatible)
+  // - numeric_match_type (Integer incompatible, via section ID change from
+  //   removing the integer property's indexed status)
+  // - embedding_indexing_type (Embedding incompatible)
+  // All three index types should be cleared and rebuilt individually through
+  // the fine-grained code path.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(
+                               EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(true));
 }
 
 }  // namespace

@@ -363,7 +363,7 @@ TEST_F(ResultRetrieverV2SnippetTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/
+      /*parent_adjustment_info_in=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/true), result_spec,
@@ -371,7 +371,7 @@ TEST_F(ResultRetrieverV2SnippetTest,
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap()),
-      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
       *document_store_);
   PageResult page_result =
       result_retriever
@@ -428,7 +428,7 @@ TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*parent_adjustment_info=*/
+      /*parent_adjustment_info_in=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
@@ -436,7 +436,7 @@ TEST_F(ResultRetrieverV2SnippetTest, SimpleSnippeted) {
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
       *document_store_);
 
   PageResult page_result =
@@ -552,7 +552,7 @@ TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*parent_adjustment_info=*/
+      /*parent_adjustment_info_in=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
@@ -560,7 +560,7 @@ TEST_F(ResultRetrieverV2SnippetTest, OnlyOneDocumentSnippeted) {
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
       *document_store_);
 
   PageResult page_result =
@@ -650,7 +650,7 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfo) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*parent_adjustment_info=*/
+      /*parent_adjustment_info_in=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY, embedding_query_vectors,
                            EMBEDDING_METRIC_DOT_PRODUCT),
@@ -659,7 +659,7 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfo) {
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
       *document_store_);
 
   PageResult page_result =
@@ -948,7 +948,7 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfoDisabled) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*parent_adjustment_info=*/
+      /*parent_adjustment_info_in=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY, embedding_query_vectors,
                            EMBEDDING_METRIC_DOT_PRODUCT),
@@ -957,7 +957,7 @@ TEST_F(ResultRetrieverV2SnippetTest, SnippetWithGetEmbeddingMatchInfoDisabled) {
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
       *document_store_);
 
   PageResult page_result =
@@ -1073,7 +1073,7 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*parent_adjustment_info=*/
+      /*parent_adjustment_info_in=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
@@ -1081,13 +1081,13 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeResults) {
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
       *document_store_);
   {
     absl_ports::unique_lock l(&result_state.mutex);
 
     // Set remaining_num_to_snippet = 2
-    result_state.parent_adjustment_info()->remaining_num_to_snippet = 2;
+    result_state.parent_adjustment_info->remaining_num_to_snippet = 2;
   }
 
   PageResult page_result =
@@ -1144,7 +1144,7 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldNotSnippetAnyResults) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*parent_adjustment_info=*/
+      /*parent_adjustment_info_in=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
@@ -1152,13 +1152,13 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldNotSnippetAnyResults) {
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
       *document_store_);
   {
     absl_ports::unique_lock l(&result_state.mutex);
 
     // Set remaining_num_to_snippet = 0
-    result_state.parent_adjustment_info()->remaining_num_to_snippet = 0;
+    result_state.parent_adjustment_info->remaining_num_to_snippet = 0;
   }
 
   // We can't return any snippets for this page.
@@ -1217,7 +1217,7 @@ TEST_F(ResultRetrieverV2SnippetTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/false),
-      /*parent_adjustment_info=*/
+      /*parent_adjustment_info_in=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), result_spec,
@@ -1225,15 +1225,15 @@ TEST_F(ResultRetrieverV2SnippetTest,
           std::unordered_set<DocumentId>{document_id1, document_id2,
                                          document_id3},
           SectionRestrictQueryTermsMap({{"", {"foo", "bar"}}})),
-      /*child_adjustment_info=*/nullptr, result_spec, *schema_store_,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
       *document_store_);
 
   {
     absl_ports::unique_lock l(&result_state.mutex);
 
     // Set num_matchers_per_property = 0
-    result_state.parent_adjustment_info()
-        ->snippet_context.snippet_spec.set_num_matches_per_property(0);
+    result_state.parent_adjustment_info->snippet_context.snippet_spec
+        .set_num_matches_per_property(0);
   }
 
   // We can't return any snippets for this page even though num_to_snippet > 0.
@@ -1344,7 +1344,7 @@ TEST_F(ResultRetrieverV2SnippetTest, JoinSnippeted) {
                                                joined_scored_document_hit2,
                                                joined_scored_document_hit3},
           /*is_descending=*/false),
-      /*parent_adjustment_info=*/
+      /*parent_adjustment_info_in=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), parent_result_spec,
@@ -1352,7 +1352,7 @@ TEST_F(ResultRetrieverV2SnippetTest, JoinSnippeted) {
           std::unordered_set<DocumentId>{
               person_document_id1, person_document_id2, person_document_id3},
           SectionRestrictQueryTermsMap({{"", {"person"}}})),
-      /*child_adjustment_info=*/
+      /*child_adjustment_info_in=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), child_result_spec,
@@ -1590,7 +1590,7 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllJoinedResults) {
           std::vector<JoinedScoredDocumentHit>{joined_scored_document_hit1,
                                                joined_scored_document_hit2},
           /*is_descending=*/false),
-      /*parent_adjustment_info=*/
+      /*parent_adjustment_info_in=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), parent_result_spec,
@@ -1598,7 +1598,7 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetAllJoinedResults) {
           std::unordered_set<DocumentId>{person_document_id1,
                                          person_document_id2},
           SectionRestrictQueryTermsMap({{"", {"person"}}})),
-      /*child_adjustment_info=*/
+      /*child_adjustment_info_in=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), child_result_spec,
@@ -1726,7 +1726,7 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeJoinedResults) {
           std::vector<JoinedScoredDocumentHit>{joined_scored_document_hit1,
                                                joined_scored_document_hit2},
           /*is_descending=*/false),
-      /*parent_adjustment_info=*/
+      /*parent_adjustment_info_in=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), parent_result_spec,
@@ -1734,7 +1734,7 @@ TEST_F(ResultRetrieverV2SnippetTest, ShouldSnippetSomeJoinedResults) {
           std::unordered_set<DocumentId>{person_document_id1,
                                          person_document_id2},
           SectionRestrictQueryTermsMap({{"", {"person"}}})),
-      /*child_adjustment_info=*/
+      /*child_adjustment_info_in=*/
       std::make_unique<ResultAdjustmentInfo>(
           CreateSearchSpec(TermMatchType::EXACT_ONLY),
           CreateScoringSpec(/*is_descending_order=*/false), child_result_spec,

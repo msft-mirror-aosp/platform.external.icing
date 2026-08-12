@@ -356,7 +356,8 @@ TEST_F(ResultRetrieverV2Test, ShouldRetrieveSimpleResults) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr,
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
       *schema_store_, *document_store_);
 
@@ -438,7 +439,8 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr,
       CreateResultSpec(/*num_per_page=*/3, ResultSpecProto::NAMESPACE),
       *schema_store_, *document_store_);
   PageResult page_result1 =
@@ -462,7 +464,8 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreNonInternalErrors) {
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr,
       CreateResultSpec(/*num_per_page=*/3, ResultSpecProto::NAMESPACE),
       *schema_store_, *document_store_);
   PageResult page_result2 =
@@ -609,8 +612,9 @@ TEST_F(ResultRetrieverV2Test,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<JoinedScoredDocumentHit>>(
           std::move(joined_scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   // Result1: person2 with child docs = [email4, email3]
   SearchResultProto::ResultProto result1;
@@ -679,7 +683,8 @@ TEST_F(ResultRetrieverV2Test, ShouldIgnoreInternalErrors) {
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr,
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
       *schema_store_, *document_store_);
   PageResult page_result =
@@ -741,7 +746,8 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateResultState) {
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr,
       CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
       *schema_store_, *document_store_);
 
@@ -827,7 +833,8 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits1),
               /*is_descending=*/true),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          /*parent_adjustment_info_in=*/nullptr,
+          /*child_adjustment_info_in=*/nullptr,
           CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
           *schema_store_, *document_store_);
   {
@@ -862,7 +869,8 @@ TEST_F(ResultRetrieverV2Test, ShouldUpdateNumTotalHits) {
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2),
               /*is_descending=*/true),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          /*parent_adjustment_info_in=*/nullptr,
+          /*child_adjustment_info_in=*/nullptr,
           CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
           *schema_store_, *document_store_);
   {
@@ -965,8 +973,9 @@ TEST_F(ResultRetrieverV2Test, ShouldLimitNumTotalBytesPerPage) {
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   // First page. Only result1 should be returned, since its byte size meets
   // num_total_bytes_per_page_threshold and ResultRetriever should terminate
@@ -1030,8 +1039,9 @@ TEST_F(ResultRetrieverV2Test,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   // First page. Should return single result1 even though its byte size exceeds
   // num_total_bytes_per_page_threshold.
@@ -1096,8 +1106,9 @@ TEST_F(ResultRetrieverV2Test,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   // After retrieving result1, total bytes are still below the threshold and #
   // of results is still below num_per_page, so ResultRetriever should continue
@@ -1173,8 +1184,9 @@ TEST_F(ResultRetrieverV2Test,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   // First page: result1 should be returned.
   auto [page_result1, has_more_results1] = result_retriever->RetrieveNextPage(
