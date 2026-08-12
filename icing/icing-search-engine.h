@@ -1184,7 +1184,7 @@ class IcingSearchEngine {
   IndexRestorationResult RestoreIndexIfNeeded()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Helper method to discard search (term, integer) indices.
+  // Helper method to discard all search indices (term, integer, embedding).
   //
   // Returns:
   //   OK on success
@@ -1217,6 +1217,12 @@ class IcingSearchEngine {
   // This is used to schedule the task with the task scheduler.
   std::function<void()> CreateMaintainAnnIndexTask(int retry_count = 0)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to run MaintainAnnIndex with shared lock.
+  void MaintainAnnIndexLocked(const MaintainAnnIndexOptions& options,
+                              Timer* maintain_timer, StatusProto* result_status,
+                              MaintainAnnIndexResultProto& result_proto)
+      ICING_SHARED_LOCKS_REQUIRED(mutex_);
 };
 
 }  // namespace lib

@@ -33,7 +33,9 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/str_cat.h"
+#include "icing/absl_ports/thread_annotations.h"
 #include "icing/document-builder.h"
 #include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
@@ -176,15 +178,19 @@ class EmbeddingIndexTest : public Test, public EmbeddingIndexTestPeer {
   using IvfMetadata = ::icing::lib::EmbeddingIndex::IvfMetadata;
 
   libtextclassifier3::StatusOr<IvfMetadata> GetMetadata(
-      const IvfContextManager& ivf_context, EmbeddingIndex* index = nullptr) {
+      const IvfContextManager& ivf_context, EmbeddingIndex* index = nullptr)
+      ICING_LOCKS_EXCLUDED(index->mutex_, embedding_index_->mutex_) {
     if (index == nullptr) index = embedding_index_.get();
+    absl_ports::shared_lock l(&index->mutex_);
     return ivf_context.GetMetadata(index);
   }
 
   libtextclassifier3::Status SetMetadata(const IvfContextManager& ivf_context,
                                          const IvfMetadata& metadata,
-                                         EmbeddingIndex* index = nullptr) {
+                                         EmbeddingIndex* index = nullptr)
+      ICING_LOCKS_EXCLUDED(index->mutex_, embedding_index_->mutex_) {
     if (index == nullptr) index = embedding_index_.get();
+    absl_ports::unique_lock l(&index->mutex_);
     return ivf_context.SetMetadata(index, metadata);
   }
 
@@ -192,21 +198,29 @@ class EmbeddingIndexTest : public Test, public EmbeddingIndexTestPeer {
   GetClosestClusterIdsByDistance(const IvfContextManager& ivf_context,
                                  const PropertyProto::VectorProto& query_vector,
                                  uint32_t num_clusters,
-                                 EmbeddingIndex* index = nullptr) {
+                                 EmbeddingIndex* index = nullptr)
+      ICING_LOCKS_EXCLUDED(index->mutex_, embedding_index_->mutex_) {
     if (index == nullptr) index = embedding_index_.get();
+    absl_ports::shared_lock l(&index->mutex_);
     return ivf_context.GetClosestClusterIdsByDistance(index, query_vector,
                                                       num_clusters);
   }
 
-  bool PostingListExists(std::string_view key) {
-    return GetPostingListMapper()->Get(key).ok();
+  bool PostingListExists(std::string_view key)
+      ICING_LOCKS_EXCLUDED(embedding_index_->mutex_) {
+    absl_ports::shared_lock l(&embedding_index_->mutex_);
+    return embedding_index_->embedding_posting_list_mapper_->Get(key).ok();
   }
 
-  static uint32_t GetNumShards(const EmbeddingIndex* index) {
+  static uint32_t GetNumShards(const EmbeddingIndex* index)
+      ICING_LOCKS_EXCLUDED(index->mutex_) {
+    absl_ports::shared_lock l(&index->mutex_);
     return index->info().num_shards;
   }
 
-  static void SetNumShards(uint32_t num_shards, EmbeddingIndex* index) {
+  static void SetNumShards(uint32_t num_shards, EmbeddingIndex* index)
+      ICING_LOCKS_EXCLUDED(index->mutex_) {
+    absl_ports::unique_lock l(&index->mutex_);
     index->info().num_shards = num_shards;
   }
 
@@ -221,22 +235,27 @@ class EmbeddingIndexTest : public Test, public EmbeddingIndexTestPeer {
 
   libtextclassifier3::StatusOr<uint32_t> AppendEmbeddingVector(
       const EmbeddingReference& embedding, uint32_t dimension,
-      uint32_t shard_id) {
+      uint32_t shard_id) ICING_LOCKS_EXCLUDED(embedding_index_->mutex_) {
+    absl_ports::unique_lock l(&embedding_index_->mutex_);
     return embedding_index_->AppendEmbeddingVector(embedding, dimension,
                                                    shard_id);
   }
 
-  KeyMapper<PostingListIdentifier>* GetPostingListMapper() {
+  KeyMapper<PostingListIdentifier>* GetPostingListMapper()
+      ICING_LOCKS_EXCLUDED(embedding_index_->mutex_) {
+    absl_ports::shared_lock l(&embedding_index_->mutex_);
     return embedding_index_->embedding_posting_list_mapper_.get();
   }
 
   // Returns a sorted list of unique base keys stored in the posting list
   // mapper. If `is_ivf` is true, it filters for keys that belong to an IVF
   // cluster. Otherwise, it filters for keys that belong to linear search.
-  std::vector<std::string> GetKnownBaseKeys(bool is_ivf) {
+  std::vector<std::string> GetKnownBaseKeys(bool is_ivf)
+      ICING_LOCKS_EXCLUDED(embedding_index_->mutex_) {
+    absl_ports::shared_lock l(&embedding_index_->mutex_);
     std::vector<std::string> keys;
     std::unique_ptr<KeyMapper<PostingListIdentifier>::Iterator> itr =
-        GetPostingListMapper()->GetIterator();
+        embedding_index_->embedding_posting_list_mapper_->GetIterator();
     while (itr->Advance()) {
       std::string_view key = itr->GetKey();
       libtextclassifier3::StatusOr<embedding_util::ParsedPostingListKey>
@@ -1902,6 +1921,7 @@ TEST_F(EmbeddingIndexTest, GetAccessor_MultipleClustersAreMergedCorrectly) {
       embedding_index_->GetAccessor(kDefaultDimension, kDefaultModelSignature,
                                     {3, 4}));
 
+  ICING_ASSERT_OK(accessor->AssertSharedLockHeld());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<EmbeddingIndex::EmbeddingHitAccessor::HitInfo> batch,
       accessor->GetNextHitsBatch());
@@ -1947,6 +1967,7 @@ TEST_F(EmbeddingIndexTest, GetAccessor_DuplicateClustersAreDeduplicated) {
       embedding_index_->GetAccessor(kDefaultDimension, kDefaultModelSignature,
                                     {3, 4, 3}));
 
+  ICING_ASSERT_OK(accessor->AssertSharedLockHeld());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<EmbeddingIndex::EmbeddingHitAccessor::HitInfo> batch,
       accessor->GetNextHitsBatch());
@@ -2009,6 +2030,7 @@ TEST_F(EmbeddingIndexTest, GetAccessor_MultipleClustersWithSomeNonExistent) {
       embedding_index_->GetAccessor(kDefaultDimension, kDefaultModelSignature,
                                     {3, 100, 4}));
 
+  ICING_ASSERT_OK(accessor->AssertSharedLockHeld());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<EmbeddingIndex::EmbeddingHitAccessor::HitInfo> batch,
       accessor->GetNextHitsBatch());
@@ -2055,6 +2077,7 @@ TEST_F(EmbeddingIndexTest, GetAccessor_MultipleClustersWithBaseIndex) {
           kDefaultDimension, kDefaultModelSignature,
           {embedding_util::kLinearSearchClusterId, 3, 4}));
 
+  ICING_ASSERT_OK(hit_accessor->AssertSharedLockHeld());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<EmbeddingIndex::EmbeddingHitAccessor::HitInfo> batch,
       hit_accessor->GetNextHitsBatch());
@@ -2093,6 +2116,7 @@ TEST_F(EmbeddingIndexTest, GetAccessorForVector_MultipleClusters) {
       std::unique_ptr<EmbeddingIndex::EmbeddingHitAccessor> accessor,
       embedding_index_->GetAccessorForVector(test_vector1_, {3, 4}));
 
+  ICING_ASSERT_OK(accessor->AssertSharedLockHeld());
   ICING_ASSERT_OK_AND_ASSIGN(
       std::vector<EmbeddingIndex::EmbeddingHitAccessor::HitInfo> batch,
       accessor->GetNextHitsBatch());

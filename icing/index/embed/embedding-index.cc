@@ -15,6 +15,7 @@
 #include "icing/index/embed/embedding-index.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <functional>
@@ -29,12 +30,14 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/feature-flags.h"
 #include "icing/file/destructible-directory.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/memory-mapped-file.h"
+#include "icing/file/persistent-storage.h"
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/embed/embedding-hit.h"
@@ -273,7 +276,11 @@ EmbeddingIndex::Create(const Filesystem* filesystem, std::string working_path,
   std::unique_ptr<EmbeddingIndex> index = std::unique_ptr<EmbeddingIndex>(
       new EmbeddingIndex(*filesystem, std::move(working_path), clock,
                          feature_flags, num_shards));
-  ICING_RETURN_IF_ERROR(index->Initialize());
+  {
+    absl_ports::unique_lock l(&index->mutex_);
+
+    ICING_RETURN_IF_ERROR(index->Initialize());
+  }
   return index;
 }
 
@@ -463,6 +470,8 @@ libtextclassifier3::Status EmbeddingIndex::Initialize() {
 }
 
 libtextclassifier3::Status EmbeddingIndex::Clear() {
+  absl_ports::unique_lock l(&mutex_);
+
   pending_embedding_hits_.clear();
   metadata_mmapped_file_.reset();
   flash_index_storage_.reset();
@@ -490,12 +499,12 @@ EmbeddingIndex::GetAccessor(uint32_t dimension,
   if (cluster_ids.empty()) {
     return absl_ports::InvalidArgumentError("cluster_ids cannot be empty");
   }
+  auto accessor = std::make_unique<EmbeddingHitAccessor>(this);
+  ICING_RETURN_IF_ERROR(accessor->AssertSharedLockHeld());
   if (is_empty()) {
     return absl_ports::NotFoundError("EmbeddingIndex is empty");
   }
 
-  std::unique_ptr<EmbeddingHitAccessor> accessor =
-      std::make_unique<EmbeddingHitAccessor>(this);
   IvfContextManager ivf_manager(dimension, model_signature);
   bool has_posting_lists = false;
 
@@ -608,6 +617,8 @@ libtextclassifier3::Status EmbeddingIndex::BufferEmbedding(
     const BasicHit& basic_hit, const PropertyProto::VectorProto& vector,
     EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
     std::string_view schema_name) {
+  absl_ports::unique_lock l(&mutex_);
+
   // Robustness check: return an error if quantization is not enabled but the
   // vector has quantized values.
   if (!vector.quantized_values().empty() &&
@@ -637,6 +648,8 @@ libtextclassifier3::Status EmbeddingIndex::BufferEmbeddingIvf(
     const BasicHit& basic_hit, const PropertyProto::VectorProto& vector,
     EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
     std::string_view schema_name) {
+  absl_ports::unique_lock l(&mutex_);
+
   ICING_RETURN_IF_ERROR(MarkIndexNonEmpty());
 
   ICING_ASSIGN_OR_RETURN(IvfContextManager ivf_context,
@@ -669,6 +682,12 @@ libtextclassifier3::Status EmbeddingIndex::BufferEmbeddingIvf(
 }
 
 libtextclassifier3::Status EmbeddingIndex::CommitBufferToIndex() {
+  absl_ports::unique_lock l(&mutex_);
+
+  return CommitBufferToIndexLocked();
+}
+
+libtextclassifier3::Status EmbeddingIndex::CommitBufferToIndexLocked() {
   if (pending_embedding_hits_.empty()) {
     return libtextclassifier3::Status::OK;
   }
@@ -949,6 +968,8 @@ libtextclassifier3::Status EmbeddingIndex::Optimize(
     const DocumentStore* document_store, const SchemaStore* schema_store,
     const std::vector<DocumentId>& document_id_old_to_new,
     DocumentId new_last_added_document_id) {
+  absl_ports::unique_lock l(&mutex_);
+
   ICING_RETURN_ERROR_IF_NULL(document_store);
   ICING_RETURN_ERROR_IF_NULL(schema_store);
   if (is_empty()) {
@@ -958,7 +979,7 @@ libtextclassifier3::Status EmbeddingIndex::Optimize(
 
   // This is just for completeness, but this should never be necessary, since we
   // should never have pending hits at the time when Optimize is run.
-  ICING_RETURN_IF_ERROR(CommitBufferToIndex());
+  ICING_RETURN_IF_ERROR(CommitBufferToIndexLocked());
 
   std::string temporary_index_working_path = working_path_ + "_temp";
   if (!filesystem_.DeleteDirectoryRecursively(
@@ -980,9 +1001,13 @@ libtextclassifier3::Status EmbeddingIndex::Optimize(
         std::unique_ptr<EmbeddingIndex> new_index,
         EmbeddingIndex::Create(&filesystem_, temporary_index_dir.dir(), &clock_,
                                feature_flags_, num_shards_));
-    ICING_RETURN_IF_ERROR(TransferIndex(*document_store, *schema_store,
-                                        document_id_old_to_new,
-                                        new_index.get()));
+    {
+      absl_ports::unique_lock new_index_lock(&new_index->mutex_);
+
+      ICING_RETURN_IF_ERROR(TransferIndex(*document_store, *schema_store,
+                                          document_id_old_to_new,
+                                          new_index.get()));
+    }
     new_index->set_last_added_document_id(new_last_added_document_id);
     ICING_RETURN_IF_ERROR(new_index->PersistToDisk());
   }
@@ -1208,6 +1233,24 @@ libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::GetStoragesChecksum()
   return Crc32(checksum);
 }
 
+libtextclassifier3::Status EmbeddingIndex::PersistToDisk() {
+  absl_ports::unique_lock l(&mutex_);
+
+  return PersistentStorage::PersistToDisk();
+}
+
+libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::UpdateChecksums() {
+  absl_ports::unique_lock l(&mutex_);
+
+  return PersistentStorage::UpdateChecksums();
+}
+
+libtextclassifier3::StatusOr<Crc32> EmbeddingIndex::GetChecksum() const {
+  absl_ports::shared_lock l(&mutex_);
+
+  return PersistentStorage::GetChecksum();
+}
+
 libtextclassifier3::StatusOr<EmbeddingIndex::ExtractedEmbeddings>
 EmbeddingIndex::RetrieveAllEmbeddings(
     const DocumentStore& document_store, const SchemaStore& schema_store,
@@ -1422,15 +1465,43 @@ libtextclassifier3::Status EmbeddingIndex::TransferEmbeddingsToNewClusters(
 libtextclassifier3::StatusOr<int> EmbeddingIndex::MaintainAllIvf(
     const DocumentStore& document_store, const SchemaStore& schema_store,
     const MaintainAnnIndexOptions& maintain_ann_index_options) {
-  if (is_empty()) {
+  if (is_maintenance_running_.exchange(true)) {
+    // If a maintenance task is already running, this new request can just
+    // return early.
     return 0;
+  }
+  struct MaintenanceGuard {
+    std::atomic<bool>& is_running;
+    ~MaintenanceGuard() { is_running.store(false); }
+  } guard{is_maintenance_running_};
+
+  std::vector<std::string> base_keys;
+  {
+    absl_ports::shared_lock l(&mutex_);
+    if (is_empty()) {
+      return 0;
+    }
+    std::unique_ptr<KeyMapper<IvfMetadata>::Iterator> itr =
+        ivf_metadata_mapper_->GetIterator();
+    while (itr->Advance()) {
+      base_keys.push_back(std::string(itr->GetKey()));
+    }
   }
 
   int total_iterations = 0;
-  std::unique_ptr<KeyMapper<IvfMetadata>::Iterator> itr =
-      ivf_metadata_mapper_->GetIterator();
-  while (itr->Advance()) {
-    IvfContextManager ivf_context(/*base_key=*/std::string(itr->GetKey()));
+  for (const std::string& base_key : base_keys) {
+    IvfContextManager ivf_context(base_key);
+    // NOTE: Across iterations, mutex_ is repeatedly acquired and released by
+    // each MaintainIvf() call. Consequently, a concurrent query could execute
+    // between MaintainIvf() calls for different base_keys.
+    //
+    // This interleaving is completely safe:
+    // 1. All write operations use a unique_lock, so a query will never observe
+    //    an inconsistent state mid-update during a MaintainIvf() write-back,
+    //    nor will a MaintainIvf() write-back interrupt an ongoing query.
+    // 2. Each base_key represents an independent embedding corpus. Updating
+    //    one corpus does not affect the correctness of another, so executing a
+    //    query between the maintenance of two different corpora is safe.
     ICING_ASSIGN_OR_RETURN(
         int iterations, MaintainIvf(ivf_context, document_store, schema_store,
                                     maintain_ann_index_options));
@@ -1444,46 +1515,66 @@ libtextclassifier3::StatusOr<int> EmbeddingIndex::MaintainIvf(
     const SchemaStore& schema_store,
     const MaintainAnnIndexOptions& maintain_ann_index_options) {
   uint32_t dimension = ivf_context.dimension();
-  ICING_ASSIGN_OR_RETURN(IvfMetadata ivf_metadata,
-                         ivf_context.GetMetadata(this));
-
-  // If k-means has never been run previously, check the delta store size, which
-  // is equal to current_size for this case.
-  bool delta_store_exceed_threshold =
-      ivf_metadata.last_ivf_build_size == 0 &&
-      ivf_metadata.current_size >=
-          maintain_ann_index_options.min_size_for_ivf();
-  // If ivf has been built, we check if current_size exceeds a certain
-  // percentage of the last ivf build size.
-  bool ivf_grow_exceed_threshold =
-      ivf_metadata.last_ivf_build_size > 0 &&
-      static_cast<float>(ivf_metadata.current_size) >=
-          static_cast<float>(ivf_metadata.last_ivf_build_size) *
-              (1.0f + maintain_ann_index_options.rebuild_threshold());
-  // Do not need to build or rebuild if neither condition is met.
-  if (!delta_store_exceed_threshold && !ivf_grow_exceed_threshold) {
-    return 0;
-  }
-
-  // We are going to rebuild, we have to read everything.
-  // Determine clusters to read from
+  IvfMetadata ivf_metadata;
+  ExtractedEmbeddings extracted_embeddings;
   std::vector<std::string> cluster_keys_to_read;
-  cluster_keys_to_read.push_back(
-      ivf_context.GetPostingListKey(embedding_util::kIvfDeltaStoreClusterId));
-  for (uint32_t c = 0; c < ivf_metadata.num_clusters; ++c) {
+
+  {
+    absl_ports::shared_lock l(&mutex_);
+    ICING_ASSIGN_OR_RETURN(ivf_metadata, ivf_context.GetMetadata(this));
+
+    // If k-means has never been run previously, check the delta store size,
+    // which is equal to current_size for this case.
+    bool delta_store_exceed_threshold =
+        ivf_metadata.last_ivf_build_size == 0 &&
+        ivf_metadata.current_size >=
+            maintain_ann_index_options.min_size_for_ivf();
+    // If ivf has been built, we check if current_size exceeds a certain
+    // percentage of the last ivf build size.
+    bool ivf_grow_exceed_threshold =
+        ivf_metadata.last_ivf_build_size > 0 &&
+        static_cast<float>(ivf_metadata.current_size) >=
+            static_cast<float>(ivf_metadata.last_ivf_build_size) *
+                (1.0f + maintain_ann_index_options.rebuild_threshold());
+    // Do not need to build or rebuild if neither condition is met.
+    if (!delta_store_exceed_threshold && !ivf_grow_exceed_threshold) {
+      return 0;
+    }
+
+    // We are going to rebuild, we have to read everything.
+    // Determine clusters to read from
+    cluster_keys_to_read.reserve(1 + ivf_metadata.num_clusters);
     cluster_keys_to_read.push_back(
-        ivf_context.GetPostingListKey(embedding_util::kIvfBaseClusterId + c));
+        ivf_context.GetPostingListKey(embedding_util::kIvfDeltaStoreClusterId));
+    for (uint32_t c = 0; c < ivf_metadata.num_clusters; ++c) {
+      cluster_keys_to_read.push_back(
+          ivf_context.GetPostingListKey(embedding_util::kIvfBaseClusterId + c));
+    }
+
+    // Retrieve all embeddings with reference.
+    ICING_ASSIGN_OR_RETURN(
+        extracted_embeddings,
+        RetrieveAllEmbeddings(document_store, schema_store,
+                              cluster_keys_to_read, dimension,
+                              /*reserve_size=*/ivf_metadata.current_size));
+    if (extracted_embeddings.embeddings.empty()) {
+      return 0;
+    }
   }
 
-  // Retrieve all embeddings with reference.
-  ICING_ASSIGN_OR_RETURN(
-      ExtractedEmbeddings extracted_embeddings,
-      RetrieveAllEmbeddings(document_store, schema_store, cluster_keys_to_read,
-                            dimension,
-                            /*reserve_size=*/ivf_metadata.current_size));
-  if (extracted_embeddings.embeddings.empty()) {
-    return 0;
-  }
+  // NOTE: There is an unlocked gap between releasing the shared_lock above and
+  // acquiring the unique_lock below for the write-back phase.
+  //
+  // This gap is thread-compatible, but NOT thread-safe on EmbeddingIndex alone:
+  // if another write occurs during this gap, it would cause a race condition
+  // because MiniBatchKMeans::Compute operates on EmbeddingReferences pointing
+  // to the underlying storage without holding any lock. A concurrent write
+  // during Compute() would lead to undefined behavior, while a write after
+  // Compute() would cause the newly computed centroids to be stale.
+  //
+  // In practice, this is safe because the top-level IcingSearchEngine holds a
+  // shared lock across MaintainAnnIndex, preventing any concurrent writes
+  // from happening during this gap.
 
   ICING_ASSIGN_OR_RETURN(
       MiniBatchKMeans::ClusteringResult result,
@@ -1491,22 +1582,26 @@ libtextclassifier3::StatusOr<int> EmbeddingIndex::MaintainIvf(
           extracted_embeddings.embeddings, dimension,
           maintain_ann_index_options.mini_batch_k_means_options(), &clock_));
 
-  ivf_metadata.last_ivf_build_size = extracted_embeddings.embeddings.size();
-  ivf_metadata.current_size = extracted_embeddings.embeddings.size();
-  ivf_metadata.num_clusters = static_cast<uint32_t>(result.centroids.size());
+  // Write-back phase: UNIQUE LOCK!
+  {
+    absl_ports::unique_lock l(&mutex_);
+    ivf_metadata.last_ivf_build_size = extracted_embeddings.embeddings.size();
+    ivf_metadata.current_size = extracted_embeddings.embeddings.size();
+    ivf_metadata.num_clusters = static_cast<uint32_t>(result.centroids.size());
 
-  ICING_RETURN_IF_ERROR(WriteCentroids(ivf_context, result.centroids));
+    ICING_RETURN_IF_ERROR(WriteCentroids(ivf_context, result.centroids));
 
-  // Delete the entry for the old delta store and clusters.
-  for (const std::string& cluster_key : cluster_keys_to_read) {
-    ICING_RETURN_IF_ERROR(
-        TryDelete(embedding_posting_list_mapper_.get(), cluster_key));
+    // Delete the entry for the old delta store and clusters.
+    for (const std::string& cluster_key : cluster_keys_to_read) {
+      ICING_RETURN_IF_ERROR(
+          TryDelete(embedding_posting_list_mapper_.get(), cluster_key));
+    }
+
+    ICING_RETURN_IF_ERROR(TransferEmbeddingsToNewClusters(
+        ivf_context, result, extracted_embeddings));
+
+    ICING_RETURN_IF_ERROR(ivf_context.SetMetadata(this, ivf_metadata));
   }
-
-  ICING_RETURN_IF_ERROR(TransferEmbeddingsToNewClusters(ivf_context, result,
-                                                        extracted_embeddings));
-
-  ICING_RETURN_IF_ERROR(ivf_context.SetMetadata(this, ivf_metadata));
   return result.actual_iterations;
 }
 
