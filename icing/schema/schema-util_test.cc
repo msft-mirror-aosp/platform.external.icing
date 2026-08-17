@@ -26,12 +26,14 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/test-feature-flags.h"
 
 namespace icing {
 namespace lib {
 namespace {
 
 using portable_equals_proto::EqualsProto;
+using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
@@ -2438,6 +2440,55 @@ TEST_P(SchemaUtilTest, NewSchemaMissingPropertyIsIncompatible) {
               Eq(schema_delta));
 }
 
+TEST_P(SchemaUtilTest, PropertyConfigReorderingIsCompatible) {
+  // Configure old schema
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataType(TYPE_INT64)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop3")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema with the properties in a different order
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataType(TYPE_INT64)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop3")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta schema_delta;
+  if (feature_flags_->enable_schema_definition_deduping()) {
+    schema_delta.schema_types_changed_fully_compatible.insert(kEmailType);
+  }
+  SchemaUtil::DependentMap no_dependents_map;
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema, new_schema, no_dependents_map, *feature_flags_),
+              Eq(schema_delta));
+}
+
 TEST_P(SchemaUtilTest, CompatibilityOfDifferentCardinalityOk) {
   // Configure less restrictive schema based on cardinality
   SchemaProto less_restrictive_schema =
@@ -2608,10 +2659,11 @@ TEST_P(SchemaUtilTest, SameNumberOfRequiredFieldsCanBeIncompatible) {
 
   SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, /*new_schema_dependent_map=*/{}, *feature_flags_);
-  EXPECT_THAT(delta.schema_types_incompatible,
-              testing::ElementsAre(kEmailType));
-  EXPECT_THAT(delta.schema_types_index_incompatible, testing::IsEmpty());
-  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_incompatible, ElementsAre(kEmailType));
+  EXPECT_THAT(delta.schema_types_term_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_integer_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_embedding_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_deleted, IsEmpty());
 }
 
 TEST_P(SchemaUtilTest, SameNumberOfIndexedPropertiesCanMakeIndexIncompatible) {
@@ -2643,10 +2695,12 @@ TEST_P(SchemaUtilTest, SameNumberOfIndexedPropertiesCanMakeIndexIncompatible) {
 
   SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, /*new_schema_dependent_map=*/{}, *feature_flags_);
-  EXPECT_THAT(delta.schema_types_incompatible, testing::IsEmpty());
-  EXPECT_THAT(delta.schema_types_index_incompatible,
-              testing::ElementsAre(kEmailType));
-  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_term_index_incompatible,
+              ElementsAre(kEmailType));
+  EXPECT_THAT(delta.schema_types_integer_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_embedding_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_deleted, IsEmpty());
 }
 
 TEST_P(SchemaUtilTest, SameNumberOfJoinablePropertiesCanMakeJoinIncompatible) {
@@ -2678,11 +2732,12 @@ TEST_P(SchemaUtilTest, SameNumberOfJoinablePropertiesCanMakeJoinIncompatible) {
 
   SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, /*new_schema_dependent_map=*/{}, *feature_flags_);
-  EXPECT_THAT(delta.schema_types_incompatible, testing::IsEmpty());
-  EXPECT_THAT(delta.schema_types_index_incompatible, testing::IsEmpty());
-  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
-  EXPECT_THAT(delta.schema_types_join_incompatible,
-              testing::ElementsAre(kEmailType));
+  EXPECT_THAT(delta.schema_types_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_term_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_integer_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_embedding_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_deleted, IsEmpty());
+  EXPECT_THAT(delta.schema_types_join_incompatible, ElementsAre(kEmailType));
 }
 
 TEST_P(SchemaUtilTest, ChangingIndexedStringPropertiesMakesIndexIncompatible) {
@@ -2711,7 +2766,7 @@ TEST_P(SchemaUtilTest, ChangingIndexedStringPropertiesMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.insert(kPersonType);
 
   // New schema gained a new indexed string property.
   SchemaUtil::DependentMap no_dependents_map;
@@ -2758,7 +2813,7 @@ TEST_P(SchemaUtilTest, AddingNewIndexedStringPropertyMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.insert(kPersonType);
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   old_schema, new_schema, no_dependents_map, *feature_flags_),
@@ -2799,7 +2854,7 @@ TEST_P(SchemaUtilTest,
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   old_schema, new_schema, no_dependents_map, *feature_flags_)
-                  .schema_types_index_incompatible,
+                  .schema_types_term_index_incompatible,
               IsEmpty());
 }
 
@@ -2827,7 +2882,7 @@ TEST_P(SchemaUtilTest, ChangingIndexedIntegerPropertiesMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_integer_index_incompatible.insert(kPersonType);
 
   // New schema gained a new indexed integer property.
   SchemaUtil::DependentMap no_dependents_map;
@@ -2871,7 +2926,7 @@ TEST_P(SchemaUtilTest, AddingNewIndexedIntegerPropertyMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_integer_index_incompatible.insert(kPersonType);
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   old_schema, new_schema, no_dependents_map, *feature_flags_),
@@ -2909,7 +2964,7 @@ TEST_P(SchemaUtilTest,
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   old_schema, new_schema, no_dependents_map, *feature_flags_)
-                  .schema_types_index_incompatible,
+                  .schema_types_integer_index_incompatible,
               IsEmpty());
 }
 
@@ -2936,8 +2991,21 @@ TEST_P(SchemaUtilTest, ChangingIndexedVectorPropertiesMakesIndexIncompatible) {
                                .SetCardinality(CARDINALITY_OPTIONAL)))
           .Build();
 
+  SchemaProto schema_with_ann_property =
+      SchemaBuilder()
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType(kPersonType)
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("Property")
+                          .SetDataTypeVector(
+                              EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR)
+                          .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_embedding_index_incompatible.insert(kPersonType);
 
   // New schema gained a new indexed vector property.
   SchemaUtil::DependentMap no_dependents_map;
@@ -2951,6 +3019,21 @@ TEST_P(SchemaUtilTest, ChangingIndexedVectorPropertiesMakesIndexIncompatible) {
                   schema_with_indexed_property, schema_with_unindexed_property,
                   no_dependents_map, *feature_flags_),
               Eq(schema_delta));
+
+  // New schema gained a new ANN vector property.
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  schema_with_unindexed_property, schema_with_ann_property,
+                  no_dependents_map, *feature_flags_),
+              Eq(schema_delta));
+
+  // Switch from linear search to ANN.
+  SchemaUtil::SchemaDelta schema_delta_only_embedding;
+  schema_delta_only_embedding.schema_types_embedding_index_incompatible.insert(
+      kPersonType);
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  schema_with_indexed_property, schema_with_ann_property,
+                  no_dependents_map, *feature_flags_),
+              Eq(schema_delta_only_embedding));
 }
 
 TEST_P(SchemaUtilTest, ChangingQuantizationTypeMakesIndexIncompatible) {
@@ -2979,7 +3062,7 @@ TEST_P(SchemaUtilTest, ChangingQuantizationTypeMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_embedding_index_incompatible.insert(kPersonType);
 
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(
@@ -3024,7 +3107,8 @@ TEST_P(SchemaUtilTest, AddingNewIndexedVectorPropertyMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_integer_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_embedding_index_incompatible.insert(kPersonType);
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   old_schema, new_schema, no_dependents_map, *feature_flags_),
@@ -3063,7 +3147,7 @@ TEST_P(SchemaUtilTest,
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   old_schema, new_schema, no_dependents_map, *feature_flags_)
-                  .schema_types_index_incompatible,
+                  .schema_types_term_index_incompatible,
               IsEmpty());
 }
 
@@ -3109,7 +3193,8 @@ TEST_P(SchemaUtilTest,
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_integer_index_incompatible.insert(kPersonType);
   schema_delta.schema_types_join_incompatible.insert(kPersonType);
 
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
@@ -3166,7 +3251,8 @@ TEST_P(
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_integer_index_incompatible.insert(kPersonType);
   schema_delta.schema_types_join_incompatible.insert(kPersonType);
 
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
@@ -3282,7 +3368,8 @@ TEST_P(SchemaUtilTest, DeletingIndexedDocumentPropertyIsIncompatible) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.insert(kPersonType);
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_integer_index_incompatible.insert(kPersonType);
   schema_delta.schema_types_join_incompatible.insert(kPersonType);
 
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
@@ -3355,6 +3442,193 @@ TEST_P(SchemaUtilTest, DeletingNonIndexedDocumentPropertyIsIncompatible) {
   EXPECT_THAT(result_schema_delta, Eq(schema_delta));
 }
 
+TEST_P(SchemaUtilTest,
+       IncompatibleChangePropagatesThroughMultipleLayersOfDependents) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailProperty")
+                                        .SetDataTypeDocument(
+                                            kEmailType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Organization")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personProperty")
+                                        .SetDataTypeDocument(
+                                            kPersonType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema where kEmailType gets a new required property,
+  // making kEmailType incompatible.
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewRequired")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("emailProperty")
+                                        .SetDataTypeDocument(
+                                            kEmailType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Organization")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("personProperty")
+                                        .SetDataTypeDocument(
+                                            kPersonType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  // kPersonType depends on kEmailType, Organization depends on kPersonType
+  // (`email -> person -> Organization`).
+  const PropertyConfigProto* person_email_property =
+      &new_schema.types(1).properties(1);
+  const PropertyConfigProto* organization_person_property =
+      &new_schema.types(2).properties(0);
+  SchemaUtil::DependentMap expected_dependent_map = {
+      {kEmailType,
+       {{kPersonType, {person_email_property}}, {"Organization", {}}}},
+      {kPersonType, {{"Organization", {organization_person_property}}}}};
+  EXPECT_THAT(new_schema_dependent_map, Eq(expected_dependent_map));
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_incompatible.insert(kEmailType);
+  schema_delta.schema_types_incompatible.insert(kPersonType);
+  schema_delta.schema_types_incompatible.insert("Organization");
+
+  SchemaUtil::SchemaDelta result_schema_delta =
+      SchemaUtil::ComputeCompatibilityDelta(
+          old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(result_schema_delta, Eq(schema_delta));
+}
+
+TEST_P(SchemaUtilTest,
+       IncompatibleChangePropagatesThroughMixedInheritanceAndNestedDependents) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddParentType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Organization")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("person")
+                                        .SetDataTypeDocument(
+                                            kPersonType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Configure new schema where kEmailType gets a new required property,
+  // making kEmailType incompatible directly.
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewRequired")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType(kPersonType)
+                       .AddParentType(kEmailType)
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("NewRequired")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_REQUIRED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop2")
+                                        .SetDataType(TYPE_STRING)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Organization")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("person")
+                                        .SetDataTypeDocument(
+                                            kPersonType,
+                                            /*index_nested_properties=*/false)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  // kPersonType depends on kEmailType via inheritance, Organization depends on
+  // kPersonType via nested document (`email -> person -> Organization`).
+  const PropertyConfigProto* organization_person_property =
+      &new_schema.types(2).properties(0);
+  SchemaUtil::DependentMap expected_dependent_map = {
+      {kEmailType, {{kPersonType, {}}}},
+      {kPersonType, {{"Organization", {organization_person_property}}}}};
+  EXPECT_THAT(new_schema_dependent_map, Eq(expected_dependent_map));
+
+  SchemaUtil::SchemaDelta schema_delta;
+  schema_delta.schema_types_incompatible.insert(kEmailType);
+  schema_delta.schema_types_incompatible.insert(kPersonType);
+  schema_delta.schema_types_incompatible.insert("Organization");
+
+  SchemaUtil::SchemaDelta result_schema_delta =
+      SchemaUtil::ComputeCompatibilityDelta(
+          old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(result_schema_delta, Eq(schema_delta));
+}
+
 TEST_P(SchemaUtilTest, ChangingIndexedDocumentPropertyIsIncompatible) {
   SchemaTypeConfigProto nested_schema =
       SchemaTypeConfigBuilder()
@@ -3417,7 +3691,8 @@ TEST_P(SchemaUtilTest, ChangingIndexedDocumentPropertyIsIncompatible) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.insert(kPersonType);
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_integer_index_incompatible.insert(kPersonType);
   schema_delta.schema_types_join_incompatible.insert(kPersonType);
 
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
@@ -3617,9 +3892,10 @@ TEST_P(SchemaUtilTest, AddingNewNonJoinablePropertyShouldRemainJoinCompatible) {
               IsEmpty());
 }
 
-TEST_P(SchemaUtilTest, ChangingJoinablePropertiesPropagateDeleteIsCompatible) {
+TEST_P(SchemaUtilTest,
+       ChangingJoinablePropertiesPropagateDeleteIsJoinIncompatible) {
   // Configure old schema
-  SchemaProto old_schema =
+  SchemaProto old_schema_without_delete_propagation =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
               PropertyConfigBuilder()
@@ -3631,7 +3907,7 @@ TEST_P(SchemaUtilTest, ChangingJoinablePropertiesPropagateDeleteIsCompatible) {
           .Build();
 
   // Configure new schema with delete propagation type PROPAGATE_FROM
-  SchemaProto new_schema_with_optional =
+  SchemaProto new_schema_with_delete_propagation =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
               PropertyConfigBuilder()
@@ -3642,13 +3918,23 @@ TEST_P(SchemaUtilTest, ChangingJoinablePropertiesPropagateDeleteIsCompatible) {
                   .SetCardinality(CARDINALITY_REQUIRED)))
           .Build();
 
-  SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_changed_fully_compatible.insert("MyType");
+  SchemaUtil::SchemaDelta expected_schema_delta;
+  expected_schema_delta.schema_types_join_incompatible.insert("MyType");
+
+  // New schema enabled delete propagation.
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
-                  old_schema, new_schema_with_optional, no_dependents_map,
+                  old_schema_without_delete_propagation,
+                  new_schema_with_delete_propagation, no_dependents_map,
                   *feature_flags_),
-              Eq(schema_delta));
+              Eq(expected_schema_delta));
+
+  // New schema disabled a joinable property.
+  EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
+                  old_schema_without_delete_propagation,
+                  new_schema_with_delete_propagation, no_dependents_map,
+                  *feature_flags_),
+              Eq(expected_schema_delta));
 }
 
 TEST_P(SchemaUtilTest, AddingTypeIsCompatible) {
@@ -3763,7 +4049,7 @@ TEST_P(SchemaUtilTest, DeletingPropertyAndChangingProperty) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
-  schema_delta.schema_types_index_incompatible.emplace(kEmailType);
+  schema_delta.schema_types_term_index_incompatible.emplace(kEmailType);
   SchemaUtil::DependentMap no_dependents_map;
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, no_dependents_map, *feature_flags_);
@@ -3811,7 +4097,7 @@ TEST_P(SchemaUtilTest, IndexNestedDocumentsIndexIncompatible) {
   // should make kPersonType index_incompatible. kEmailType should be
   // unaffected.
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.emplace(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.emplace(kPersonType);
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       no_nested_index_schema, nested_index_schema, dependents_map,
@@ -3876,7 +4162,7 @@ TEST_P(SchemaUtilTest, AddOrDropIndexableNestedProperties_IndexIncompatible) {
   // Dropping some indexable_nested_properties should make kPersonType
   // index_incompatible. kEmailType should be unaffected.
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.emplace(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.emplace(kPersonType);
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       schema_1, schema_2, dependents_map, *feature_flags_);
@@ -3939,7 +4225,7 @@ TEST_P(SchemaUtilTest, ChangingIndexableNestedProperties_IndexIncompatible) {
   // Changing 'subject' to 'body' for indexable_nested_properties_list should
   // make kPersonType index_incompatible. kEmailType should be unaffected.
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.emplace(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.emplace(kPersonType);
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       schema_1, schema_2, dependents_map, *feature_flags_);
@@ -3995,7 +4281,7 @@ TEST_P(SchemaUtilTest, IndexableNestedPropertiesFullSet_IndexIncompatible) {
   // the moment, even though the set of indexable_nested_properties from
   // schema_1 to schema_2 should be the same.
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.emplace(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.emplace(kPersonType);
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       schema_1, schema_2, dependents_map, *feature_flags_);
@@ -4057,7 +4343,9 @@ TEST_P(SchemaUtilTest,
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       schema_1, schema_2, dependents_map, *feature_flags_);
   EXPECT_THAT(actual, Eq(schema_delta));
-  EXPECT_THAT(actual.schema_types_index_incompatible, IsEmpty());
+  EXPECT_THAT(actual.schema_types_term_index_incompatible, IsEmpty());
+  EXPECT_THAT(actual.schema_types_integer_index_incompatible, IsEmpty());
+  EXPECT_THAT(actual.schema_types_embedding_index_incompatible, IsEmpty());
 }
 
 TEST_P(SchemaUtilTest, SchemasWithConsistentScorableProperties) {
@@ -4429,17 +4717,11 @@ TEST_P(SchemaUtilTest,
 TEST_P(SchemaUtilTest,
        ValidateJoinablePropertyShouldNotHaveRepeatedCardinality) {
   // We need to explicitly override enable_repeated_field_joins to false.
-  feature_flags_ = std::make_unique<FeatureFlags>(
-      GetParam().allow_circular_schema_definitions(),
-      /*enable_scorable_properties=*/true,
-      /*enable_embedding_quantization=*/true,
-      /*enable_repeated_field_joins=*/false,
-      /*enable_embedding_backup_generation=*/true,
-      /*enable_schema_database=*/true,
-      /*release_backup_schema_file_if_overlay_present=*/true,
-      /*enable_strict_page_byte_size_limit=*/true,
-      /*enable_smaller_decompression_buffer_size=*/true,
-      /*enable_eigen_embedding_scoring=*/true);
+  feature_flags_ =
+      std::make_unique<FeatureFlags>(FeatureFlagsBuilder(GetParam())
+                                         .set_enable_repeated_field_joins(false)
+                                         .Build());
+
   SchemaProto schema =
       SchemaBuilder()
           .AddType(SchemaTypeConfigBuilder().SetType("MyType").AddProperty(
@@ -4494,17 +4776,10 @@ TEST_P(SchemaUtilTest,
 
 TEST_P(SchemaUtilTest, ValidateJoinablePropertyCanHaveRepeatedCardinality) {
   // We need to explicitly override enable_repeated_field_joins to true.
-  feature_flags_ = std::make_unique<FeatureFlags>(
-      GetParam().allow_circular_schema_definitions(),
-      /*enable_scorable_properties=*/true,
-      /*enable_embedding_quantization=*/true,
-      /*enable_repeated_field_joins=*/true,
-      /*enable_embedding_backup_generation=*/true,
-      /*enable_schema_database=*/true,
-      /*release_backup_schema_file_if_overlay_present=*/true,
-      /*enable_strict_page_byte_size_limit=*/true,
-      /*enable_smaller_decompression_buffer_size=*/true,
-      /*enable_eigen_embedding_scoring=*/true);
+  feature_flags_ =
+      std::make_unique<FeatureFlags>(FeatureFlagsBuilder(GetParam())
+                                         .set_enable_repeated_field_joins(true)
+                                         .Build());
 
   SchemaProto schema =
       SchemaBuilder()
@@ -5822,30 +6097,361 @@ TEST_P(SchemaUtilTest, ValidateScorableType_DisabledForUnsupportedDataTypes) {
               StatusIs(libtextclassifier3::StatusCode::OK));
 }
 
+TEST_P(SchemaUtilTest, AccountPropertyDemotingIsCompatible) {
+  // Rule 1: Demoting an existing property from an account property to a regular
+  // property is COMPATIBLE.
+
+  // Configure old schema: "prop1" is both a schema property and an account
+  // property.
+  SchemaTypeConfigProto old_type =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop1")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  old_type.add_account_properties("prop1");
+  SchemaProto old_schema = SchemaBuilder().AddType(old_type).Build();
+
+  // Configure new schema: "prop1" remains as a regular property but is
+  // removed from account_properties.
+  SchemaTypeConfigProto new_type =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop1")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_type).Build();
+
+  feature_flags_ = std::make_unique<FeatureFlags>(
+      FeatureFlagsBuilder(GetParam())
+          .set_enable_account_property_incompatibility_check(true)
+          .Build());
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(schema_delta.schema_types_incompatible, IsEmpty());
+  EXPECT_THAT(schema_delta.schema_types_changed_fully_compatible, IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, AccountPropertyPromotingIsIncompatible) {
+  // Rule 2: Promoting an existing regular property into an account property is
+  // INCOMPATIBLE.
+
+  // Configure old schema: "prop1" is just a regular property.
+  SchemaTypeConfigProto old_type =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop1")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto old_schema = SchemaBuilder().AddType(old_type).Build();
+
+  // Configure new schema: "prop1" is now promoted to be an account property.
+  SchemaTypeConfigProto new_type =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop1")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  new_type.add_account_properties("prop1");
+  SchemaProto new_schema = SchemaBuilder().AddType(new_type).Build();
+
+  feature_flags_ = std::make_unique<FeatureFlags>(
+      FeatureFlagsBuilder(GetParam())
+          .set_enable_account_property_incompatibility_check(true)
+          .Build());
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(schema_delta.schema_types_incompatible,
+              UnorderedElementsAre(kEmailType));
+}
+
+TEST_P(SchemaUtilTest, NewPropertyAsAccountPropertyIsCompatible) {
+  // Rule 3: Introducing a completely new property and defining it as an account
+  // property is COMPATIBLE.
+
+  // Configure old schema: Only has "prop1".
+  SchemaTypeConfigProto old_type =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop1")
+                           .SetDataType(TYPE_STRING)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto old_schema = SchemaBuilder().AddType(old_type).Build();
+
+  // Configure new schema: Introduces "prop2" as an optional property
+  // and marks it as an account property at the same time.
+  SchemaTypeConfigProto new_type =
+      SchemaTypeConfigBuilder()
+          .SetType(kEmailType)
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop1")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("prop2")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  new_type.add_account_properties("prop2");
+  SchemaProto new_schema = SchemaBuilder().AddType(new_type).Build();
+
+  feature_flags_ = std::make_unique<FeatureFlags>(
+      FeatureFlagsBuilder(GetParam())
+          .set_enable_account_property_incompatibility_check(true)
+          .Build());
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  SchemaUtil::SchemaDelta schema_delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+  EXPECT_THAT(schema_delta.schema_types_incompatible, IsEmpty());
+  EXPECT_THAT(schema_delta.schema_types_changed_fully_compatible, IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, NestedAccountPropertyPromotingIsIncompatible) {
+  // 1. Build the OLD Schema elegantly using nesting Builders
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Profile").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("id")
+                  .SetDataType(PropertyConfigProto::DataType::STRING)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("User").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("profile")
+                  .SetDataTypeDocument("Profile",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .Build();
+
+  // 2. Build the NEW Schema: "User" now adds "profile.id" into
+  // account_properties
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Profile").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("id")
+                  .SetDataType(PropertyConfigProto::DataType::STRING)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("User")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("profile")
+                               .SetDataTypeDocument(
+                                   "Profile", /*index_nested_properties=*/true)
+                               .SetCardinality(
+                                   PropertyConfigProto::Cardinality::OPTIONAL))
+                       .AddAccountProperty("profile.id"))
+          .Build();
+
+  // 3. Set up prerequisite maps & flags for comparison
+  feature_flags_ = std::make_unique<FeatureFlags>(
+      FeatureFlagsBuilder(GetParam())
+          .set_enable_account_property_incompatibility_check(true)
+          .Build());
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  // 4. Run the compatibility delta computation
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+
+  // 5. Verification: Because "profile.id" already existed as a regular
+  // property, promoting it must cause an INCOMPATIBLE change for the "User"
+  // type.
+  EXPECT_THAT(delta.schema_types_incompatible, testing::Contains("User"));
+}
+
+TEST_P(SchemaUtilTest, NestedAccountPropertyNewAdditionIsCompatible) {
+  // 1. Build the OLD Schema: 'Profile' starts empty without the 'token' field.
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Profile"))
+          .AddType(SchemaTypeConfigBuilder().SetType("User").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("profile")
+                  .SetDataTypeDocument("Profile",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .Build();
+
+  // 2. Build the NEW Schema: Introduce a brand new 'token' property inside
+  // 'Profile', and define "profile.token" as an account property in 'User'.
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Profile").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("token")
+                  .SetDataType(PropertyConfigProto::DataType::STRING)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("User")
+                       .AddProperty(
+                           PropertyConfigBuilder()
+                               .SetName("profile")
+                               .SetDataTypeDocument(
+                                   "Profile", /*index_nested_properties=*/true)
+                               .SetCardinality(
+                                   PropertyConfigProto::Cardinality::OPTIONAL))
+                       .AddAccountProperty("profile.token"))
+          .Build();
+
+  // 3. Set up prerequisite maps & flags for comparison using the param builder
+  feature_flags_ = std::make_unique<FeatureFlags>(
+      FeatureFlagsBuilder(GetParam())
+          .set_enable_account_property_incompatibility_check(true)
+          .Build());
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaUtil::DependentMap new_schema_dependent_map,
+                             SchemaUtil::Validate(new_schema, *feature_flags_));
+
+  // 4. Run the compatibility delta computation
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, new_schema_dependent_map, *feature_flags_);
+
+  // 5. Verification: Since "profile.token" did not exist at all in the old
+  // layout, it is classified as a safe "New Property" addition, which must be
+  // fully COMPATIBLE.
+  EXPECT_THAT(delta.schema_types_incompatible, IsEmpty());
+}
+
+TEST_P(SchemaUtilTest, AccountPropertyPathDoesNotExistIsInvalid) {
+  // Build a schema where 'User' nests 'Profile', but 'Profile' only has 'id'.
+  // The account property incorrectly points to 'profile.non_existent_field'.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Profile").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("id")
+                  .SetDataType(PropertyConfigProto::DataType::STRING)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("User").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("profile")
+                  .SetDataTypeDocument("Profile",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .Build();
+
+  // Manually add the invalid nested path since Builder might not have it.
+  for (auto& type : *schema.mutable_types()) {
+    if (type.schema_type() == "User") {
+      type.add_account_properties("profile.non_existent_field");
+    }
+  }
+
+  feature_flags_ =
+      std::make_unique<FeatureFlags>(FeatureFlagsBuilder(GetParam()).Build());
+
+  // Verification: Validate must fail because the nested path doesn't exist.
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_).status(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(SchemaUtilTest, AccountPropertyDrillingIntoPrimitiveIsInvalid) {
+  // Build a schema where 'name' is just a STRING field under 'User'.
+  // The account property illegally tries to treat it as a document:
+  // 'name.first'
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigProto(
+              SchemaTypeConfigBuilder()
+                  .SetType("User")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("name")
+                          .SetDataType(PropertyConfigProto::DataType::STRING)
+                          .SetCardinality(
+                              PropertyConfigProto::Cardinality::OPTIONAL))
+                  .Build()))
+          .Build();
+
+  for (auto& type : *schema.mutable_types()) {
+    if (type.schema_type() == "User") {
+      type.add_account_properties("name.first");
+    }
+  }
+
+  feature_flags_ =
+      std::make_unique<FeatureFlags>(FeatureFlagsBuilder(GetParam()).Build());
+
+  // Verification: Validate must fail because 'name' is a STRING, not a
+  // DOCUMENT.
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_).status(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TEST_P(SchemaUtilTest, ValidNestedAccountPropertyPathPasses) {
+  // Build a perfectly valid two-level nesting schema: User -> Profile -> id
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Profile").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("id")
+                  .SetDataType(PropertyConfigProto::DataType::STRING)
+                  .SetCardinality(PropertyConfigProto::Cardinality::OPTIONAL)))
+          .AddType(SchemaTypeConfigProto(
+              SchemaTypeConfigBuilder()
+                  .SetType("User")
+                  .AddProperty(
+                      PropertyConfigBuilder()
+                          .SetName("profile")
+                          .SetDataTypeDocument("Profile",
+                                               /*index_nested_properties=*/true)
+                          .SetCardinality(
+                              PropertyConfigProto::Cardinality::OPTIONAL))
+                  .Build()))
+          .Build();
+
+  for (auto& type : *schema.mutable_types()) {
+    if (type.schema_type() == "User") {
+      type.add_account_properties("profile.id");  // 100% valid path
+    }
+  }
+
+  feature_flags_ =
+      std::make_unique<FeatureFlags>(FeatureFlagsBuilder(GetParam()).Build());
+
+  // Verification: Validate must pass successfully (return OK) for a correct
+  // path.
+  EXPECT_THAT(SchemaUtil::Validate(schema, *feature_flags_), IsOk());
+}
+
 INSTANTIATE_TEST_SUITE_P(
     SchemaUtilTest, SchemaUtilTest,
-    testing::Values(FeatureFlags(
-                        /*enable_circular_schema_definitions=*/false,
-                        /*enable_scorable_properties=*/true,
-                        /*enable_embedding_quantization=*/true,
-                        /*enable_repeated_field_joins=*/true,
-                        /*enable_embedding_backup_generation=*/true,
-                        /*enable_schema_database=*/true,
-                        /*release_backup_schema_file_if_overlay_present=*/true,
-                        /*enable_strict_page_byte_size_limit=*/true,
-                        /*enable_smaller_decompression_buffer_size=*/true,
-                        /*enable_eigen_embedding_scoring=*/true),
-                    FeatureFlags(
-                        /*enable_circular_schema_definitions=*/true,
-                        /*enable_scorable_properties=*/true,
-                        /*enable_embedding_quantization=*/true,
-                        /*enable_repeated_field_joins=*/true,
-                        /*enable_embedding_backup_generation=*/true,
-                        /*enable_schema_database=*/true,
-                        /*release_backup_schema_file_if_overlay_present=*/true,
-                        /*enable_strict_page_byte_size_limit=*/true,
-                        /*enable_smaller_decompression_buffer_size=*/true,
-                        /*enable_eigen_embedding_scoring=*/true)));
+    testing::Values(FeatureFlagsBuilder(GetTestFeatureFlags())
+                        .set_allow_circular_schema_definitions(false)
+                        .set_enable_schema_definition_deduping(false)
+                        .Build(),
+                    FeatureFlagsBuilder(GetTestFeatureFlags())
+                        .set_allow_circular_schema_definitions(false)
+                        .set_enable_schema_definition_deduping(true)
+                        .Build(),
+                    FeatureFlagsBuilder(GetTestFeatureFlags())
+                        .set_allow_circular_schema_definitions(true)
+                        .set_enable_schema_definition_deduping(false)
+                        .Build(),
+                    FeatureFlagsBuilder(GetTestFeatureFlags())
+                        .set_allow_circular_schema_definitions(true)
+                        .set_enable_schema_definition_deduping(true)
+                        .Build()));
 
 struct IsIndexedPropertyTestParam {
   PropertyConfigProto property_config;
@@ -5989,6 +6595,232 @@ INSTANTIATE_TEST_SUITE_P(
                                        .SetDataType(TYPE_DOCUMENT)
                                        .Build(),
                                    false)));
+
+TEST_P(SchemaUtilTest, GranularIndexIncompatibleSets) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("age")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Case 1: Only change string indexing config -> term_index_incompatible
+  SchemaProto new_schema_term =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("age")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::DependentMap no_dependents_map;
+  SchemaUtil::SchemaDelta delta_term = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema_term, no_dependents_map, *feature_flags_);
+  EXPECT_THAT(delta_term.schema_types_term_index_incompatible,
+              UnorderedElementsAre("Person"));
+  EXPECT_THAT(delta_term.schema_types_integer_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta_term.schema_types_embedding_index_incompatible, IsEmpty());
+
+  // Case 2: Only change embedding indexing config ->
+  // embedding_index_incompatible
+  SchemaProto new_schema_embedding =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("age")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                            QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta delta_embedding =
+      SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema_embedding,
+                                            no_dependents_map, *feature_flags_);
+  EXPECT_THAT(delta_embedding.schema_types_term_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta_embedding.schema_types_integer_index_incompatible,
+              IsEmpty());
+  EXPECT_THAT(delta_embedding.schema_types_embedding_index_incompatible,
+              UnorderedElementsAre("Person"));
+
+  // Case 3: Only change integer indexing config -> integer_index_incompatible
+  // Note: Changing numeric_match_type from RANGE to UNKNOWN also changes the
+  // set of indexed properties, triggering section ID remapping. Since the
+  // type has all three index types, section ID remapping marks term, integer,
+  // and embedding as incompatible. To test integer-only, we need a type with
+  // ONLY integer properties.
+  SchemaProto old_schema_int_only =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Counter").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("count")
+                  .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaProto new_schema_int_only =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Counter").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("count")
+                  .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta delta_int = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema_int_only, new_schema_int_only, no_dependents_map,
+      *feature_flags_);
+  EXPECT_THAT(delta_int.schema_types_term_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta_int.schema_types_integer_index_incompatible,
+              UnorderedElementsAre("Counter"));
+  EXPECT_THAT(delta_int.schema_types_embedding_index_incompatible, IsEmpty());
+
+  // Case 4: When fine-grained index rebuild is disabled, section id changes
+  // make all index types incompatible.
+  FeatureFlags flags_without_fine_grained_rebuild =
+      FeatureFlagsBuilder(*feature_flags_)
+          .set_enable_fine_grained_index_rebuild(false)
+          .Build();
+  SchemaUtil::SchemaDelta delta_int_all_indices_incompatible =
+      SchemaUtil::ComputeCompatibilityDelta(
+          old_schema_int_only, new_schema_int_only, no_dependents_map,
+          flags_without_fine_grained_rebuild);
+  EXPECT_THAT(
+      delta_int_all_indices_incompatible.schema_types_term_index_incompatible,
+      UnorderedElementsAre("Counter"));
+  EXPECT_THAT(delta_int_all_indices_incompatible
+                  .schema_types_integer_index_incompatible,
+              UnorderedElementsAre("Counter"));
+  EXPECT_THAT(delta_int_all_indices_incompatible
+                  .schema_types_embedding_index_incompatible,
+              UnorderedElementsAre("Counter"));
+}
+
+TEST_P(
+    SchemaUtilTest,
+    SectionIdReassignmentPropagatesToDependentsAndOnlyAffectsUsedIndexTypes) {
+  SchemaTypeConfigProto employee_type_old =
+      SchemaTypeConfigBuilder()
+          .SetType("Employee")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                              QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto department_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Department")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("dep_name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("members")
+                  .SetDataTypeDocument("Employee",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_REPEATED))
+          .Build();
+
+  SchemaTypeConfigProto company_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Company")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("founded_year")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("departments")
+                  .SetDataTypeDocument("Department",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_REPEATED))
+          .Build();
+
+  SchemaProto old_schema = SchemaBuilder()
+                               .AddType(employee_type_old)
+                               .AddType(department_type)
+                               .AddType(company_type)
+                               .Build();
+
+  // Now, modify Employee by adding a second vector property, altering
+  // Employee's section id assignment.
+  SchemaTypeConfigProto employee_type_new =
+      SchemaTypeConfigBuilder()
+          .SetType("Employee")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                              QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("secondary_embedding")
+                           .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                              QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaProto new_schema = SchemaBuilder()
+                               .AddType(employee_type_new)
+                               .AddType(department_type)
+                               .AddType(company_type)
+                               .Build();
+
+  SchemaUtil::DependentMap dependents_map = {{"Employee", {{"Department", {}}}},
+                                             {"Department", {{"Company", {}}}},
+                                             {"Company", {}}};
+
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, dependents_map, *feature_flags_);
+
+  // Employee only has VECTOR properties -> only embedding_index_incompatible.
+  // Department has STRING (itself) + VECTOR (via Employee) -> term and
+  // embedding. Company has INT64 (itself) + STRING/VECTOR (via
+  // Department/Employee) -> term, int, embedding.
+  EXPECT_THAT(delta.schema_types_term_index_incompatible,
+              UnorderedElementsAre("Department", "Company"));
+  EXPECT_THAT(delta.schema_types_integer_index_incompatible,
+              UnorderedElementsAre("Company"));
+  EXPECT_THAT(delta.schema_types_embedding_index_incompatible,
+              UnorderedElementsAre("Employee", "Department", "Company"));
+}
 
 }  // namespace
 

@@ -34,6 +34,7 @@
 #include "icing/proto/document_wrapper.pb.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/search.pb.h"
+#include "icing/result/result-utils.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
 #include "icing/scoring/priority-queue-scored-document-hits-ranker.h"
@@ -64,25 +65,31 @@ ResultSpecProto CreateResultSpec(
 
 class ResultStateV2Test : public ::testing::Test {
  protected:
+  ResultStateV2Test()
+      : test_dir_(GetTestTempDir() + "/icing"),
+        schema_store_dir_(test_dir_ + "/schema_store"),
+        document_store_dir_(test_dir_ + "/document_store") {}
+
   void SetUp() override {
     feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
-    schema_store_base_dir_ = GetTestTempDir() + "/schema_store";
-    filesystem_.CreateDirectoryRecursively(schema_store_base_dir_.c_str());
+
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(test_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(schema_store_dir_.c_str());
+    filesystem_.CreateDirectoryRecursively(document_store_dir_.c_str());
 
     ICING_ASSERT_OK_AND_ASSIGN(
-        schema_store_, SchemaStore::Create(&filesystem_, schema_store_base_dir_,
+        schema_store_, SchemaStore::Create(&filesystem_, schema_store_dir_,
                                            &clock_, feature_flags_.get()));
     SchemaProto schema;
-    schema.add_types()->set_schema_type("Document");
+    schema.add_types()->set_schema_type("SchemaType");
     ICING_ASSERT_OK(schema_store_->SetSchema(
         std::move(schema), /*ignore_errors_and_delete_documents=*/false));
 
-    doc_store_base_dir_ = GetTestTempDir() + "/document_store";
-    filesystem_.CreateDirectoryRecursively(doc_store_base_dir_.c_str());
     ICING_ASSERT_OK_AND_ASSIGN(
         DocumentStore::CreateResult result,
         DocumentStore::Create(
-            &filesystem_, doc_store_base_dir_, &clock_, schema_store_.get(),
+            &filesystem_, document_store_dir_, &clock_, schema_store_.get(),
             feature_flags_.get(),
             /*force_recovery_and_revalidate_documents=*/false,
             /*pre_mapping_fbv=*/false,
@@ -99,37 +106,40 @@ class ResultStateV2Test : public ::testing::Test {
   }
 
   void TearDown() override {
-    filesystem_.DeleteDirectoryRecursively(doc_store_base_dir_.c_str());
-    filesystem_.DeleteDirectoryRecursively(schema_store_base_dir_.c_str());
+    num_total_hits_ = 0;
+
+    document_store_.reset();
+    schema_store_.reset();
+
+    filesystem_.DeleteDirectoryRecursively(test_dir_.c_str());
   }
 
-  ScoredDocumentHit AddScoredDocument(DocumentId document_id) {
+  // Helper function to add a new document into the document store and return
+  // the ScoredDocumentHit for that document according to the given score.
+  // Note: the section id mask is not important in this test.
+  ScoredDocumentHit AddScoredDocument(std::string name_space, std::string uri,
+                                      double score = 1.0) {
     DocumentProto document;
-    document.set_namespace_("namespace");
-    document.set_uri(std::to_string(document_id));
-    document.set_schema("Document");
+    document.set_namespace_(std::move(name_space));
+    document.set_uri(std::move(uri));
+    document.set_schema("SchemaType");
 
     DocumentWrapper document_wrapper;
     *document_wrapper.mutable_document() = std::move(document);
 
-    document_store_->Put(document_wrapper);
-    return ScoredDocumentHit(document_id, kSectionIdMaskNone, /*score=*/1);
+    DocumentId document_id =
+        document_store_->Put(document_wrapper).ValueOrDie().new_document_id;
+    return ScoredDocumentHit(document_id, kSectionIdMaskNone, score);
   }
 
-  DocumentStore& document_store() { return *document_store_; }
-
-  std::atomic<int>& num_total_hits() { return num_total_hits_; }
-
-  const std::atomic<int>& num_total_hits() const { return num_total_hits_; }
-
- private:
   std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
-  std::string doc_store_base_dir_;
-  std::string schema_store_base_dir_;
+  const std::string test_dir_;
+  const std::string schema_store_dir_;
+  const std::string document_store_dir_;
   Clock clock_;
-  std::unique_ptr<DocumentStore> document_store_;
   std::unique_ptr<SchemaStore> schema_store_;
+  std::unique_ptr<DocumentStore> document_store_;
   std::atomic<int> num_total_hits_;
 };
 
@@ -144,8 +154,9 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToSpecs) {
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::vector<ScoredDocumentHit>(), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, document_store());
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   absl_ports::shared_lock l(&result_state.mutex);
 
@@ -169,8 +180,9 @@ TEST_F(ResultStateV2Test, ShouldInitializeValuesAccordingToDefaultSpecs) {
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::vector<ScoredDocumentHit>(),
           /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      default_result_spec, document_store());
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, default_result_spec, *schema_store_,
+      *document_store_);
 
   absl_ports::shared_lock l(&result_state.mutex);
 
@@ -191,25 +203,25 @@ TEST_F(ResultStateV2Test,
   *document_wrapper1.mutable_document() = DocumentBuilder()
                                               .SetNamespace("namespace1")
                                               .SetUri("uri/1")
-                                              .SetSchema("Document")
+                                              .SetSchema("SchemaType")
                                               .Build();
-  ICING_ASSERT_OK(document_store().Put(document_wrapper1));
+  ICING_ASSERT_OK(document_store_->Put(document_wrapper1));
 
   DocumentWrapper document_wrapper2;
   *document_wrapper2.mutable_document() = DocumentBuilder()
                                               .SetNamespace("namespace2")
                                               .SetUri("uri/2")
-                                              .SetSchema("Document")
+                                              .SetSchema("SchemaType")
                                               .Build();
-  ICING_ASSERT_OK(document_store().Put(document_wrapper2));
+  ICING_ASSERT_OK(document_store_->Put(document_wrapper2));
 
   DocumentWrapper document_wrapper3;
   *document_wrapper3.mutable_document() = DocumentBuilder()
                                               .SetNamespace("namespace3")
                                               .SetUri("uri/3")
-                                              .SetSchema("Document")
+                                              .SetSchema("SchemaType")
                                               .Build();
-  ICING_ASSERT_OK(document_store().Put(document_wrapper3));
+  ICING_ASSERT_OK(document_store_->Put(document_wrapper3));
 
   // Create a ResultSpec that limits "namespace1" to 3 results and limits
   // "namespace2"+"namespace3" to a total of 2 results. Also add
@@ -239,14 +251,20 @@ TEST_F(ResultStateV2Test,
 
   // Get entry ids.
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      int32_t entry_id1, document_store().GetResultGroupingEntryId(
-                             result_grouping_type, "namespace1", "Document"));
+      result_utils::ResultGroupingEntryId entry_id1,
+      result_utils::EncodeResultGroupingEntryId(
+          *schema_store_, *document_store_, result_grouping_type, "namespace1",
+          "SchemaType"));
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      int32_t entry_id2, document_store().GetResultGroupingEntryId(
-                             result_grouping_type, "namespace2", "Document"));
+      result_utils::ResultGroupingEntryId entry_id2,
+      result_utils::EncodeResultGroupingEntryId(
+          *schema_store_, *document_store_, result_grouping_type, "namespace2",
+          "SchemaType"));
   ICING_ASSERT_HAS_VALUE_AND_ASSIGN(
-      int32_t entry_id3, document_store().GetResultGroupingEntryId(
-                             result_grouping_type, "namespace3", "Document"));
+      result_utils::ResultGroupingEntryId entry_id3,
+      result_utils::EncodeResultGroupingEntryId(
+          *schema_store_, *document_store_, result_grouping_type, "namespace3",
+          "SchemaType"));
 
   // Adjustment info is not important in this test.
   ResultStateV2 result_state(
@@ -254,15 +272,16 @@ TEST_F(ResultStateV2Test,
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::vector<ScoredDocumentHit>(),
           /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, document_store());
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   absl_ports::shared_lock l(&result_state.mutex);
 
-  // "namespace1" should be in group 0, and "namespace2"+"namespace3" should be
-  // in group 2.
-  // "nonexistentNamespace1" and "nonexistentNamespace2" shouldn't exist.
-  EXPECT_THAT(result_state.entry_id_group_id_map(),
+  // "namespace1" should be in group index 0, and "namespace2" + "namespace3"
+  // should be in group index 2. "nonexistentNamespace1" and
+  // "nonexistentNamespace2" shouldn't exist.
+  EXPECT_THAT(result_state.entry_id_group_index_map,
               UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 2),
                                    Pair(entry_id3, 2)));
 
@@ -273,12 +292,18 @@ TEST_F(ResultStateV2Test,
 }
 
 TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHits) {
+  // Create 5 ScoredDocumentHits.
+  ScoredDocumentHit scord_doc_hit0 = AddScoredDocument("namespace", "uri0");
+  ScoredDocumentHit scord_doc_hit1 = AddScoredDocument("namespace", "uri1");
+  ScoredDocumentHit scord_doc_hit2 = AddScoredDocument("namespace", "uri2");
+  ScoredDocumentHit scord_doc_hit3 = AddScoredDocument("namespace", "uri3");
+  ScoredDocumentHit scord_doc_hit4 = AddScoredDocument("namespace", "uri4");
+
+  // Shuffle the order of the ScoredDocumentHits.
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      AddScoredDocument(/*document_id=*/1),
-      AddScoredDocument(/*document_id=*/0),
-      AddScoredDocument(/*document_id=*/2),
-      AddScoredDocument(/*document_id=*/4),
-      AddScoredDocument(/*document_id=*/3)};
+      std::move(scord_doc_hit1), std::move(scord_doc_hit0),
+      std::move(scord_doc_hit2), std::move(scord_doc_hit4),
+      std::move(scord_doc_hit3)};
 
   // Adjustment info is not important in this test.
   // Creates a ResultState with 5 ScoredDocumentHits.
@@ -287,32 +312,40 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHits) {
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr,
       CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
-      document_store());
+      *schema_store_, *document_store_);
 
   absl_ports::unique_lock l(&result_state.mutex);
 
-  EXPECT_THAT(num_total_hits(), Eq(0));
-  result_state.RegisterNumTotalHits(&num_total_hits());
-  EXPECT_THAT(num_total_hits(), Eq(5));
+  EXPECT_THAT(num_total_hits_, Eq(0));
+  result_state.RegisterNumTotalHits(&num_total_hits_);
+  EXPECT_THAT(num_total_hits_, Eq(5));
   result_state.IncrementNumTotalHits(500);
-  EXPECT_THAT(num_total_hits(), Eq(505));
+  EXPECT_THAT(num_total_hits_, Eq(505));
 }
 
 TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHitsWhenDestructed) {
+  // Create 7 ScoredDocumentHits.
+  ScoredDocumentHit scord_doc_hit0 = AddScoredDocument("namespace", "uri0");
+  ScoredDocumentHit scord_doc_hit1 = AddScoredDocument("namespace", "uri1");
+  ScoredDocumentHit scord_doc_hit2 = AddScoredDocument("namespace", "uri2");
+  ScoredDocumentHit scord_doc_hit3 = AddScoredDocument("namespace", "uri3");
+  ScoredDocumentHit scord_doc_hit4 = AddScoredDocument("namespace", "uri4");
+  ScoredDocumentHit scord_doc_hit5 = AddScoredDocument("namespace", "uri5");
+  ScoredDocumentHit scord_doc_hit6 = AddScoredDocument("namespace", "uri6");
+
+  // Create 2 vectors of ScoredDocumentHits and shuffle the order of the
+  // ScoredDocumentHits.
   std::vector<ScoredDocumentHit> scored_document_hits1 = {
-      AddScoredDocument(/*document_id=*/1),
-      AddScoredDocument(/*document_id=*/0),
-      AddScoredDocument(/*document_id=*/2),
-      AddScoredDocument(/*document_id=*/4),
-      AddScoredDocument(/*document_id=*/3)};
-
+      std::move(scord_doc_hit1), std::move(scord_doc_hit0),
+      std::move(scord_doc_hit2), std::move(scord_doc_hit4),
+      std::move(scord_doc_hit3)};
   std::vector<ScoredDocumentHit> scored_document_hits2 = {
-      AddScoredDocument(/*document_id=*/6),
-      AddScoredDocument(/*document_id=*/5)};
+      std::move(scord_doc_hit6), std::move(scord_doc_hit5)};
 
-  num_total_hits() = 2;
+  num_total_hits_ = 2;
   {
     // Adjustment info is not important in this test.
     // Creates a ResultState with 5 ScoredDocumentHits.
@@ -321,14 +354,15 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHitsWhenDestructed) {
             PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
             std::move(scored_document_hits1),
             /*is_descending=*/true),
-        /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+        /*parent_adjustment_info_in=*/nullptr,
+        /*child_adjustment_info_in=*/nullptr,
         CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
-        document_store());
+        *schema_store_, *document_store_);
 
     absl_ports::unique_lock l(&result_state1.mutex);
 
-    result_state1.RegisterNumTotalHits(&num_total_hits());
-    ASSERT_THAT(num_total_hits(), Eq(7));
+    result_state1.RegisterNumTotalHits(&num_total_hits_);
+    ASSERT_THAT(num_total_hits_, Eq(7));
 
     {
       // Adjustment info is not important in this test.
@@ -338,28 +372,35 @@ TEST_F(ResultStateV2Test, ShouldUpdateNumTotalHitsWhenDestructed) {
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits2),
               /*is_descending=*/true),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+          /*parent_adjustment_info_in=*/nullptr,
+          /*child_adjustment_info_in=*/nullptr,
           CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
-          document_store());
+          *schema_store_, *document_store_);
 
       absl_ports::unique_lock l(&result_state2.mutex);
 
-      result_state2.RegisterNumTotalHits(&num_total_hits());
-      ASSERT_THAT(num_total_hits(), Eq(9));
+      result_state2.RegisterNumTotalHits(&num_total_hits_);
+      ASSERT_THAT(num_total_hits_, Eq(9));
     }
 
-    EXPECT_THAT(num_total_hits(), Eq(7));
+    EXPECT_THAT(num_total_hits_, Eq(7));
   }
-  EXPECT_THAT(num_total_hits(), Eq(2));
+  EXPECT_THAT(num_total_hits_, Eq(2));
 }
 
 TEST_F(ResultStateV2Test, ShouldNotUpdateNumTotalHitsWhenNotRegistered) {
+  // Create 5 ScoredDocumentHits.
+  ScoredDocumentHit scord_doc_hit0 = AddScoredDocument("namespace", "uri0");
+  ScoredDocumentHit scord_doc_hit1 = AddScoredDocument("namespace", "uri1");
+  ScoredDocumentHit scord_doc_hit2 = AddScoredDocument("namespace", "uri2");
+  ScoredDocumentHit scord_doc_hit3 = AddScoredDocument("namespace", "uri3");
+  ScoredDocumentHit scord_doc_hit4 = AddScoredDocument("namespace", "uri4");
+
+  // Shuffle the order of the ScoredDocumentHits.
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      AddScoredDocument(/*document_id=*/1),
-      AddScoredDocument(/*document_id=*/0),
-      AddScoredDocument(/*document_id=*/2),
-      AddScoredDocument(/*document_id=*/4),
-      AddScoredDocument(/*document_id=*/3)};
+      std::move(scord_doc_hit1), std::move(scord_doc_hit0),
+      std::move(scord_doc_hit2), std::move(scord_doc_hit4),
+      std::move(scord_doc_hit3)};
 
   // Creates a ResultState with 5 ScoredDocumentHits.
   {
@@ -369,30 +410,37 @@ TEST_F(ResultStateV2Test, ShouldNotUpdateNumTotalHitsWhenNotRegistered) {
             PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
             std::move(scored_document_hits),
             /*is_descending=*/true),
-        /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+        /*parent_adjustment_info_in=*/nullptr,
+        /*child_adjustment_info_in=*/nullptr,
         CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
-        document_store());
+        *schema_store_, *document_store_);
 
     {
       absl_ports::unique_lock l(&result_state.mutex);
 
-      EXPECT_THAT(num_total_hits(), Eq(0));
+      EXPECT_THAT(num_total_hits_, Eq(0));
       result_state.IncrementNumTotalHits(500);
-      EXPECT_THAT(num_total_hits(), Eq(0));
+      EXPECT_THAT(num_total_hits_, Eq(0));
     }
   }
-  EXPECT_THAT(num_total_hits(), Eq(0));
+  EXPECT_THAT(num_total_hits_, Eq(0));
 }
 
 TEST_F(ResultStateV2Test, ShouldDecrementOriginalNumTotalHitsWhenReregister) {
   std::atomic<int> another_num_total_hits = 11;
 
+  // Create 5 ScoredDocumentHits.
+  ScoredDocumentHit scord_doc_hit0 = AddScoredDocument("namespace", "uri0");
+  ScoredDocumentHit scord_doc_hit1 = AddScoredDocument("namespace", "uri1");
+  ScoredDocumentHit scord_doc_hit2 = AddScoredDocument("namespace", "uri2");
+  ScoredDocumentHit scord_doc_hit3 = AddScoredDocument("namespace", "uri3");
+  ScoredDocumentHit scord_doc_hit4 = AddScoredDocument("namespace", "uri4");
+
+  // Shuffle the order of the ScoredDocumentHits.
   std::vector<ScoredDocumentHit> scored_document_hits = {
-      AddScoredDocument(/*document_id=*/1),
-      AddScoredDocument(/*document_id=*/0),
-      AddScoredDocument(/*document_id=*/2),
-      AddScoredDocument(/*document_id=*/4),
-      AddScoredDocument(/*document_id=*/3)};
+      std::move(scord_doc_hit1), std::move(scord_doc_hit0),
+      std::move(scord_doc_hit2), std::move(scord_doc_hit4),
+      std::move(scord_doc_hit3)};
 
   // Adjustment info is not important in this test.
   // Creates a ResultState with 5 ScoredDocumentHits.
@@ -401,25 +449,26 @@ TEST_F(ResultStateV2Test, ShouldDecrementOriginalNumTotalHitsWhenReregister) {
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits),
           /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr,
       CreateResultSpec(/*num_per_page=*/5, ResultSpecProto::NAMESPACE),
-      document_store());
+      *schema_store_, *document_store_);
 
   absl_ports::unique_lock l(&result_state.mutex);
 
-  num_total_hits() = 7;
-  result_state.RegisterNumTotalHits(&num_total_hits());
-  EXPECT_THAT(num_total_hits(), Eq(12));
+  num_total_hits_ = 7;
+  result_state.RegisterNumTotalHits(&num_total_hits_);
+  EXPECT_THAT(num_total_hits_, Eq(12));
 
   result_state.RegisterNumTotalHits(&another_num_total_hits);
   // The original num_total_hits should be decremented after re-registration.
-  EXPECT_THAT(num_total_hits(), Eq(7));
+  EXPECT_THAT(num_total_hits_, Eq(7));
   // another_num_total_hits should be incremented after re-registration.
   EXPECT_THAT(another_num_total_hits, Eq(16));
 
   result_state.IncrementNumTotalHits(500);
   // The original num_total_hits should be unchanged.
-  EXPECT_THAT(num_total_hits(), Eq(7));
+  EXPECT_THAT(num_total_hits_, Eq(7));
   // Increment should be done on another_num_total_hits.
   EXPECT_THAT(another_num_total_hits, Eq(516));
 }

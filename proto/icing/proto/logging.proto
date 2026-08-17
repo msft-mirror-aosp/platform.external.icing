@@ -16,6 +16,7 @@ syntax = "proto2";
 
 package icing.lib;
 
+import "icing/proto/persist.proto";
 import "icing/proto/scoring.proto";
 import "icing/proto/status.proto";
 
@@ -23,8 +24,85 @@ option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
+// Enum to represent the type of Icing API.
+//
+// Note: this enum DOES NOT align with AppSearch's CallType enum.
+message IcingApiCallType {
+  // Next tag: 35
+  enum Code {
+    UNKNOWN = 0;
+    PERSIST_TO_DISK = 1;
+    INITIALIZE = 2;
+    SET_SCHEMA = 3;
+    GET_SCHEMA = 4;
+    GET_SCHEMA_WITH_DATABASE = 5;
+    GET_SCHEMA_TYPE = 6;
+    BATCH_PUT = 7;
+    PUT = 8;
+    BATCH_GET = 9;
+    GET = 10;
+    REPORT_USAGE = 11;
+    GET_ALL_NAMESPACES = 12;
+    DELETE = 13;
+    DELETE_BY_NAMESPACE = 14;
+    DELETE_BY_SCHEMA_TYPE = 15;
+    DELETE_BY_QUERY = 16;
+    SEARCH = 17;
+    SEARCH_SUGGESTIONS = 18;
+    GET_NEXT_PAGE = 19;
+    INVALIDATE_NEXT_PAGE_TOKEN = 20;
+    OPEN_READ_BLOB = 21;
+    OPEN_WRITE_BLOB = 22;
+    COMMIT_BLOB = 23;
+    REMOVE_BLOB = 24;
+    GET_ALL_BLOB_INFOS = 25;
+    PUT_BLOB_INFOS = 26;
+    OPTIMIZE = 27;
+    GET_OPTIMIZE_INFO = 28;
+    GET_STORAGE_INFO = 29;
+    GET_DEBUG_INFO = 30;
+    RESET = 31;
+    CLEAR_AND_DESTROY = 32;
+    HANDLE_EXPIRED_DOCUMENTS = 33;
+    MAINTAIN_ANN_INDEX = 34;
+  }
+}
+
+// A proto to record the execution history of a single API call.
+//
+// Next tag: 3
+message ApiHistoryProto {
+  optional IcingApiCallType.Code call_type = 1;
+  optional int64 last_call_timestamp_ms = 2;
+}
+
+// A proto to record Icing database stableness information. It keeps track of:
+// - All write APIs' (other than PersistToDisk) last call timestamps.
+// - Each PersistType of PersistToDisk last call timestamp.
+//
+// In the next initialization, this proto will be used to report write APIs that
+// were called after the last PersistToDisk. This will help us identify:
+// - Whether PersistToDisk is called or scheduled frequently enough.
+// - Whether any write API doesn't call or schedule PersistToDisk correctly.
+// - Whether PersistToDisk at shutdown completed.
+// - Whether there was any unexpected power loss.
+//
+// Next tag: 7
+message IcingDatabaseStablenessProto {
+  // A list of API history. If the call type is not present in the list, it
+  // means the API was never called.
+  repeated ApiHistoryProto api_history = 1;
+
+  // Last call timestamp of PersistToDisk for each PersistType.
+  optional int64 last_flush_lite_timestamp_ms = 2;
+  optional int64 last_flush_full_timestamp_ms = 3;
+  optional int64 last_flush_recovery_proof_timestamp_ms = 4;
+  optional int64 last_flush_shutdown_timestamp_ms = 5;
+  optional int64 last_flush_destructor_timestamp_ms = 6;
+}
+
 // Stats of the top-level function IcingSearchEngine::Initialize().
-// Next tag: 18
+// Next tag: 26
 message InitializeStatsProto {
   // Overall time used for the function call.
   optional int32 latency_ms = 1;
@@ -208,6 +286,44 @@ message InitializeStatsProto {
     }
   }
   optional FailureStage.Code failure_stage = 17;
+
+  // Status of the attempt to create the IcuLanguageSegmenter.
+  // This is only set if the ICU segmenter is enabled. Possible status codes:
+  // - OK: IcuLanguageSegmenter created successfully.
+  // - ABORTED: Failed to create the ICU break iterator.
+  optional StatusProto icu_segmenter_creation_status = 18;
+
+  // Status of the attempt to create the IcuNormalizer.
+  // This is only set if the ICU normalizer is enabled. Possible status codes:
+  // - OK: IcuNormalizer created successfully.
+  // - INTERNAL: Failed to create the ICU Transliterator.
+  optional StatusProto icu_normalizer_creation_status = 19;
+
+  // The expiration timestamp (in milliseconds) of the next expired document.
+  optional int64 next_expiration_timestamp_ms = 20;
+
+  // The type of the last PersistToDisk call. It is used to determine if
+  // PersistToDisk was completed in AppSearch shutdown path.
+  optional PersistType.Code last_persist_to_disk_type = 21;
+
+  // A list of API call types that were made after the last PersistToDisk for
+  // ground truth or derived file.
+  //
+  // Note:
+  // - Persist type level order: LITE < RECOVERY_PROOF < FULL
+  // - Stats are only reported if there was no higher PersistType being made
+  //   after this particular PersistType. For example, if RECOVERY_PROOF was
+  //   called after LITE, then LITE stats will not be reported even if an API
+  //   was called after persistToDisk(LITE).
+  repeated IcingApiCallType.Code after_last_flush_full_call_types = 22
+      [packed = true];
+  repeated IcingApiCallType.Code after_last_flush_recovery_proof_call_types = 23
+      [packed = true];
+  repeated IcingApiCallType.Code after_last_flush_lite_call_types = 24
+      [packed = true];
+
+  // The size of Icing's schema proto in bytes.
+  optional int64 schema_proto_byte_size = 25;
 }
 
 // Stats of the top-level function IcingSearchEngine::Put().
@@ -346,7 +462,7 @@ message QueryStatsProto {
   optional bool is_join_query = 23;
 
   // Stats of the search. Only valid for first page.
-  // Next tag: 16
+  // Next tag: 21
   message SearchStats {
     // The UTF-8 length of the query string
     optional int32 query_length = 1;
@@ -393,6 +509,22 @@ message QueryStatsProto {
 
     // Time used in QueryVisitor to visit and build (nested) DocHitInfoIterator.
     optional int32 query_processor_query_visitor_latency_ms = 15;
+
+    // Number of unquantized embeddings scored.
+    optional int32 num_unquantized_embeddings_scored = 16;
+
+    // Number of quantized embeddings scored.
+    optional int32 num_quantized_embeddings_scored = 17;
+
+    // Number of shards read from the embedding index.
+    optional int32 num_embedding_shards_read = 18;
+
+    // Number of raw embedding bytes read from the embedding index.
+    optional int64 num_embedding_bytes_read = 19;
+
+    // Indicates how many embeddings in the ANN index were scored. It does
+    // not include centroid embeddings.
+    optional int32 num_ann_embeddings_scored = 20;
   }
 
   // Search stats for parent. Only valid for first page.

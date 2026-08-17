@@ -31,6 +31,7 @@
 #include "icing/schema/section.h"
 #include "icing/scoring/advanced_scoring/double-list.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/util/embedding-util.h"
 #include "icing/util/logging.h"
 
@@ -122,7 +123,14 @@ SnippetContext CreateSnippetContext(
       for (int i = 0; i < search_spec.embedding_query_vectors_size(); ++i) {
         const PropertyProto::VectorProto& query_vector =
             search_spec.embedding_query_vectors(i);
-        int dimension = query_vector.values().size();
+        auto dimension_or = embedding_util::GetDimension(query_vector);
+        if (!dimension_or.ok()) {
+          ICING_LOG(WARNING)
+              << "Failed to get dimension for query vector property: "
+              << dimension_or.status().error_message();
+          continue;
+        }
+        int dimension = static_cast<int>(dimension_or.ValueOrDie());
         std::string model_signature = query_vector.model_signature();
         embedding_query_vector_metadata[dimension][std::move(model_signature)]
             .insert(i);
@@ -161,6 +169,13 @@ ResultAdjustmentInfo::ResultAdjustmentInfo(
     projection_tree_map.insert(
         {type_field_mask.schema_type, ProjectionTree(type_field_mask)});
   }
+}
+
+void ResultAdjustmentInfo::Optimize(
+    const DocumentStore::OptimizeResult& optimize_result) {
+  // Only snippet context needs optimization. Projection tree only contains
+  // schema type name -> ProjectionTree (which contains property names).
+  snippet_context.Optimize(optimize_result);
 }
 
 }  // namespace lib

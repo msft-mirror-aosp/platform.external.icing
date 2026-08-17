@@ -18,13 +18,23 @@
 namespace icing {
 namespace lib {
 
+// Configuration for specific text transformation rules applied by the
+// normalizer (e.g., Pinyin transliteration). This is kept separate from general
+// NormalizerOptions (like max term size or enabling/disabling the normalizer
+// entirely) so that rules can be customized and passed down modularly.
+struct NormalizerRulesConfig {
+  bool enable_pinyin_normalization = false;
+};
+
 // TODO: b/332382299 - Avoid using default values in the NormalizerOptions
 // constructor. This can lead to unexpected behavior.
 struct NormalizerOptions {
-  explicit NormalizerOptions(int max_term_byte_size,
-                             bool enable_icu_normalizer = false)
+  explicit NormalizerOptions(
+      int max_term_byte_size, bool enable_icu_normalizer = false,
+      NormalizerRulesConfig rules_config = NormalizerRulesConfig())
       : max_term_byte_size(max_term_byte_size),
-        enable_icu_normalizer(enable_icu_normalizer) {}
+        enable_icu_normalizer(enable_icu_normalizer),
+        rules_config(rules_config) {}
 
   // max_term_byte_size enforces the max size of text after normalization,
   // text will be truncated if exceeds the max size.
@@ -38,6 +48,9 @@ struct NormalizerOptions {
   // This flag is a no-op for all other normalizer factories because they
   // only support one normalizer type.
   bool enable_icu_normalizer;
+
+  // Standardized rules configuration
+  NormalizerRulesConfig rules_config;
 };
 
 }  // namespace lib

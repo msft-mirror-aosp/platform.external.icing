@@ -85,20 +85,30 @@ DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
 std::unique_ptr<DocHitInfoIterator>
 DocHitInfoIteratorSectionRestrict::ApplyRestrictions(
     std::unique_ptr<DocHitInfoIterator> iterator, SectionRestrictData* data) {
-  ChildrenMapper mapper;
-  mapper = [&data, &mapper](std::unique_ptr<DocHitInfoIterator> iterator)
-      -> std::unique_ptr<DocHitInfoIterator> {
-    if (iterator->HandleSectionRestriction(data)) {
-      return iterator;
-    } else if (iterator->is_leaf()) {
-      return std::make_unique<DocHitInfoIteratorSectionRestrict>(
-          std::move(iterator), data);
-    } else {
-      iterator->MapChildren(mapper);
-      return iterator;
-    }
-  };
-  return mapper(std::move(iterator));
+  // If the iterator does not respect section restrictions, just return it.
+  if (iterator->SectionRestrictionNotApplicable()) {
+    return iterator;
+  }
+
+  // If the iterator can internally handle the section restriction, apply it and
+  // return the iterator.
+  if (iterator->HandleSectionRestriction(data)) {
+    return iterator;
+  }
+
+  // If the iterator accepts section restriction, but does not want to pass it
+  // down to its children, return a new iterator with the section restriction
+  // applied at the top.
+  if (!iterator->SectionRestrictionShouldApplyToChildren()) {
+    return std::make_unique<DocHitInfoIteratorSectionRestrict>(
+        std::move(iterator), data);
+  }
+
+  // Otherwise, apply the section restriction to its children.
+  for (std::unique_ptr<DocHitInfoIterator>* child : iterator->GetChildren()) {
+    *child = ApplyRestrictions(std::move(*child), data);
+  }
+  return iterator;
 }
 
 libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
@@ -134,7 +144,7 @@ libtextclassifier3::Status DocHitInfoIteratorSectionRestrict::Advance() {
   }
 
   // Didn't find anything on the delegate iterator.
-  return absl_ports::ResourceExhaustedError("No more DocHitInfos in iterator");
+  return absl_ports::ResourceExhaustedError("");
 }
 
 libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>

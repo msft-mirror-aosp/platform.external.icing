@@ -15,7 +15,6 @@
 #include "icing/result/result-state-v2.h"
 
 #include <atomic>
-#include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -23,6 +22,8 @@
 
 #include "icing/proto/search.pb.h"
 #include "icing/result/result-adjustment-info.h"
+#include "icing/result/result-utils.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-store.h"
 
@@ -31,32 +32,36 @@ namespace lib {
 
 ResultStateV2::ResultStateV2(
     std::unique_ptr<ScoredDocumentHitsRanker> scored_document_hits_ranker_in,
-    std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
-    std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
-    const ResultSpecProto& result_spec, const DocumentStore& document_store)
+    std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info_in,
+    std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info_in,
+    const ResultSpecProto& result_spec, const SchemaStore& schema_store,
+    const DocumentStore& document_store)
     : scored_document_hits_ranker(std::move(scored_document_hits_ranker_in)),
+      parent_adjustment_info(std::move(parent_adjustment_info_in)),
+      child_adjustment_info(std::move(child_adjustment_info_in)),
       num_returned(0),
-      parent_adjustment_info_(std::move(parent_adjustment_info)),
-      child_adjustment_info_(std::move(child_adjustment_info)),
       num_per_page_(result_spec.num_per_page()),
       num_total_bytes_per_page_threshold_(
           result_spec.num_total_bytes_per_page_threshold()),
       max_joined_children_per_parent_to_return_(
           result_spec.max_joined_children_per_parent_to_return()),
-      num_total_hits_(nullptr),
-      result_group_type_(result_spec.result_group_type()) {
+      result_group_type_(result_spec.result_group_type()),
+      num_total_hits_(nullptr) {
+  group_result_limits.reserve(result_spec.result_groupings().size());
   for (const ResultSpecProto::ResultGrouping& result_grouping :
        result_spec.result_groupings()) {
-    int group_id = group_result_limits.size();
+    int new_group_index = static_cast<int>(group_result_limits.size());
     group_result_limits.push_back(result_grouping.max_results());
     for (const ResultSpecProto::ResultGrouping::Entry& entry :
          result_grouping.entry_groupings()) {
-      std::optional<int32_t> entry_id = document_store.GetResultGroupingEntryId(
-          result_group_type_, entry.namespace_(), entry.schema());
+      std::optional<result_utils::ResultGroupingEntryId> entry_id =
+          result_utils::EncodeResultGroupingEntryId(
+              schema_store, document_store, result_group_type_,
+              entry.namespace_(), entry.schema());
       if (!entry_id.has_value()) {
         continue;
       }
-      entry_id_group_id_map_.insert({*entry_id, group_id});
+      entry_id_group_index_map.insert({*entry_id, new_group_index});
     }
   }
 }
