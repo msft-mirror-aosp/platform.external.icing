@@ -100,6 +100,8 @@ DocHitInfoIteratorEmbeddingV2::Create(
 
 libtextclassifier3::Status
 DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
+  ICING_RETURN_IF_ERROR(embedding_hit_accessor_->AssertSharedLockHeld());
+
   ICING_ASSIGN_OR_RETURN(
       std::vector<EmbeddingIndex::EmbeddingHitAccessor::HitInfo>
           embedding_hit_infos,
@@ -270,6 +272,7 @@ DocHitInfoIteratorEmbeddingV2::AdvanceToNextUnfilteredDocument() {
   int current_section_match_count = 0;
 
   SectionIdMask delegate_section_id_mask = kSectionIdMaskNone;
+  std::vector<HitWithScore> current_doc_hit_scores;
   while (true) {
     ICING_ASSIGN_OR_RETURN(const HitWithScore* embedding_hit_score,
                            AdvanceToNextEmbeddingHit());
@@ -281,19 +284,22 @@ DocHitInfoIteratorEmbeddingV2::AdvanceToNextUnfilteredDocument() {
       delegate_section_id_mask |=
           cached_delegate_matches_[cached_hit_scores_idx_ - 1].section_id_mask;
     }
+    current_doc_hit_scores.push_back(*embedding_hit_score);
+  }
 
+  for (const HitWithScore& embedding_hit_score : current_doc_hit_scores) {
     // We've reached a new section. Reset the match count and retrieve the
     // quantization type for the new section.
-    if (current_section_id != embedding_hit_score->hit.section_id()) {
+    if (current_section_id != embedding_hit_score.hit.section_id()) {
       current_section_match_count = 0;
-      current_section_id = embedding_hit_score->hit.section_id();
+      current_section_id = embedding_hit_score.hit.section_id();
     }
 
-    float semantic_score = embedding_hit_score->score;
+    float semantic_score = embedding_hit_score.score;
     // If the semantic score is within the desired score range, update
     // doc_hit_info_ and info_map_.
     if (score_low_ <= semantic_score && semantic_score <= score_high_) {
-      doc_hit_info_.UpdateSection(embedding_hit_score->hit.section_id());
+      doc_hit_info_.UpdateSection(embedding_hit_score.hit.section_id());
       if (matched_infos == nullptr) {
         matched_infos = &(info_map_[doc_hit_info_.document_id()]);
       }
@@ -308,7 +314,7 @@ DocHitInfoIteratorEmbeddingV2::AdvanceToNextUnfilteredDocument() {
         // use -1 as the position for ANN to indicate that the specific vector
         // position is not supported.
         int position =
-            embedding_hit_score->is_ann ? -1 : current_section_match_count;
+            embedding_hit_score.is_ann ? -1 : current_section_match_count;
         ICING_RETURN_IF_ERROR(matched_infos->AppendSectionInfo(
             *global_section_infos_, current_section_id, position));
       }

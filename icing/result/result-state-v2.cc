@@ -32,21 +32,22 @@ namespace lib {
 
 ResultStateV2::ResultStateV2(
     std::unique_ptr<ScoredDocumentHitsRanker> scored_document_hits_ranker_in,
-    std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
-    std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
+    std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info_in,
+    std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info_in,
     const ResultSpecProto& result_spec, const SchemaStore& schema_store,
     const DocumentStore& document_store)
     : scored_document_hits_ranker(std::move(scored_document_hits_ranker_in)),
+      parent_adjustment_info(std::move(parent_adjustment_info_in)),
+      child_adjustment_info(std::move(child_adjustment_info_in)),
       num_returned(0),
-      parent_adjustment_info_(std::move(parent_adjustment_info)),
-      child_adjustment_info_(std::move(child_adjustment_info)),
       num_per_page_(result_spec.num_per_page()),
       num_total_bytes_per_page_threshold_(
           result_spec.num_total_bytes_per_page_threshold()),
       max_joined_children_per_parent_to_return_(
           result_spec.max_joined_children_per_parent_to_return()),
-      num_total_hits_(nullptr),
-      result_group_type_(result_spec.result_group_type()) {
+      result_group_type_(result_spec.result_group_type()),
+      num_total_hits_(nullptr) {
+  group_result_limits.reserve(result_spec.result_groupings().size());
   for (const ResultSpecProto::ResultGrouping& result_grouping :
        result_spec.result_groupings()) {
     int new_group_index = static_cast<int>(group_result_limits.size());
@@ -60,7 +61,7 @@ ResultStateV2::ResultStateV2(
       if (!entry_id.has_value()) {
         continue;
       }
-      entry_id_group_index_map_.insert({*entry_id, new_group_index});
+      entry_id_group_index_map.insert({*entry_id, new_group_index});
     }
   }
 }

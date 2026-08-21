@@ -25,23 +25,36 @@ namespace lib {
 namespace absl_ports {
 
 // Simple wrapper around std::shared_mutex with annotations to allow thread
-// annotation checks.
+// annotation checks. It can act as a no-op mutex if is_noop is set to true.
 class ICING_LOCKABLE shared_mutex {
  public:
-  void lock() ICING_EXCLUSIVE_LOCK_FUNCTION() { m_.lock(); }
-  bool try_lock() ICING_EXCLUSIVE_TRYLOCK_FUNCTION(true) {
-    return m_.try_lock();
-  }
-  void unlock() ICING_UNLOCK_FUNCTION() { m_.unlock(); }
+  explicit shared_mutex(bool is_noop = false) : is_noop_(is_noop) {}
 
-  void lock_shared() ICING_SHARED_LOCK_FUNCTION() { m_.lock_shared(); }
-  bool try_lock_shared() ICING_SHARED_TRYLOCK_FUNCTION(true) {
-    return m_.try_lock_shared();
+  void lock() ICING_EXCLUSIVE_LOCK_FUNCTION() {
+    if (!is_noop_) m_.lock();
   }
-  void unlock_shared() ICING_UNLOCK_FUNCTION() { m_.unlock_shared(); }
+  bool try_lock() ICING_EXCLUSIVE_TRYLOCK_FUNCTION(true) {
+    return !is_noop_ ? m_.try_lock() : true;
+  }
+  void unlock() ICING_UNLOCK_FUNCTION() {
+    if (!is_noop_) m_.unlock();
+  }
+
+  void lock_shared() ICING_SHARED_LOCK_FUNCTION() {
+    if (!is_noop_) m_.lock_shared();
+  }
+  bool try_lock_shared() ICING_SHARED_TRYLOCK_FUNCTION(true) {
+    return !is_noop_ ? m_.try_lock_shared() : true;
+  }
+  void unlock_shared() ICING_UNLOCK_FUNCTION() {
+    if (!is_noop_) m_.unlock_shared();
+  }
+
+  bool is_noop() const { return is_noop_; }
 
  private:
   std::shared_mutex m_;
+  bool is_noop_;
 };
 
 // Simple wrapper around std::unique_lock with annotations to allow thread
@@ -55,6 +68,8 @@ class ICING_SCOPED_LOCKABLE unique_lock {
   // For fine-grained locking if necessary.
   void unlock() ICING_UNLOCK_FUNCTION() { lock_.unlock(); }
   void lock() ICING_EXCLUSIVE_LOCK_FUNCTION() { lock_.lock(); }
+  bool owns_lock() const { return lock_.owns_lock(); }
+
  private:
   std::unique_lock<shared_mutex> lock_;
 };
@@ -66,6 +81,8 @@ class ICING_SCOPED_LOCKABLE shared_lock {
   explicit shared_lock(shared_mutex* mu) ICING_SHARED_LOCK_FUNCTION(mu)
       : lock_(*mu) {}
   ~shared_lock() ICING_UNLOCK_FUNCTION() = default;
+
+  bool owns_lock() const { return lock_.owns_lock(); }
 
  private:
   std::shared_lock<shared_mutex> lock_;
