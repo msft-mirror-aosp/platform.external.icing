@@ -120,6 +120,19 @@ class ResultStateManager {
       const ResultRetrieverV2& result_retriever, int64_t current_time_ms)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Optimizes the result states by converting the ids from old to new,
+  // according to the doc_store_optimize_result.
+  //
+  // If there is any error during converting the ids, then invalidate the result
+  // state without failing the whole process.
+  struct OptimizeResult {
+    int num_result_states_optimized;
+    int num_result_states_invalidated;
+  };
+  OptimizeResult Optimize(
+      const DocumentStore::OptimizeResult& doc_store_optimize_result)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
   // Returns the number of active result states currently in ResultStateManager.
   // Note that this will remove expired result states before counting the
   // number.

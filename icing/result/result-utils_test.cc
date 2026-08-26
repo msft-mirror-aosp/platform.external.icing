@@ -65,6 +65,7 @@ using ResultSpecProto::ResultGroupingType::
 using ::testing::Eq;
 using ::testing::IsFalse;
 using ::testing::Optional;
+using ::testing::Pair;
 
 class ResultUtilsTest : public ::testing::Test {
  protected:
@@ -119,7 +120,7 @@ class ResultUtilsTest : public ::testing::Test {
   std::unique_ptr<DocumentStore> document_store_;
 };
 
-TEST_F(ResultUtilsTest, EncodeResultGroupingEntryId_ByFilterName) {
+TEST_F(ResultUtilsTest, EncodeResultGroupingEntryId_byFilterName) {
   // Put 2 schema types into the schema store.
   SchemaProto schema =
       SchemaBuilder()
@@ -289,7 +290,7 @@ TEST_F(ResultUtilsTest, EncodeResultGroupingEntryId_ByFilterName) {
               Optional(Eq(0x00020001)));
 }
 
-TEST_F(ResultUtilsTest, EncodeResultGroupingEntryId_ByNonExistingFilterName) {
+TEST_F(ResultUtilsTest, EncodeResultGroupingEntryId_byNonExistingFilterName) {
   // Put 1 schema type into the schema store.
   SchemaProto schema = SchemaBuilder()
                            .AddType(SchemaTypeConfigBuilder().SetType("Email"))
@@ -381,7 +382,7 @@ TEST_F(ResultUtilsTest, EncodeResultGroupingEntryId_ByNonExistingFilterName) {
               IsFalse());
 }
 
-TEST_F(ResultUtilsTest, EncodeResultGroupingEntryId_ByIds) {
+TEST_F(ResultUtilsTest, EncodeResultGroupingEntryId_byIds) {
   // EncodeResultGroupingEntryId() by id only handles the encoding and won't
   // check if the id exists (except kInvalidNamespaceId and
   // kInvalidSchemaTypeId), so we don't need to set up schema types and
@@ -521,7 +522,7 @@ TEST_F(ResultUtilsTest, EncodeResultGroupingEntryId_ByIds) {
               Optional(Eq(0x7fff7fff)));
 }
 
-TEST_F(ResultUtilsTest, EncodeResultGroupingEntryId_ByInvalidIds) {
+TEST_F(ResultUtilsTest, EncodeResultGroupingEntryId_byInvalidIds) {
   // EncodeResultGroupingEntryId() by id only handles the encoding and won't
   // check if the id exists (except kInvalidNamespaceId and
   // kInvalidSchemaTypeId), so we don't need to set up schema types and
@@ -584,6 +585,116 @@ TEST_F(ResultUtilsTest, EncodeResultGroupingEntryId_ByInvalidIds) {
                   ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
                   /*namespace_id=*/0, kInvalidSchemaTypeId),
               IsFalse());
+}
+
+TEST_F(ResultUtilsTest, DecodeResultGroupingEntryId) {
+  // NONE
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/0,
+                  ResultSpecProto_ResultGroupingType_NONE),
+              Pair(kInvalidNamespaceId, kInvalidSchemaTypeId));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/1,
+                  ResultSpecProto_ResultGroupingType_NONE),
+              Pair(kInvalidNamespaceId, kInvalidSchemaTypeId));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/2,
+                  ResultSpecProto_ResultGroupingType_NONE),
+              Pair(kInvalidNamespaceId, kInvalidSchemaTypeId));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/123,
+                  ResultSpecProto_ResultGroupingType_NONE),
+              Pair(kInvalidNamespaceId, kInvalidSchemaTypeId));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/0x7fff7fff,
+                  ResultSpecProto_ResultGroupingType_NONE),
+              Pair(kInvalidNamespaceId, kInvalidSchemaTypeId));
+
+  // SCHEMA_TYPE
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/0,
+                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE),
+              Pair(kInvalidNamespaceId, 0));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/1,
+                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE),
+              Pair(kInvalidNamespaceId, 1));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/2,
+                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE),
+              Pair(kInvalidNamespaceId, 2));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/123,
+                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE),
+              Pair(kInvalidNamespaceId, 123));
+  EXPECT_THAT(
+      DecodeResultGroupingEntryId(
+          /*result_grouping_entry_id=*/std::numeric_limits<SchemaTypeId>::max(),
+          ResultSpecProto_ResultGroupingType_SCHEMA_TYPE),
+      Pair(kInvalidNamespaceId, std::numeric_limits<SchemaTypeId>::max()));
+
+  // NAMESPACE
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/0,
+                  ResultSpecProto_ResultGroupingType_NAMESPACE),
+              Pair(0, kInvalidSchemaTypeId));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/1,
+                  ResultSpecProto_ResultGroupingType_NAMESPACE),
+              Pair(1, kInvalidSchemaTypeId));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/2,
+                  ResultSpecProto_ResultGroupingType_NAMESPACE),
+              Pair(2, kInvalidSchemaTypeId));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/123,
+                  ResultSpecProto_ResultGroupingType_NAMESPACE),
+              Pair(123, kInvalidSchemaTypeId));
+  EXPECT_THAT(
+      DecodeResultGroupingEntryId(
+          /*result_grouping_entry_id=*/
+          std::numeric_limits<NamespaceId>::max(),
+          ResultSpecProto_ResultGroupingType_NAMESPACE),
+      Pair(std::numeric_limits<NamespaceId>::max(), kInvalidSchemaTypeId));
+
+  // NAMESPACE_AND_SCHEMA_TYPE
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/0x00000000,
+                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE),
+              Pair(0, 0));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/0x00000001,
+                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE),
+              Pair(0, 1));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/0x00010000,
+                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE),
+              Pair(1, 0));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/0x00010001,
+                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE),
+              Pair(1, 1));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/0x00020000,
+                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE),
+              Pair(2, 0));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/0x00020001,
+                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE),
+              Pair(2, 1));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/0x00020002,
+                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE),
+              Pair(2, 2));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/0x12345678,
+                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE),
+              Pair(0x1234, 0x5678));
+  EXPECT_THAT(DecodeResultGroupingEntryId(
+                  /*result_grouping_entry_id=*/0x7fff7fff,
+                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE),
+              Pair(std::numeric_limits<NamespaceId>::max(),
+                   std::numeric_limits<SchemaTypeId>::max()));
 }
 
 }  // namespace

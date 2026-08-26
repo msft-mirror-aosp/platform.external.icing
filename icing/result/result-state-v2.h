@@ -21,6 +21,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/thread_annotations.h"
 #include "icing/proto/search.pb.h"
@@ -63,9 +64,23 @@ class ResultStateV2 {
 
   ~ResultStateV2();
 
-  // Register num_total_hits_ and add current scored_document_hits_ranker.size()
-  // to it. When re-registering, it will subtract
-  // scored_document_hits_ranker.size() from the original counter.
+  // Converts the ids in the result state to new ones according to the
+  // optimize_result.
+  //
+  // Returns:
+  // - OK on success.
+  libtextclassifier3::Status Optimize(
+      const DocumentStore::OptimizeResult& optimize_result)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex);
+
+  // Clears all fields in the result state and unregisters num_total_hits_.
+  void Clear() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex);
+
+  // Registers num_total_hits_ and adds current
+  // scored_document_hits_ranker.size() to it.
+  // - When re-registering, it will subtract scored_document_hits_ranker.size()
+  //   from the original counter.
+  // - Registering nullptr is a valid usage for unregistering.
   void RegisterNumTotalHits(std::atomic<int>* num_total_hits)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex);
 

@@ -99,6 +99,11 @@ class ReverseVectorNoRanker : public ScoredDocumentHitsRanker {
 
   bool empty() const override { return curr_ == nullptr; }
 
+  void clear() override {
+    scored_data_.clear();
+    curr_ = nullptr;
+  }
+
  private:
   // Helper function to refresh the current element (fetch the top element from
   // the back of the vector, convert it to JoinedScoredDocumentHit, and cache it

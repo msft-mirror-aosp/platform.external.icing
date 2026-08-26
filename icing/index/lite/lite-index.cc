@@ -23,6 +23,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -768,6 +769,138 @@ libtextclassifier3::Status LiteIndex::Optimize(
     }
   }
   return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status LiteIndex::OptimizeInto(
+    const Options& new_options,
+    const std::vector<DocumentId>& document_id_old_to_new,
+    const TermIdCodec* term_id_codec,
+    DocumentId new_last_added_document_id) const {
+  ICING_RETURN_ERROR_IF_NULL(term_id_codec);
+  if (new_options.filename_base == options_.filename_base) {
+    return absl_ports::InvalidArgumentError(
+        "New options filename_base is the same as current");
+  }
+
+  // Remove any pre-existing files for new_options.
+  {
+    IcingDynamicTrie trie(
+        absl_ports::StrCat(new_options.filename_base, "lexicon"),
+        MakeTrieRuntimeOptions(), filesystem_);
+    trie.Remove();
+    filesystem_->DeleteFile(
+        MakeHitBufferFilename(new_options.filename_base).c_str());
+  }
+
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<LiteIndex> new_lite_index,
+                         LiteIndex::Create(new_options, filesystem_));
+
+  // Acquire shared_lock (read lock) on `this`. Unlike in-place Optimize(),
+  // OptimizeInto() does NOT need a unique_lock because it does not mutate or
+  // sort `this->hit_buffer_` or `this->lexicon_`. Instead, we read `this`
+  // under shared_lock and stream surviving hits into new_lite_index. Sorting
+  // will be performed only on new_lite_index at the end.
+  absl_ports::shared_lock l(&mutex_);
+  new_lite_index->header_->set_last_added_docid(new_last_added_document_id);
+  if (header_->cur_size() == 0) {
+    return new_lite_index->PersistToDisk();
+  }
+
+  // Create a mapping from old tvi to term string.
+  std::unordered_map<uint32_t, std::string> old_tvi_to_term;
+  for (IcingDynamicTrie::Iterator term_iter(lexicon_, /*prefix=*/"");
+       term_iter.IsValid(); term_iter.Advance()) {
+    old_tvi_to_term[term_iter.GetValueIndex()] =
+        std::string(term_iter.GetKey());
+  }
+
+  IcingDynamicTrie::PropertyReadersAll prop_reader(lexicon_);
+
+  // Mapping from old_tvi to new_term_id for terms that have already been
+  // inserted into new_lite_index's lexicon.
+  std::unordered_map<uint32_t, uint32_t> old_tvi_to_new_term_id;
+  uint32_t curr_term_id = 0;
+  uint32_t curr_tvi = 0;
+  uint32_t new_tvi = 0;
+  uint32_t new_term_id = 0;
+  TermIdCodec::DecodedTermInfo term_info;
+
+  // Stream all surviving hits into new_lite_index. Terms that have no surviving
+  // hits are never inserted into new_lite_index, achieving clean compaction
+  // without dead trie nodes or tombstones.
+  for (uint32_t idx = 0; idx < header_->cur_size(); ++idx) {
+    TermIdHitPair term_id_hit_pair(
+        hit_buffer_.array_cast<TermIdHitPair>()[idx]);
+    if (idx == 0 || term_id_hit_pair.term_id() != curr_term_id) {
+      curr_term_id = term_id_hit_pair.term_id();
+      ICING_ASSIGN_OR_RETURN(term_info,
+                             term_id_codec->DecodeTermInfo(curr_term_id));
+      curr_tvi = term_info.tvi;
+    }
+
+    DocumentId old_document_id = term_id_hit_pair.hit().document_id();
+    if (old_document_id < 0 ||
+        old_document_id >= document_id_old_to_new.size()) {
+      return absl_ports::InternalError(
+          "Lite index hit document id is out of range. The index may have been "
+          "corrupted.");
+    }
+
+    DocumentId new_document_id = document_id_old_to_new[old_document_id];
+    if (new_document_id == kInvalidDocumentId) {
+      continue;
+    }
+
+    auto inserted_term_it = old_tvi_to_new_term_id.find(curr_tvi);
+    if (inserted_term_it == old_tvi_to_new_term_id.end()) {
+      auto term_it = old_tvi_to_term.find(curr_tvi);
+      if (term_it == old_tvi_to_term.end()) {
+        return absl_ports::InternalError(
+            "Lite index hit term id is not found in lexicon. The index may have "
+            "been corrupted.");
+      }
+      // Insert term into new_lite_index's lexicon
+      ICING_RETURN_IF_ERROR(new_lite_index->lexicon_.Insert(
+          term_it->second, "", &new_tvi, /*replace=*/false));
+      // Copy properties from old_tvi (except prefix section property which is
+      // updated based on valid surviving hits below).
+      for (uint32_t property_id = 0; property_id < prop_reader.size();
+           ++property_id) {
+        if (property_id != GetHasHitsInPrefixSectionPropertyId() &&
+            prop_reader.HasProperty(property_id, curr_tvi)) {
+          if (!new_lite_index->lexicon_.SetProperty(new_tvi, property_id)) {
+            return absl_ports::ResourceExhaustedError(
+                "Insufficient disk space to set property in lite index!");
+          }
+        }
+      }
+      ICING_ASSIGN_OR_RETURN(
+          new_term_id, term_id_codec->EncodeTvi(new_tvi, term_info.tvi_type));
+      old_tvi_to_new_term_id.emplace(curr_tvi, new_term_id);
+    } else {
+      new_term_id = inserted_term_it->second;
+      ICING_ASSIGN_OR_RETURN(TermIdCodec::DecodedTermInfo new_term_info,
+                             term_id_codec->DecodeTermInfo(new_term_id));
+      new_tvi = new_term_info.tvi;
+    }
+
+    if (term_id_hit_pair.hit().is_in_prefix_section()) {
+      if (!new_lite_index->lexicon_.SetProperty(
+              new_tvi, GetHasHitsInPrefixSectionPropertyId())) {
+        return absl_ports::ResourceExhaustedError(
+            "Insufficient disk space to set prefix property in lite index!");
+      }
+    }
+
+    Hit new_hit = Hit::TranslateHit(term_id_hit_pair.hit(), new_document_id);
+    ICING_RETURN_IF_ERROR(new_lite_index->AddHit(new_term_id, new_hit));
+  }
+
+  // Sort and merge the hit buffer of the newly created index in the background.
+  // This mutates only new_lite_index without blocking concurrent readers of
+  // `this`.
+  ICING_RETURN_IF_ERROR(new_lite_index->SortHitsImpl());
+  return new_lite_index->PersistToDisk();
 }
 
 }  // namespace lib
