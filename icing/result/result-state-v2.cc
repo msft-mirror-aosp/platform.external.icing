@@ -17,15 +17,19 @@
 #include <atomic>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/proto/search.pb.h"
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-utils.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/document-store.h"
+#include "icing/store/namespace-id.h"
 
 namespace icing {
 namespace lib {
@@ -68,6 +72,90 @@ ResultStateV2::ResultStateV2(
 
 ResultStateV2::~ResultStateV2() {
   IncrementNumTotalHits(-1 * scored_document_hits_ranker->size());
+}
+
+libtextclassifier3::Status ResultStateV2::Optimize(
+    const DocumentStore::OptimizeResult& optimize_result) {
+  // Component 1: scored_document_hits_ranker.
+  // Step 1: unregister num_total_hits_ before optimizing the ranker, to
+  //   subtract the size from the registered num_total_hits_.
+  std::atomic<int>* original_num_total_hits_ptr = num_total_hits_;
+  RegisterNumTotalHits(nullptr);
+  // Step 2: optimize the ranker and assign the new optimized ranker back to the
+  //   class member.
+  std::unique_ptr<ScoredDocumentHitsRanker> old_ranker =
+      std::move(scored_document_hits_ranker);
+  scored_document_hits_ranker =
+      std::move(*old_ranker)
+          .OptimizeAndTransfer(optimize_result.document_id_old_to_new);
+  // Step 3: finally, register the original num_total_hits_ for the new ranker
+  //   to add the new size back to num_total_hits_.
+  RegisterNumTotalHits(original_num_total_hits_ptr);
+
+  // Component 2: parent_adjustment_info and child_adjustment_info.
+  if (parent_adjustment_info != nullptr) {
+    parent_adjustment_info->Optimize(optimize_result);
+  }
+  if (child_adjustment_info != nullptr) {
+    child_adjustment_info->Optimize(optimize_result);
+  }
+
+  // Component 3: entry_id_group_index_map.
+  // - Key: old entry id encoded by ResultGroupingType, NamespaceId and
+  //   SchemaTypeId.
+  // - Value: group index (should be unchanged).
+  //
+  // We need to convert the old entry id by remapping NamespaceId (note:
+  // SchemaTypeId is unchanged). If an old NamespaceId is deleted, then we just
+  // skip this entry id.
+  // - Keep the same group index for the remapped entry id even if some of the
+  //   old entry ids are deleted.
+  // - This will leave group_result_limits vector sparse after Optimize because
+  //   some group indices will not be used anymore, but:
+  //   - It's fine since the "sparseness" only appears in the old result states,
+  //     and result states will eventually be invalidated after all pages are
+  //     returned OR expired.
+  //   - It is more convenient since there is no need to optimize (change index
+  //     and id) group_result_limits vector.
+  std::unordered_map<result_utils::ResultGroupingEntryId, int>
+      new_entry_id_group_index_map;
+  new_entry_id_group_index_map.reserve(entry_id_group_index_map.size());
+  for (const auto& [old_entry_id, group_idx] : entry_id_group_index_map) {
+    // Decode the old entry id and remap the NamespaceId.
+    std::pair<NamespaceId, SchemaTypeId> id_pair =
+        result_utils::DecodeResultGroupingEntryId(old_entry_id,
+                                                  result_group_type_);
+    id_pair.first =
+        (id_pair.first >= 0 &&
+         id_pair.first < optimize_result.namespace_id_old_to_new.size())
+            ? optimize_result.namespace_id_old_to_new[id_pair.first]
+            : kInvalidNamespaceId;
+
+    // Encode the remapped entry id and insert into the new map.
+    std::optional<result_utils::ResultGroupingEntryId> new_entry_id =
+        result_utils::EncodeResultGroupingEntryId(
+            result_group_type_, id_pair.first, id_pair.second);
+    if (!new_entry_id.has_value()) {
+      continue;
+    }
+    new_entry_id_group_index_map.insert({*new_entry_id, group_idx});
+  }
+  entry_id_group_index_map = std::move(new_entry_id_group_index_map);
+
+  return libtextclassifier3::Status::OK;
+}
+
+void ResultStateV2::Clear() {
+  // Unregister num_total_hits_ before clearing scored_document_hits_ranker.
+  // This will decrement the num_total_hits_ by the size of
+  // scored_document_hits_ranker.
+  RegisterNumTotalHits(nullptr);
+
+  group_result_limits.clear();
+  entry_id_group_index_map.clear();
+  child_adjustment_info.reset();
+  parent_adjustment_info.reset();
+  scored_document_hits_ranker->clear();
 }
 
 void ResultStateV2::RegisterNumTotalHits(std::atomic<int>* num_total_hits) {

@@ -845,6 +845,53 @@ TEST_F(MainIndexTest, Reset) {
   }
 }
 
+TEST_F(MainIndexTest, OptimizeInto) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t tvi,
+      lite_index_->InsertTerm("foo", TermMatchType::EXACT_ONLY, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(tvi, TviType::LITE));
+  SectionId section_id = 0;
+  // Add 3 docs (0, 1, 2).
+  for (DocumentId document_id = 0; document_id < 3; ++document_id) {
+    Hit doc_hit(section_id, document_id, Hit::kDefaultTermFrequency,
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
+    ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit));
+  }
+  lite_index_->set_last_added_document_id(2);
+
+  std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<MainIndex> main_index,
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
+
+  ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
+  ASSERT_THAT(main_index->last_added_document_id(), Eq(2));
+
+  // OptimizeInto new directory
+  std::string new_main_index_file_name =
+      index_dir_ + "/optimized/test_file.idx.index";
+  std::vector<DocumentId> doc_id_map = {0, kInvalidDocumentId, 1};
+  ICING_ASSERT_OK(
+      main_index->OptimizeInto(new_main_index_file_name, doc_id_map));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<MainIndex> new_main_index,
+      MainIndex::Create(new_main_index_file_name, &filesystem_,
+                        &icing_filesystem_, feature_flags_.get()));
+
+  EXPECT_THAT(new_main_index->last_added_document_id(), Eq(1));
+  std::vector<DocHitInfo> hits =
+      GetExactHits(new_main_index.get(), /*term_start_index=*/0,
+                   /*unnormalized_term_length=*/0, "foo");
+  EXPECT_THAT(
+      hits,
+      ElementsAre(EqualsDocHitInfo(1, std::vector<SectionId>{section_id}),
+                  EqualsDocHitInfo(0, std::vector<SectionId>{section_id})));
+}
+
 }  // namespace
 
 }  // namespace lib

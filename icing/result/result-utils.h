@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <optional>
 #include <string_view>
+#include <utility>
 
 #include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
@@ -63,6 +64,20 @@ std::optional<ResultGroupingEntryId> EncodeResultGroupingEntryId(
 std::optional<ResultGroupingEntryId> EncodeResultGroupingEntryId(
     ResultSpecProto::ResultGroupingType result_group_type,
     NamespaceId namespace_id, SchemaTypeId schema_type_id);
+
+// Decodes the ResultGroupingEntryId into the associated NamespaceId and
+// SchemaTypeId, according to the given ResultGroupingType.
+//
+// NOTE: different ResultGroupingTypes use different fields, and it is possible
+//   that the returned NamespaceId or SchemaTypeId is invalid. For example, if
+//   ResultGroupingType is SCHEMA_TYPE, the returned NamespaceId will be
+//   kInvalidNamespaceId.
+//
+// Returns: a pair of NamespaceId and SchemaTypeId corresponding to the given
+//   ResultGroupingEntryId and ResultGroupingType.
+std::pair<NamespaceId, SchemaTypeId> DecodeResultGroupingEntryId(
+    ResultGroupingEntryId result_grouping_entry_id,
+    ResultSpecProto::ResultGroupingType result_group_type);
 
 }  // namespace result_utils
 
