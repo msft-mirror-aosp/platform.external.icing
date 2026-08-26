@@ -45,6 +45,7 @@
 #include "icing/store/document-id.h"
 #include "icing/store/namespace-id.h"
 #include "icing/store/suggestion-result-checker.h"
+#include "icing/util/crc32.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -74,16 +75,13 @@ class Index {
  public:
   struct Options {
     explicit Options(const std::string& base_dir, uint32_t index_merge_size,
-                     bool lite_index_sort_at_indexing,
                      uint32_t lite_index_sort_size)
         : base_dir(base_dir),
           index_merge_size(index_merge_size),
-          lite_index_sort_at_indexing(lite_index_sort_at_indexing),
           lite_index_sort_size(lite_index_sort_size) {}
 
     std::string base_dir;
     int32_t index_merge_size;
-    bool lite_index_sort_at_indexing;
     int32_t lite_index_sort_size;
   };
 
@@ -134,17 +132,17 @@ class Index {
   }
 
   // Updates all checksums in the index and returns the combined index checksum.
-  Crc32 UpdateChecksum() {
-    Crc32 lite_crc = lite_index_->UpdateChecksum();
-    Crc32 main_crc = main_index_->UpdateChecksum();
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum() {
+    ICING_ASSIGN_OR_RETURN(Crc32 lite_crc, lite_index_->UpdateChecksum());
+    ICING_ASSIGN_OR_RETURN(Crc32 main_crc, main_index_->UpdateChecksum());
     main_crc.Append(std::to_string(lite_crc.Get()));
     return main_crc;
   }
 
   // Calculates and returns the combined index checksum.
-  Crc32 GetChecksum() const {
-    Crc32 lite_crc = lite_index_->GetChecksum();
-    Crc32 main_crc = main_index_->GetChecksum();
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const {
+    ICING_ASSIGN_OR_RETURN(Crc32 lite_crc, lite_index_->GetChecksum());
+    ICING_ASSIGN_OR_RETURN(Crc32 main_crc, main_index_->GetChecksum());
     main_crc.Append(std::to_string(lite_crc.Get()));
     return main_crc;
   }
@@ -314,9 +312,7 @@ class Index {
     ICING_RETURN_IF_ERROR(main_index_->AddHits(
         *term_id_codec_, std::move(outputs.backfill_map),
         std::move(term_id_hit_pairs), lite_index_->last_added_document_id()));
-    if (!feature_flags_.enable_optimize_improvements()) {
-      ICING_RETURN_IF_ERROR(main_index_->PersistToDisk());
-    }
+    ICING_RETURN_IF_ERROR(main_index_->PersistToDisk());
     return lite_index_->Reset();
   }
 
@@ -324,8 +320,7 @@ class Index {
   // Icing has enabled sorting during indexing time, and the HitBuffer's
   // unsorted tail has exceeded the lite_index_sort_size.
   bool LiteIndexNeedSort() const {
-    return options_.lite_index_sort_at_indexing &&
-           lite_index_->HasUnsortedHitsExceedingSortThreshold();
+    return lite_index_->HasUnsortedHitsExceedingSortThreshold();
   }
 
   // Sorts the LiteIndex HitBuffer.

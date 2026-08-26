@@ -66,6 +66,7 @@ namespace {
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::Eq;
 using ::testing::HasSubstr;
+using ::testing::IsEmpty;
 using ::testing::Not;
 using ::testing::Return;
 
@@ -130,10 +131,8 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
   icing_options.set_document_store_namespace_id_fingerprint(true);
-  icing_options.set_enable_schema_database(true);
-  icing_options.set_enable_qualified_id_join_index_v3(true);
   icing_options.set_enable_delete_propagation_from(false);
-  icing_options.set_enable_scorable_properties(true);
+  icing_options.set_remove_schema_store_move_assignment(true);
   return icing_options;
 }
 
@@ -418,6 +417,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaCompatibleVersionUpdateSucceeds) {
     SetSchemaResultProto expected_set_schema_result;
     expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
     expected_set_schema_result.mutable_new_schema_types()->Add("Email");
+    expected_set_schema_result.set_deleted_document_count(0);
     expected_set_schema_result.set_needs_persist_type(
         PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
     EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -452,6 +452,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaCompatibleVersionUpdateSucceeds) {
     expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
     expected_set_schema_result.mutable_fully_compatible_changed_schema_types()
         ->Add("Email");
+    expected_set_schema_result.set_deleted_document_count(0);
     expected_set_schema_result.set_needs_persist_type(
         PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
     EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -840,12 +841,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchema_schemaTypeIdChanged) {
   // we need to do a recovery proof flush.
   EXPECT_THAT(set_schema_result2.needs_persist_type(),
               Eq(PersistType::RECOVERY_PROOF));
-  // This will trigger join index restoration for JoinIndex V1 and V2.
-  if (options.enable_qualified_id_join_index_v3()) {
-    EXPECT_FALSE(set_schema_result2.has_qualified_id_join_index_restored());
-  } else {
-    EXPECT_TRUE(set_schema_result2.has_qualified_id_join_index_restored());
-  }
+  EXPECT_FALSE(set_schema_result2.has_qualified_id_join_index_restored());
 
   ResultSpecProto result_spec = ResultSpecProto::default_instance();
   result_spec.set_max_joined_children_per_parent_to_return(
@@ -940,6 +936,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaMultipleDatabases) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -1006,6 +1003,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaMultipleDatabases) {
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   // SetSchema db operation will preserve the existing schema type ids as much
   // as possible. In this case, since "db1/type"'s id is unchanged, the document
   // store and index are not updated. Therefore, no need to flush.
@@ -1101,6 +1099,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -1186,6 +1185,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type_2");
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   // SetSchema db operation will preserve the existing schema type ids as much
   // as possible. In this case, since "db1/type"'s id is unchanged, the document
   // store and index are not updated. Therefore, no need to flush.
@@ -1281,6 +1281,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -1310,6 +1311,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   // SetSchema db operation will preserve the existing schema type ids as much
   // as possible. In this case, since "db1/type"'s id is unchanged, the document
   // store and index are not updated. Therefore, no need to flush.
@@ -1392,6 +1394,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaUpdateExistingDatabaseOk) {
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_has_term_index_restored(true);
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_embedding_index_restored(true);
@@ -1511,6 +1514,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -1540,6 +1544,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   // SetSchema db operation will preserve the existing schema type ids as much
   // as possible. In this case, since "db1/type"'s id is unchanged, the document
   // store and index are not updated. Therefore, no need to flush.
@@ -1616,14 +1621,7 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaEmptySchemaClearsDatabase) {
   // Since a document was deleted, we need to do a recovery proof flush.
   expected_set_schema_result.set_needs_persist_type(
       PersistType::RECOVERY_PROOF);
-  // Deleting db1_schema results in a schema type id reassignment, which would
-  // trigger join index restoration if using join index v1 and v2.
-  if (!options.enable_qualified_id_join_index_v3()) {
-    expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
-    expected_set_schema_result.set_has_term_index_restored(false);
-    expected_set_schema_result.set_has_integer_index_restored(false);
-    expected_set_schema_result.set_has_embedding_index_restored(false);
-  }
+
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
 
   // Adding new document fails because db1_type is deleted.
@@ -1721,6 +1719,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Schema");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -1788,6 +1787,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Schema");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_has_term_index_restored(true);
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
@@ -1842,6 +1842,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Schema");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -1905,6 +1906,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Schema");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_has_term_index_restored(true);
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
@@ -2145,6 +2147,7 @@ TEST_F(
       ->Add("Person");
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
       ->Add("Person");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_has_term_index_restored(true);
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
@@ -2238,6 +2241,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -2343,6 +2347,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Email");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_has_term_index_restored(true);
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
@@ -2470,6 +2475,7 @@ TEST_F(
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -2645,6 +2651,7 @@ TEST_F(
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Email");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_has_term_index_restored(true);
   expected_set_schema_result.set_has_integer_index_restored(true);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(false);
@@ -2717,6 +2724,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("Message");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -2836,6 +2844,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
       ->Add("Message");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_has_term_index_restored(false);
   expected_set_schema_result.set_has_integer_index_restored(false);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
@@ -3006,6 +3015,7 @@ TEST_F(
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -3161,6 +3171,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -3323,6 +3334,7 @@ TEST_F(
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -3485,6 +3497,7 @@ TEST_F(
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -3656,6 +3669,7 @@ TEST_F(IcingSearchEngineSchemaTest,
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -3712,9 +3726,15 @@ TEST_F(IcingSearchEngineSchemaTest,
   // Ignore latency numbers. They're covered elsewhere.
   set_schema_result.clear_set_schema_stats();
   set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
+  std::sort(set_schema_result.mutable_incompatible_schema_types()->begin(),
+            set_schema_result.mutable_incompatible_schema_types()->end());
+  std::sort(set_schema_result.mutable_index_incompatible_changed_schema_types()
+                ->begin(),
+            set_schema_result.mutable_index_incompatible_changed_schema_types()
+                ->end());
   expected_set_schema_result = SetSchemaResultProto();
-  expected_set_schema_result.mutable_incompatible_schema_types()->Add("Person");
   expected_set_schema_result.mutable_incompatible_schema_types()->Add("Email");
+  expected_set_schema_result.mutable_incompatible_schema_types()->Add("Person");
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
       ->Add("Email");
   expected_set_schema_result.mutable_index_incompatible_changed_schema_types()
@@ -3745,8 +3765,6 @@ TEST_F(
     IcingSearchEngineSchemaTest,
     SetSchemaAddDeletePropagationTriggersIndexRestorationAndRevalidatesDependency) {
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
-  options.set_enable_qualified_id_join_index_v3(true);
-  options.set_enable_soft_index_restoration(true);
   options.set_enable_delete_propagation_from(true);
   options.set_expired_document_purge_threshold_ms(0);
 
@@ -3790,6 +3808,7 @@ TEST_F(
   expected_set_schema_result.mutable_new_schema_types()->Add("Email");
   expected_set_schema_result.mutable_new_schema_types()->Add("Person");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -3855,6 +3874,7 @@ TEST_F(
   expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
       ->Add("Email");
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(1);
   expected_set_schema_result.set_has_term_index_restored(false);
   expected_set_schema_result.set_has_integer_index_restored(false);
   expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
@@ -3874,6 +3894,372 @@ TEST_F(
   EXPECT_THAT(
       icing.Get("namespace", "email", GetResultSpecProto::default_instance()),
       EqualsProto(expected_get_result_proto));
+}
+
+TEST_F(
+    IcingSearchEngineSchemaTest,
+    ForceSetSchema_DeleteIncompatibleDocumentsShouldTriggerDeletePropagation) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_qualified_id_join_index_v3(true);
+  options.set_enable_soft_index_restoration(true);
+  options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(0);
+
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaProto schema1 =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("TestType1")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType2")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("target")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType3")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("label")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema1);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
+  std::sort(set_schema_result.mutable_new_schema_types()->begin(),
+            set_schema_result.mutable_new_schema_types()->end());
+
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_new_schema_types()->Add("TestType1");
+  expected_set_schema_result.mutable_new_schema_types()->Add("TestType2");
+  expected_set_schema_result.mutable_new_schema_types()->Add("TestType3");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Create 3 documents. Doc2 holds a reference to doc1, and doc3 holds a
+  // reference to doc2.
+  //
+  // doc1(TestType1) -> doc2(TestType2) -> doc3(TestType3)
+  DocumentProto doc1 = DocumentBuilder()
+                           .SetKey("namespace", "doc1")
+                           .SetSchema("TestType1")
+                           .SetCreationTimestampMs(1000)
+                           .AddStringProperty("prop1", "foo")
+                           .Build();
+  DocumentProto doc2 = DocumentBuilder()
+                           .SetKey("namespace", "doc2")
+                           .SetSchema("TestType2")
+                           .SetCreationTimestampMs(1000)
+                           .AddStringProperty("target", "namespace#doc1")
+                           .Build();
+  DocumentProto doc3 = DocumentBuilder()
+                           .SetKey("namespace", "doc3")
+                           .SetSchema("TestType3")
+                           .SetCreationTimestampMs(1000)
+                           .AddStringProperty("label", "namespace#doc2")
+                           .Build();
+
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(doc2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(doc3).status(), ProtoIsOk());
+
+  // Now update the schema:
+  // - Add 1 required property to TestType1.
+  //
+  // Doc1 will be deleted due to missing the new required property, and doc2 and
+  // doc3 will be deleted due to the delete propagation.
+  SchemaProto schema2 =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("TestType1")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("RequiredProp")
+                                        .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                           TOKENIZER_NONE)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType2")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("target")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType3")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("label")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  set_schema_result =
+      icing.SetSchema(schema2, /*ignore_errors_and_delete_documents=*/true);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_incompatible_schema_types()->Add(
+      "TestType1");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  // All 3 documents should be deleted.
+  expected_set_schema_result.set_deleted_document_count(3);
+  // Since a document was deleted, we need to do a recovery proof flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Attempt to get doc1, doc2, and doc3. They should all be deleted.
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto1.mutable_status()->set_message(
+      "Document (namespace, doc1) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "doc1", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto1));
+
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_google::protobuf.mutable_status()->set_message(
+      "Document (namespace, doc2) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "doc2", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_google::protobuf));
+
+  GetResultProto expected_get_result_proto3;
+  expected_get_result_proto3.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto3.mutable_status()->set_message(
+      "Document (namespace, doc3) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "doc3", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto3));
+}
+
+TEST_F(
+    IcingSearchEngineSchemaTest,
+    ForceSetSchema_DeleteIncompatibleDocumentsShouldTriggerDeletePropagationAfterJoinIndexRebuild) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_qualified_id_join_index_v3(true);
+  options.set_enable_soft_index_restoration(true);
+  options.set_enable_delete_propagation_from(true);
+  options.set_expired_document_purge_threshold_ms(0);
+
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaProto schema1 =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("TestType1")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType2")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("targetA")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("targetB")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_NONE,
+                                       DELETE_PROPAGATION_TYPE_NONE)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType3")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("label")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SetSchemaResultProto set_schema_result = icing.SetSchema(schema1);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
+  std::sort(set_schema_result.mutable_new_schema_types()->begin(),
+            set_schema_result.mutable_new_schema_types()->end());
+
+  SetSchemaResultProto expected_set_schema_result;
+  expected_set_schema_result.mutable_new_schema_types()->Add("TestType1");
+  expected_set_schema_result.mutable_new_schema_types()->Add("TestType2");
+  expected_set_schema_result.mutable_new_schema_types()->Add("TestType3");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_deleted_document_count(0);
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Create 3 documents. Doc2 holds a reference to doc1 (in "targetA"), and doc3
+  // holds a reference to doc2.
+  //
+  // doc1(TestType1) -> doc2(TestType2) -> doc3(TestType3)
+  DocumentProto doc1 = DocumentBuilder()
+                           .SetKey("namespace", "doc1")
+                           .SetSchema("TestType1")
+                           .SetCreationTimestampMs(1000)
+                           .AddStringProperty("prop1", "foo")
+                           .Build();
+  DocumentProto doc2 = DocumentBuilder()
+                           .SetKey("namespace", "doc2")
+                           .SetSchema("TestType2")
+                           .SetCreationTimestampMs(1000)
+                           .AddStringProperty("targetA", "namespace#doc1")
+                           .Build();
+  DocumentProto doc3 = DocumentBuilder()
+                           .SetKey("namespace", "doc3")
+                           .SetSchema("TestType3")
+                           .SetCreationTimestampMs(1000)
+                           .AddStringProperty("label", "namespace#doc2")
+                           .Build();
+
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(doc2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(doc3).status(), ProtoIsOk());
+
+  // Now update the schema to:
+  // - Add 1 required property to TestType1.
+  // - Enable join and delete propagation for "targetB" in TestType2.
+  // - Disable join and delete propagation for "targetA" in TestType2.
+  //
+  // In this case, doc1 will be deleted due to the required property. Doc2 will
+  // not be deleted because targetA does not have delete propagation enabled
+  // in the new schema and targetB does not contain any dependency. Doc3 will
+  // not be deleted either.
+  //
+  // Note:
+  // - Old: "targetA" is joinable property id 0. doc2 has 1 join data (in
+  //   "targetA"), referencing doc1.
+  // - New: "targetB" is joinable property id 0. doc2 contains no join data.
+  //
+  // If the delete propagation of doc1 was evaluated BEFORE join index rebuild,
+  // then it would've read the stale join data and propagate deletion to doc2
+  // and doc3 incorrectly.
+  SchemaProto schema2 =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("TestType1")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("prop1")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("RequiredProp")
+                                        .SetDataTypeString(TERM_MATCH_UNKNOWN,
+                                                           TOKENIZER_NONE)
+                                        .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType2")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("targetA")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_NONE,
+                                       DELETE_PROPAGATION_TYPE_NONE)
+                                   .SetCardinality(CARDINALITY_OPTIONAL))
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("targetB")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(
+              SchemaTypeConfigBuilder()
+                  .SetType("TestType3")
+                  .AddProperty(PropertyConfigBuilder()
+                                   .SetName("label")
+                                   .SetDataTypeJoinableString(
+                                       JOINABLE_VALUE_TYPE_QUALIFIED_ID,
+                                       DELETE_PROPAGATION_TYPE_PROPAGATE_FROM)
+                                   .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  set_schema_result =
+      icing.SetSchema(schema2, /*ignore_errors_and_delete_documents=*/true);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
+  expected_set_schema_result = SetSchemaResultProto();
+  expected_set_schema_result.mutable_incompatible_schema_types()->Add(
+      "TestType1");
+  expected_set_schema_result.mutable_join_incompatible_changed_schema_types()
+      ->Add("TestType2");
+  expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result.set_has_term_index_restored(false);
+  expected_set_schema_result.set_has_integer_index_restored(false);
+  expected_set_schema_result.set_has_qualified_id_join_index_restored(true);
+  expected_set_schema_result.set_has_embedding_index_restored(false);
+  // Only doc1 should be deleted.
+  expected_set_schema_result.set_deleted_document_count(1);
+  // Since it is a join incompatible change, we need to do a recovery proof
+  // flush.
+  expected_set_schema_result.set_needs_persist_type(
+      PersistType::RECOVERY_PROOF);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
+
+  // Attempt to get doc1, doc2 and doc3.
+  GetResultProto expected_get_result_proto1;
+  expected_get_result_proto1.mutable_status()->set_code(StatusProto::NOT_FOUND);
+  expected_get_result_proto1.mutable_status()->set_message(
+      "Document (namespace, doc1) not found.");
+  EXPECT_THAT(
+      icing.Get("namespace", "doc1", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto1));
+
+  GetResultProto expected_get_result_google::protobuf;
+  expected_get_result_google::protobuf.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_google::protobuf.mutable_document() = doc2;
+  EXPECT_THAT(
+      icing.Get("namespace", "doc2", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_google::protobuf));
+
+  GetResultProto expected_get_result_proto3;
+  expected_get_result_proto3.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto3.mutable_document() = doc3;
+  EXPECT_THAT(
+      icing.Get("namespace", "doc3", GetResultSpecProto::default_instance()),
+      EqualsProto(expected_get_result_proto3));
 }
 
 TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
@@ -4097,6 +4483,7 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseOk) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -4125,6 +4512,7 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseOk) {
   expected_set_schema_result = SetSchemaResultProto();
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db2/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   // No need to flush since:
   // - Schema type id is not changed.
   // - No document is deleted.
@@ -4192,6 +4580,7 @@ TEST_F(IcingSearchEngineSchemaTest, GetSchemaDatabaseNotFound) {
   SetSchemaResultProto expected_set_schema_result;
   expected_set_schema_result.mutable_status()->set_code(StatusProto::OK);
   expected_set_schema_result.mutable_new_schema_types()->Add("db1/type");
+  expected_set_schema_result.set_deleted_document_count(0);
   expected_set_schema_result.set_needs_persist_type(
       PersistType::UNKNOWN);  // Flush is not needed for the first SetSchema.
   EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result));
@@ -4753,6 +5142,12 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaStatsArePopulated) {
   EXPECT_THAT(
       set_schema_result.set_schema_stats().schema_store_set_schema_latency_ms(),
       Eq(1000));
+  EXPECT_GT(set_schema_result.set_schema_stats().schema_proto_byte_size(), 0);
+  if (GetDefaultIcingOptions().remove_schema_store_move_assignment()) {
+    EXPECT_THAT(set_schema_result.set_schema_stats()
+                    .schema_store_reinitialization_latency_ms(),
+                Eq(1000));
+  }
 
   // Put a document to trigger index restoration later.
   DocumentProto message_document =
@@ -4806,6 +5201,12 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaStatsArePopulated) {
   EXPECT_THAT(set_schema_result.set_schema_stats()
                   .scorable_property_cache_regeneration_latency_ms(),
               Eq(1000));
+  EXPECT_GT(set_schema_result.set_schema_stats().schema_proto_byte_size(), 0);
+  if (GetDefaultIcingOptions().remove_schema_store_move_assignment()) {
+    EXPECT_THAT(set_schema_result.set_schema_stats()
+                    .schema_store_reinitialization_latency_ms(),
+                Eq(1000));
+  }
 
   // Clear schema -- this should trigger and update document store and set
   // latencies for document store update schema
@@ -4823,6 +5224,1106 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaStatsArePopulated) {
   EXPECT_THAT(set_schema_result.set_schema_stats()
                   .document_store_optimized_update_schema_latency_ms(),
               Eq(1000));
+  if (GetDefaultIcingOptions().remove_schema_store_move_assignment()) {
+    EXPECT_THAT(set_schema_result.set_schema_stats()
+                    .schema_store_reinitialization_latency_ms(),
+                Eq(1000));
+  }
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       AccountPropertyDemotingIsCompatible_enabled) {
+  // Rule 1: Changing an existing nested document property from an account
+  // property to a regular nested document property is COMPATIBLE.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_account_property_incompatibility_check(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // 1. Configure old schema: "Person" has a nested document "worksFor",
+  // which is also defined as an account property.
+  SchemaTypeConfigProto old_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  old_person.add_account_properties("worksFor");
+
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(old_person)
+          .Build();
+  ASSERT_THAT(icing.SetSchema(old_schema).status(), ProtoIsOk());
+
+  // 2. Configure new schema: "worksFor" remains a regular nested document,
+  // but it is removed from the account_properties repeated field.
+  SchemaTypeConfigProto new_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(new_person)
+          .Build();
+
+  // 3. SetSchema should return OK since demoting is fully compatible.
+  SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
+
+  // Verify fields item by item
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.fully_compatible_changed_schema_types(),
+              IsEmpty());
+  EXPECT_THAT(set_schema_result.incompatible_schema_types(), IsEmpty());
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       AccountPropertyPromotingIsIncompatible_enabled) {
+  // Rule 2: Promoting an existing regular nested document property into
+  // an account property is INCOMPATIBLE.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_account_property_incompatibility_check(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // 1. Configure old schema: "Person" has a standard nested document
+  // "worksFor".
+  SchemaTypeConfigProto old_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(old_person)
+          .Build();
+  ASSERT_THAT(icing.SetSchema(old_schema).status(), ProtoIsOk());
+
+  // 2. Configure new schema: "worksFor" is now promoted to an account property.
+  SchemaTypeConfigProto new_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  new_person.add_account_properties("worksFor");
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(new_person)
+          .Build();
+
+  // 3. SetSchema without force override should fail with FAILED_PRECONDITION.
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+
+  // Verify fields item by item
+  EXPECT_THAT(set_schema_result.status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+  EXPECT_THAT(set_schema_result.status().message(),
+              HasSubstr("Schema is incompatible."));
+  EXPECT_THAT(set_schema_result.incompatible_schema_types(),
+              testing::UnorderedElementsAre("Person"));
+  EXPECT_THAT(set_schema_result.fully_compatible_changed_schema_types(),
+              testing::IsEmpty());
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       AccountPropertyPromotingIsIncompatible_disabled) {
+  // Disabling the feature flag won't consider the schema update as
+  // incompatible.
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // 1. Configure old schema: "Person" has a standard nested document
+  // "worksFor".
+  SchemaTypeConfigProto old_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(old_person)
+          .Build();
+  ASSERT_THAT(icing.SetSchema(old_schema).status(), ProtoIsOk());
+
+  // 2. Configure new schema: "worksFor" is now promoted to an account property.
+  SchemaTypeConfigProto new_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  new_person.add_account_properties("worksFor");
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(new_person)
+          .Build();
+
+  // 3. SetSchema without force override should fail with FAILED_PRECONDITION.
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+
+  // Verify fields item by item
+  ASSERT_THAT(set_schema_result.status(), ProtoIsOk());
+}
+
+TEST_F(IcingSearchEngineSchemaTest, NewAccountPropertyIsCompatible_enabled) {
+  // Rule 3: Introducing a completely new nested document property and
+  // defining it as an account property is COMPATIBLE.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_account_property_incompatibility_check(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // 1. Configure old schema: "Person" only has a regular string name.
+  SchemaTypeConfigProto old_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto old_schema = SchemaBuilder().AddType(old_person).Build();
+  ASSERT_THAT(icing.SetSchema(old_schema).status(), ProtoIsOk());
+
+  // 2. Configure new schema: "Person" introduces a brand new nested document
+  // property "worksFor" and marks it as an account property immediately.
+  SchemaTypeConfigProto new_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  new_person.add_account_properties("worksFor");
+
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(new_person)
+          .Build();
+
+  // 3. SetSchema should succeed and return OK since adding a new optional
+  // account property won't break existing documents.
+  SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
+
+  // Verify fields item by item
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.fully_compatible_changed_schema_types(),
+              IsEmpty());
+  EXPECT_THAT(set_schema_result.incompatible_schema_types(), IsEmpty());
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       NewNestedAccountPropertyIsCompatible_enabled) {
+  // Rule 3: Introducing a completely new nested document property path and
+  // defining it as an account property is COMPATIBLE.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_account_property_incompatibility_check(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // 1. Configure old schema: 'Person' has 'worksFor' nesting 'Organization',
+  // but 'Organization' starts empty without the 'token' field.
+  SchemaTypeConfigProto old_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Organization"))
+          .AddType(old_person)
+          .Build();
+  ASSERT_THAT(icing.SetSchema(old_schema).status(), ProtoIsOk());
+
+  // 2. Configure new schema: Introduce a brand new 'token' property inside
+  // 'Organization', and define "worksFor.token" as an account property in
+  // 'Person'.
+  SchemaTypeConfigProto new_organization =
+      SchemaTypeConfigBuilder()
+          .SetType("Organization")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("token")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto new_person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  new_person.add_account_properties("worksFor.token");
+
+  SchemaProto new_schema =
+      SchemaBuilder().AddType(new_organization).AddType(new_person).Build();
+
+  // 3. SetSchema should succeed and return OK since adding a brand new deep
+  // nested account property path won't break existing documents.
+  SetSchemaResultProto set_schema_result = icing.SetSchema(new_schema);
+
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.fully_compatible_changed_schema_types(),
+              IsEmpty());
+  EXPECT_THAT(set_schema_result.incompatible_schema_types(), IsEmpty());
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       InvalidNestedAccountPropertyPathIsRejected) {
+  // Verifies that ValidateAllAccountProperties rejects schemas with broken deep
+  // paths.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_account_property_incompatibility_check(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Configure a schema where 'Person' nests 'Organization', but 'Organization'
+  // only has 'id'. The account property incorrectly points to
+  // 'worksFor.non_existent_field'.
+  SchemaTypeConfigProto organization =
+      SchemaTypeConfigBuilder()
+          .SetType("Organization")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("id")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto person =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("worksFor")
+                  .SetDataTypeDocument("Organization",
+                                       /*index_nested_properties=*/false)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  person.add_account_properties("worksFor.non_existent_field");
+
+  SchemaProto schema =
+      SchemaBuilder().AddType(organization).AddType(person).Build();
+
+  // 3. SetSchema should fail immediately during the pre-validation phase
+  // with INVALID_ARGUMENT due to the invalid nested path structure.
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(schema, /*ignore_errors_and_delete_documents=*/false);
+
+  EXPECT_THAT(set_schema_result.status().code(),
+              Eq(StatusProto::INVALID_ARGUMENT));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildDisabledClearsAllIndices) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(false);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddStringProperty("name", "foo")
+                               .AddInt64Property("age", 25)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Modify string property indexing option (change TERM_MATCH_EXACT to
+  // TERM_MATCH_PREFIX). This triggers term index incompatibility without
+  // changing the set of indexed properties or section id assignment.
+  // When fine grained rebuild is disabled (false), any incompatible index tree
+  // causes all search indices (term, integer, embedding) to be cleared and
+  // marked as restored/rebuilt.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(true));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledOnlyClearsTermIndex) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddStringProperty("name", "foo")
+                               .AddInt64Property("age", 25)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Modify string property indexing option (change TERM_MATCH_EXACT to
+  // TERM_MATCH_PREFIX). This triggers term index incompatibility without
+  // changing section id assignment.
+  // When fine grained rebuild is enabled (true), only the term index tree
+  // is cleared and re-indexed. The integer and embedding index trees remain
+  // intact.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(false));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(false));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledOnlyClearsEmbeddingIndex) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  PropertyProto::VectorProto vector_proto;
+  vector_proto.add_values(1.0);
+  vector_proto.add_values(2.0);
+  vector_proto.set_model_signature("model");
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddStringProperty("name", "foo")
+                               .AddInt64Property("age", 25)
+                               .AddVectorProperty("embedding", vector_proto)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Modify vector property indexing type (change LINEAR_SEARCH to
+  // APPROXIMATE_NEAREST_NEIGHBOR). This triggers embedding index
+  // incompatibility without changing section id assignment.
+  // When fine grained rebuild is enabled (true), only the embedding index tree
+  // is cleared and re-indexed. The term and integer index trees remain intact.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(
+                               EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(false));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(false));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(true));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledSectionIdChangeClearsUsedIndices) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddStringProperty("name", "foo")
+                               .AddInt64Property("age", 25)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Modify 'age' from indexed (RANGE) to unindexed (UNKNOWN).
+  // This changes the set of indexed properties in Person, altering section id
+  // assignment. Under our targeted section id change propagation, only the
+  // index trees that Person uses or previously used (term index and integer
+  // index) are marked as incompatible and re-indexed. The embedding index tree
+  // remains intact since Person has no embedding properties.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(false));
+}
+
+TEST_F(
+    IcingSearchEngineSchemaTest,
+    FineGrainedIndexRebuildEnabledNestedDocumentSectionIdChangeOnlyClearsUsedIndexTrees) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto person_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("email")
+                  .SetDataTypeDocument("Email",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaProto schema =
+      SchemaBuilder().AddType(email_type).AddType(person_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto email_doc = DocumentBuilder()
+                                .SetKey("namespace", "uri_email")
+                                .SetSchema("Email")
+                                .AddStringProperty("subject", "hello")
+                                .Build();
+  ASSERT_THAT(icing.Put(email_doc).status(), ProtoIsOk());
+
+  DocumentProto person_doc = DocumentBuilder()
+                                 .SetKey("namespace", "uri_person")
+                                 .SetSchema("Person")
+                                 .AddInt64Property("age", 30)
+                                 .AddDocumentProperty("email", email_doc)
+                                 .Build();
+  ASSERT_THAT(icing.Put(person_doc).status(), ProtoIsOk());
+
+  // Modify Email by adding a new indexed string property 'body'.
+  // This causes section id reassignment in Email, and propagates to Person via
+  // the index_nested_properties=true dependency.
+  // Because Person only contains INT64 (age) and STRING (via Email), neither
+  // Person nor Email contains any VECTOR/embedding properties. Thus,
+  // fine-grained rebuilding should clear Term and Integer indices while
+  // leaving the Embedding index completely untouched.
+  SchemaTypeConfigProto new_email_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Email")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("subject")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("body")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaProto new_schema =
+      SchemaBuilder().AddType(new_email_type).AddType(person_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(false));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledNoIncompatibleClearsNothing) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("idNumber")
+                           .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddStringProperty("name", "foo")
+                               .AddInt64Property("age", 25)
+                               .AddInt64Property("idNumber", 1001)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Modify non-indexed property (e.g. description or other non-indexing
+  // option). Neither term, integer, nor embedding index is incompatible. When
+  // fine grained rebuild is enabled (or disabled), no index tree is cleared or
+  // re-indexed.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("idNumber")
+                           .SetDescription("Unique employee ID number")
+                           .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(false));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(false));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(false));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledOnlyClearsIntegerIndex) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // A type whose ONLY indexed property is an int64 property. Toggling its
+  // numeric_match_type is the only way to make the Integer index incompatible,
+  // since RANGE is the sole indexed state for int64 properties.
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddInt64Property("age", 25)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Change 'age' from indexed (RANGE) to unindexed (UNKNOWN). Since 'age' is
+  // the only indexable property, only the Integer index tree is affected. The
+  // Term and Embedding index trees are preserved.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(false));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(false));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledMultipleIncompatibleClearsOnlyThose) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  PropertyProto::VectorProto vector_proto;
+  vector_proto.add_values(1.0);
+  vector_proto.add_values(2.0);
+  vector_proto.set_model_signature("model");
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddStringProperty("name", "foo")
+                               .AddInt64Property("age", 25)
+                               .AddVectorProperty("embedding", vector_proto)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Simultaneously change the term_match_type (Term incompatible) and the
+  // embedding_indexing_type (Embedding incompatible), without changing the
+  // section id assignment (all three properties remain indexed). Fine-grained
+  // rebuild should clear ONLY the Term and Embedding indices, and preserve the
+  // Integer index since 'age' is untouched.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(
+                               EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(false));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(true));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledPreservedIndexRemainsQueryable) {
+  // Verifies not just the restored flags, but that the actual index data is
+  // correct after a fine-grained rebuild: the rebuilt index returns results and
+  // the preserved (un-rebuilt) index still returns its original data.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("namespace", "uri1")
+          .SetSchema("Person")
+          .AddStringProperty("name", "John")
+          .AddInt64Property("age", 25)
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Change only the term_match_type. This makes the Term index incompatible
+  // (it is cleared and rebuilt), while the Integer index is preserved intact.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  ASSERT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  ASSERT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+  ASSERT_THAT(set_schema_result.has_integer_index_restored(), Eq(false));
+
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+
+  // The rebuilt Term index must return the document (querying "name:John").
+  SearchSpecProto term_search_spec;
+  term_search_spec.set_query("name:John");
+  term_search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  SearchResultProto expected_term_result;
+  expected_term_result.mutable_status()->set_code(StatusProto::OK);
+  *expected_term_result.mutable_results()->Add()->mutable_document() = document;
+  EXPECT_THAT(
+      icing.Search(term_search_spec, GetDefaultScoringSpec(), result_spec),
+      EqualsSearchResultIgnoreStatsAndScores(expected_term_result));
+
+  // The preserved Integer index must still return the document without any
+  // reindexing (querying "age == 25").
+  SearchSpecProto integer_search_spec;
+  integer_search_spec.set_query("age == 25");
+  integer_search_spec.add_enabled_features(std::string(kNumericSearchFeature));
+  SearchResultProto expected_integer_result;
+  expected_integer_result.mutable_status()->set_code(StatusProto::OK);
+  *expected_integer_result.mutable_results()->Add()->mutable_document() =
+      document;
+  EXPECT_THAT(
+      icing.Search(integer_search_spec, GetDefaultScoringSpec(), result_spec),
+      EqualsSearchResultIgnoreStatsAndScores(expected_integer_result));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledReInitWithIncompatibleSchema) {
+  // Verifies that fine-grained rebuild works correctly across engine
+  // re-initialization: after creating data, destroying the engine, and
+  // re-initializing with a different schema.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+
+  // Phase 1: Create engine, set schema, put document.
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    SchemaTypeConfigProto schema_type =
+        SchemaTypeConfigBuilder()
+            .SetType("Person")
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("name")
+                    .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                    .SetCardinality(CARDINALITY_OPTIONAL))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName("age")
+                             .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                             .SetCardinality(CARDINALITY_OPTIONAL))
+            .Build();
+    SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+    ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+    DocumentProto document = DocumentBuilder()
+                                 .SetKey("namespace", "uri1")
+                                 .SetSchema("Person")
+                                 .AddStringProperty("name", "foo")
+                                 .AddInt64Property("age", 25)
+                                 .Build();
+    ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+  }
+
+  // Phase 2: Re-initialize and update schema with term-only incompatible
+  // change. Fine-grained rebuild should still selectively clear only the
+  // Term index.
+  {
+    IcingSearchEngine icing(options, GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+    SchemaTypeConfigProto new_schema_type =
+        SchemaTypeConfigBuilder()
+            .SetType("Person")
+            .AddProperty(
+                PropertyConfigBuilder()
+                    .SetName("name")
+                    .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                    .SetCardinality(CARDINALITY_OPTIONAL))
+            .AddProperty(PropertyConfigBuilder()
+                             .SetName("age")
+                             .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                             .SetCardinality(CARDINALITY_OPTIONAL))
+            .Build();
+    SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+    SetSchemaResultProto set_schema_result =
+        icing.SetSchema(new_schema,
+                        /*ignore_errors_and_delete_documents=*/false);
+    EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+    // Fine-grained should only rebuild the term index.
+    EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+    EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(false));
+    EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(false));
+  }
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       FineGrainedIndexRebuildEnabledAllThreeIncompatibleClearsAll) {
+  // When all three index types are independently incompatible with
+  // fine-grained rebuild enabled, each index should be individually cleared
+  // and rebuilt.
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_fine_grained_index_rebuild(true);
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaTypeConfigProto schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto schema = SchemaBuilder().AddType(schema_type).Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  PropertyProto::VectorProto vector_proto;
+  vector_proto.add_values(1.0);
+  vector_proto.add_values(2.0);
+  vector_proto.set_model_signature("model");
+
+  DocumentProto document = DocumentBuilder()
+                               .SetKey("namespace", "uri1")
+                               .SetSchema("Person")
+                               .AddStringProperty("name", "foo")
+                               .AddInt64Property("age", 25)
+                               .AddVectorProperty("embedding", vector_proto)
+                               .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  // Simultaneously change:
+  // - term_match_type (Term incompatible)
+  // - numeric_match_type (Integer incompatible, via section ID change from
+  //   removing the integer property's indexed status)
+  // - embedding_indexing_type (Embedding incompatible)
+  // All three index types should be cleared and rebuilt individually through
+  // the fine-grained code path.
+  SchemaTypeConfigProto new_schema_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Person")
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("age")
+                           .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(
+                               EMBEDDING_INDEXING_APPROXIMATE_NEAREST_NEIGHBOR)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+  SchemaProto new_schema = SchemaBuilder().AddType(new_schema_type).Build();
+
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(new_schema, /*ignore_errors_and_delete_documents=*/false);
+  EXPECT_THAT(set_schema_result.status().code(), Eq(StatusProto::OK));
+  EXPECT_THAT(set_schema_result.has_term_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_integer_index_restored(), Eq(true));
+  EXPECT_THAT(set_schema_result.has_embedding_index_restored(), Eq(true));
 }
 
 }  // namespace
