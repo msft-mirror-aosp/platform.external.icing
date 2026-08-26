@@ -16,10 +16,12 @@
 #define ICING_SCORING_PRIORITY_QUEUE_SCORED_DOCUMENT_HITS_RANKER_H_
 
 #include <memory>
+#include <optional>
 #include <queue>
 #include <unordered_set>
 #include <vector>
 
+#include "icing/scoring/reverse-vector-no-ranker.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-id.h"
@@ -56,6 +58,12 @@ class PriorityQueueScoredDocumentHitsRanker : public ScoredDocumentHitsRanker {
   //   convert it to JoinedScoredDocumentHit and cache it in curr_.
   const JoinedScoredDocumentHit& Top() const override { return *curr_; }
 
+  void TruncateHitsTo(int new_size) override;
+
+  std::unique_ptr<ScoredDocumentHitsRanker> OptimizeAndTransfer(
+      const std::vector<DocumentId>& document_id_old_to_new) &&
+      override;
+
   // Returns DocumentIds of the top K documents according to the ranking policy.
   // - For ScoredDocumentHit, this returns the DocumentIds of the top K
   //   documents.
@@ -67,8 +75,6 @@ class PriorityQueueScoredDocumentHitsRanker : public ScoredDocumentHitsRanker {
   // JoinedScoredDocumentHit.
   // - For ScoredDocumentHit, this returns an empty set.
   std::unordered_set<DocumentId> GetTopKChildDocumentIds(int k) const override;
-
-  void TruncateHitsTo(int new_size) override;
 
   int size() const override { return scored_data_pq_.size(); }
 
@@ -129,6 +135,55 @@ void PriorityQueueScoredDocumentHitsRanker<ScoredDataType, Converter>::Pop() {
 }
 
 template <typename ScoredDataType, typename Converter>
+void PriorityQueueScoredDocumentHitsRanker<
+    ScoredDataType, Converter>::TruncateHitsTo(int new_size) {
+  if (new_size < 0 || scored_data_pq_.size() <= new_size) {
+    return;
+  }
+
+  // Copying the best new_size results.
+  std::priority_queue<ScoredDataType, std::vector<ScoredDataType>, Comparator>
+      new_pq(comparator_);
+  for (int i = 0; i < new_size; ++i) {
+    new_pq.push(scored_data_pq_.top());
+    scored_data_pq_.pop();
+  }
+
+  // Assign back to the class members.
+  scored_data_pq_ = std::move(new_pq);
+  RefreshCurrent();
+}
+
+template <typename ScoredDataType, typename Converter>
+std::unique_ptr<ScoredDocumentHitsRanker>
+PriorityQueueScoredDocumentHitsRanker<ScoredDataType, Converter>::
+    OptimizeAndTransfer(
+        const std::vector<DocumentId>& document_id_old_to_new) && {
+  std::vector<ScoredDataType> optimized_scored_data_vec;
+  optimized_scored_data_vec.reserve(scored_data_pq_.size());
+  while (!scored_data_pq_.empty()) {
+    ScoredDataType scored_data = scored_data_pq_.top();
+    std::optional<ScoredDataType> optimized_scored_data =
+        std::move(scored_data).Optimize(document_id_old_to_new);
+    if (optimized_scored_data.has_value()) {
+      optimized_scored_data_vec.push_back(std::move(*optimized_scored_data));
+    }
+
+    scored_data_pq_.pop();
+  }
+  optimized_scored_data_vec.shrink_to_fit();
+
+  // After popping all elements from the priority queue, the top rank element is
+  // at the beginning of the vector.
+  // Reverse the optimized vector to make the top element be at the end of the
+  // vector, and put it into ReverseVectorNoRanker.
+  std::reverse(optimized_scored_data_vec.begin(),
+               optimized_scored_data_vec.end());
+  return std::make_unique<ReverseVectorNoRanker<ScoredDataType, Converter>>(
+      std::move(optimized_scored_data_vec));
+}
+
+template <typename ScoredDataType, typename Converter>
 std::unordered_set<DocumentId> PriorityQueueScoredDocumentHitsRanker<
     ScoredDataType, Converter>::GetTopKDocumentIds(int k) const {
   std::unordered_set<DocumentId> top_k_document_ids;
@@ -185,26 +240,6 @@ std::unordered_set<DocumentId> PriorityQueueScoredDocumentHitsRanker<
     return top_k_document_ids;
   }
   return top_k_document_ids;
-}
-
-template <typename ScoredDataType, typename Converter>
-void PriorityQueueScoredDocumentHitsRanker<
-    ScoredDataType, Converter>::TruncateHitsTo(int new_size) {
-  if (new_size < 0 || scored_data_pq_.size() <= new_size) {
-    return;
-  }
-
-  // Copying the best new_size results.
-  std::priority_queue<ScoredDataType, std::vector<ScoredDataType>, Comparator>
-      new_pq(comparator_);
-  for (int i = 0; i < new_size; ++i) {
-    new_pq.push(scored_data_pq_.top());
-    scored_data_pq_.pop();
-  }
-
-  // Assign back to the class members.
-  scored_data_pq_ = std::move(new_pq);
-  RefreshCurrent();
 }
 
 template <typename ScoredDataType, typename Converter>
