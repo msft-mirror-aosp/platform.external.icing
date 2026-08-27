@@ -140,6 +140,11 @@ class IntegerIndex : public NumericIndex<int64_t> {
       const std::vector<DocumentId>& document_id_old_to_new,
       DocumentId new_last_added_document_id) override;
 
+  libtextclassifier3::Status OptimizeInto(
+      const std::string& new_working_path,
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id) const override;
+
   libtextclassifier3::Status Clear() override;
 
   DocumentId last_added_document_id() const override {

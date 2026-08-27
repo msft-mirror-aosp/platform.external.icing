@@ -24,8 +24,10 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/absl_ports/canonical_errors.h"
 #include "icing/document-builder.h"
 #include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
@@ -57,6 +59,7 @@
 #include "icing/transform/normalizer.h"
 #include "icing/util/document-util.h"
 #include "icing/util/icu-data-file-helper.h"
+#include "icing/util/status-macros.h"
 #include "unicode/uloc.h"
 
 namespace icing {
@@ -64,8 +67,10 @@ namespace lib {
 namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
+using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsEmpty;
+using ::testing::Ne;
 using ::testing::Not;
 using ::testing::SizeIs;
 using PageResultInfo = std::pair<uint64_t, PageResult>;
@@ -147,21 +152,7 @@ class ResultStateManagerTest : public testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(normalizer_,
                                normalizer_factory::Create(normalizer_options));
 
-    ICING_ASSERT_OK_AND_ASSIGN(
-        DocumentStore::CreateResult result,
-        DocumentStore::Create(
-            &filesystem_, document_store_dir_, clock_.get(),
-            schema_store_.get(), feature_flags_.get(),
-            /*force_recovery_and_revalidate_documents=*/false,
-            /*pre_mapping_fbv=*/false,
-            /*use_persistent_hash_map=*/true,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDefaultCompressionLevel,
-            PortableFileBackedProtoLog<
-                DocumentWrapper>::kDefaultCompressionThresholdBytes,
-            protobuf_ports::kDefaultMemLevel,
-            /*initialize_stats=*/nullptr));
-    document_store_ = std::move(result.document_store);
+    CreateDocumentStore();
 
     ICING_ASSERT_OK_AND_ASSIGN(
         result_retriever_,
@@ -216,6 +207,54 @@ class ResultStateManagerTest : public testing::Test {
 
     return std::make_pair(std::move(scored_document_hits),
                           std::move(document_protos));
+  }
+
+  void CreateDocumentStore() {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult result,
+        DocumentStore::Create(
+            &filesystem_, document_store_dir_, clock_.get(),
+            schema_store_.get(), feature_flags_.get(),
+            /*force_recovery_and_revalidate_documents=*/false,
+            /*pre_mapping_fbv=*/false,
+            /*use_persistent_hash_map=*/true,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionLevel,
+            PortableFileBackedProtoLog<
+                DocumentWrapper>::kDefaultCompressionThresholdBytes,
+            protobuf_ports::kDefaultMemLevel,
+            /*initialize_stats=*/nullptr));
+    document_store_ = std::move(result.document_store);
+  }
+
+  libtextclassifier3::StatusOr<DocumentStore::OptimizeResult>
+  OptimizeDocumentStore() {
+    std::string optimized_document_store_dir =
+        test_dir_ + "/document_store_optimized";
+    if (!filesystem_.CreateDirectoryRecursively(
+            optimized_document_store_dir.c_str())) {
+      return absl_ports::InternalError(
+          "Failed to create optimized document store directory.");
+    }
+    ICING_ASSIGN_OR_RETURN(
+        DocumentStore::OptimizeResult optimize_result,
+        document_store_->OptimizeInto(
+            optimized_document_store_dir, /*lang_segmenter=*/nullptr,
+            /*potentially_optimizable_blob_handles=*/{}));
+
+    document_store_.reset();
+    if (!filesystem_.SwapFiles(document_store_dir_.c_str(),
+                               optimized_document_store_dir.c_str())) {
+      return absl_ports::InternalError(
+          "Failed to swap files between document store and optimized document "
+          "store.");
+    }
+    filesystem_.DeleteDirectoryRecursively(
+        optimized_document_store_dir.c_str());
+
+    CreateDocumentStore();
+
+    return optimize_result;
   }
 
   std::unique_ptr<FeatureFlags> feature_flags_;
@@ -2189,6 +2228,365 @@ TEST_F(ResultStateManagerTest,
   EXPECT_THAT(result_state_manager.GetNumActiveResultStates(
                   /*current_time_ms=*/clock_->GetSystemTimeMilliseconds()),
               Eq(2));
+}
+
+TEST_F(ResultStateManagerTest, Optimize) {
+  // Add 5 documents (doc id 0 to 4).
+  auto [scored_document_hits, document_protos] =
+      AddScoredDocuments({ScoredDocumentInfo("namespace", "uri0"),
+                          ScoredDocumentInfo("namespace", "uri1"),
+                          ScoredDocumentInfo("namespace", "uri2"),
+                          ScoredDocumentInfo("namespace", "uri3"),
+                          ScoredDocumentInfo("namespace", "uri4")});
+
+  // Only include  "uri2", "uri3", and "uri4" in the search results.
+  std::vector<ScoredDocumentHit> desired_scored_document_hits = {
+      scored_document_hits[2], scored_document_hits[3],
+      scored_document_hits[4]};
+
+  std::unique_ptr<ScoredDocumentHitsRanker> ranker = std::make_unique<
+      PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+      std::move(desired_scored_document_hits), /*is_descending=*/true);
+
+  ResultStateManager result_state_manager(
+      /*max_total_hits=*/std::numeric_limits<int>::max());
+
+  // First page, 2 results ("uri4", "uri3").
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info1,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::move(ranker), /*parent_adjustment_info_in=*/nullptr,
+          /*child_adjustment_info_in=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
+          *schema_store_, *document_store_, *result_retriever_,
+          clock_->GetSystemTimeMilliseconds()));
+  ASSERT_THAT(page_result_info1.first, Ne(kInvalidNextPageToken));
+  ASSERT_THAT(page_result_info1.second.results, SizeIs(2));
+  ASSERT_THAT(page_result_info1.second.results.at(0).document().uri(),
+              Eq("uri4"));
+  ASSERT_THAT(page_result_info1.second.results.at(1).document().uri(),
+              Eq("uri3"));
+
+  uint64_t next_page_token = page_result_info1.first;
+
+  // Delete doc ("namespace", "uri0") and ("namespace", "uri3").
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+  ICING_ASSERT_OK(
+      document_store_->Delete("namespace", "uri0", current_time_ms));
+  ICING_ASSERT_OK(
+      document_store_->Delete("namespace", "uri3", current_time_ms));
+
+  // Optimize the document store.
+  // Remapping:
+  // - 1 -> 0
+  // - 2 -> 1
+  // - 4 -> 2
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult doc_store_optimize_result,
+      OptimizeDocumentStore());
+  ASSERT_THAT(doc_store_optimize_result.document_id_old_to_new,
+              ElementsAre(kInvalidDocumentId, 0, 1, kInvalidDocumentId, 2));
+
+  // Optimize ResultStateManager.
+  ResultStateManager::OptimizeResult optimize_result =
+      result_state_manager.Optimize(doc_store_optimize_result);
+  EXPECT_THAT(optimize_result.num_result_states_optimized, Eq(1));
+  EXPECT_THAT(optimize_result.num_result_states_invalidated, Eq(0));
+
+  // Fetch the second page after optimization.
+  // - Expect to get "uri2" in the second page.
+  // - "uri2" has old doc id 2 and new doc id 1.
+  // - This test verifies that ResultStateManager can correctly remap the
+  //   document ids and get the correct document from the second page.
+  //   - If the remap had not been done correctly and the ResultState was still
+  //     using the old doc id 2, then it would've fetched "uri4" from the
+  //     optimized doc store.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info2,
+      result_state_manager.GetNextPage(
+          next_page_token, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          *result_retriever_, clock_->GetSystemTimeMilliseconds()));
+  EXPECT_THAT(page_result_info2.first, Eq(kInvalidNextPageToken));
+  ASSERT_THAT(page_result_info2.second.results, SizeIs(1));
+  EXPECT_THAT(page_result_info2.second.results.at(0).document().uri(),
+              Eq("uri2"));
+}
+
+TEST_F(ResultStateManagerTest, Optimize_documentDeleted) {
+  // Add 5 documents (doc id 0 to 4).
+  auto [scored_document_hits, document_protos] =
+      AddScoredDocuments({ScoredDocumentInfo("namespace", "uri0"),
+                          ScoredDocumentInfo("namespace", "uri1"),
+                          ScoredDocumentInfo("namespace", "uri2"),
+                          ScoredDocumentInfo("namespace", "uri3"),
+                          ScoredDocumentInfo("namespace", "uri4")});
+
+  std::unique_ptr<ScoredDocumentHitsRanker> ranker = std::make_unique<
+      PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+      std::move(scored_document_hits), /*is_descending=*/true);
+
+  ResultStateManager result_state_manager(
+      /*max_total_hits=*/std::numeric_limits<int>::max());
+
+  // First page, 2 results ("uri4", "uri3").
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info1,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::move(ranker), /*parent_adjustment_info_in=*/nullptr,
+          /*child_adjustment_info_in=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
+          *schema_store_, *document_store_, *result_retriever_,
+          clock_->GetSystemTimeMilliseconds()));
+  ASSERT_THAT(page_result_info1.first, Ne(kInvalidNextPageToken));
+  ASSERT_THAT(page_result_info1.second.results, SizeIs(2));
+  ASSERT_THAT(page_result_info1.second.results.at(0).document().uri(),
+              Eq("uri4"));
+  ASSERT_THAT(page_result_info1.second.results.at(1).document().uri(),
+              Eq("uri3"));
+
+  uint64_t next_page_token = page_result_info1.first;
+
+  // Delete doc ("namespace", "uri1").
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+  ICING_ASSERT_OK(
+      document_store_->Delete("namespace", "uri1", current_time_ms));
+
+  // Optimize the document store.
+  // Remapping:
+  // - 0 -> 0
+  // - 1 -> kInvalidDocumentId
+  // - 2 -> 1
+  // - 3 -> 2
+  // - 4 -> 3
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult doc_store_optimize_result,
+      OptimizeDocumentStore());
+  ASSERT_THAT(doc_store_optimize_result.document_id_old_to_new,
+              ElementsAre(0, kInvalidDocumentId, 1, 2, 3));
+
+  // Optimize ResultStateManager.
+  ResultStateManager::OptimizeResult optimize_result =
+      result_state_manager.Optimize(doc_store_optimize_result);
+  EXPECT_THAT(optimize_result.num_result_states_optimized, Eq(1));
+  EXPECT_THAT(optimize_result.num_result_states_invalidated, Eq(0));
+
+  // Fetch the second page after optimization. Should get "uri2" and "uri0".
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info2,
+      result_state_manager.GetNextPage(
+          next_page_token, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          *result_retriever_, clock_->GetSystemTimeMilliseconds()));
+  EXPECT_THAT(page_result_info2.first, Eq(kInvalidNextPageToken));
+  ASSERT_THAT(page_result_info2.second.results, SizeIs(2));
+  EXPECT_THAT(page_result_info2.second.results.at(0).document().uri(),
+              Eq("uri2"));
+  EXPECT_THAT(page_result_info2.second.results.at(1).document().uri(),
+              Eq("uri0"));
+}
+
+TEST_F(ResultStateManagerTest, Optimize_allRemainingDocumentsAreDeleted) {
+  // Add 5 documents (doc id 0 to 4).
+  auto [scored_document_hits, document_protos] =
+      AddScoredDocuments({ScoredDocumentInfo("namespace", "uri0"),
+                          ScoredDocumentInfo("namespace", "uri1"),
+                          ScoredDocumentInfo("namespace", "uri2"),
+                          ScoredDocumentInfo("namespace", "uri3"),
+                          ScoredDocumentInfo("namespace", "uri4")});
+
+  std::unique_ptr<ScoredDocumentHitsRanker> ranker = std::make_unique<
+      PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+      std::move(scored_document_hits), /*is_descending=*/true);
+
+  ResultStateManager result_state_manager(
+      /*max_total_hits=*/std::numeric_limits<int>::max());
+
+  // First page, 2 results ("uri4", "uri3").
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info1,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::move(ranker), /*parent_adjustment_info_in=*/nullptr,
+          /*child_adjustment_info_in=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/2, ResultSpecProto::NAMESPACE),
+          *schema_store_, *document_store_, *result_retriever_,
+          clock_->GetSystemTimeMilliseconds()));
+  ASSERT_THAT(page_result_info1.first, Ne(kInvalidNextPageToken));
+  ASSERT_THAT(page_result_info1.second.results, SizeIs(2));
+  ASSERT_THAT(page_result_info1.second.results.at(0).document().uri(),
+              Eq("uri4"));
+  ASSERT_THAT(page_result_info1.second.results.at(1).document().uri(),
+              Eq("uri3"));
+
+  uint64_t next_page_token = page_result_info1.first;
+
+  // Delete doc ("namespace", "uri0"), ("namespace", "uri1") and ("namespace",
+  // "uri2").
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+  ICING_ASSERT_OK(
+      document_store_->Delete("namespace", "uri0", current_time_ms));
+  ICING_ASSERT_OK(
+      document_store_->Delete("namespace", "uri1", current_time_ms));
+  ICING_ASSERT_OK(
+      document_store_->Delete("namespace", "uri2", current_time_ms));
+
+  // Optimize the document store.
+  // Remapping:
+  // - 0 -> kInvalidDocumentId
+  // - 1 -> kInvalidDocumentId
+  // - 2 -> kInvalidDocumentId
+  // - 3 -> 0
+  // - 4 -> 1
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult doc_store_optimize_result,
+      OptimizeDocumentStore());
+  ASSERT_THAT(doc_store_optimize_result.document_id_old_to_new,
+              ElementsAre(kInvalidDocumentId, kInvalidDocumentId,
+                          kInvalidDocumentId, 0, 1));
+
+  // Optimize ResultStateManager.
+  ResultStateManager::OptimizeResult optimize_result =
+      result_state_manager.Optimize(doc_store_optimize_result);
+  EXPECT_THAT(optimize_result.num_result_states_optimized, Eq(1));
+  EXPECT_THAT(optimize_result.num_result_states_invalidated, Eq(0));
+
+  // Fetch the second page after optimization.
+  // - next_page_token is still valid, so we should get the second page instead
+  //   of NOT_FOUND error.
+  // - But all the remaining documents have been deleted, so we should get an
+  //   empty page.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info2,
+      result_state_manager.GetNextPage(
+          next_page_token, /*max_results=*/std::numeric_limits<int32_t>::max(),
+          *result_retriever_, clock_->GetSystemTimeMilliseconds()));
+  EXPECT_THAT(page_result_info2.first, Eq(kInvalidNextPageToken));
+  EXPECT_THAT(page_result_info2.second.results, IsEmpty());
+}
+
+TEST_F(ResultStateManagerTest, Optimize_numTotalHits) {
+  // Add 5 documents (doc id 0 to 4).
+  auto [scored_document_hits, document_protos] =
+      AddScoredDocuments({ScoredDocumentInfo("namespace", "uri0"),
+                          ScoredDocumentInfo("namespace", "uri1"),
+                          ScoredDocumentInfo("namespace", "uri2"),
+                          ScoredDocumentInfo("namespace", "uri3"),
+                          ScoredDocumentInfo("namespace", "uri4")});
+
+  // Create state1 with 5 hits ("uri0", "uri1", "uri2", "uri3", "uri4").
+  std::vector<ScoredDocumentHit> scored_doc_hits_vec1 = {
+      scored_document_hits[0], scored_document_hits[1], scored_document_hits[2],
+      scored_document_hits[3], scored_document_hits[4]};
+  std::unique_ptr<ScoredDocumentHitsRanker> ranker1 = std::make_unique<
+      PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+      std::move(scored_doc_hits_vec1), /*is_descending=*/true);
+
+  // Create state2 with 2 hits ("uri0", "uri4").
+  std::vector<ScoredDocumentHit> scored_doc_hits_vec2 = {
+      scored_document_hits[0], scored_document_hits[4]};
+  std::unique_ptr<ScoredDocumentHitsRanker> ranker2 = std::make_unique<
+      PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+      std::move(scored_doc_hits_vec2), /*is_descending=*/true);
+
+  // Create state3 with 4 hits ("uri0", "uri1", "uri2", "uri3").
+  std::vector<ScoredDocumentHit> scored_doc_hits_vec3 = {
+      scored_document_hits[0], scored_document_hits[1], scored_document_hits[2],
+      scored_document_hits[3]};
+  std::unique_ptr<ScoredDocumentHitsRanker> ranker3 = std::make_unique<
+      PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
+      std::move(scored_doc_hits_vec3), /*is_descending=*/true);
+
+  ResultStateManager result_state_manager(
+      /*max_total_hits=*/std::numeric_limits<int>::max());
+
+  // State1, first page, 1 result ("uri4").
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info1,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::move(ranker1), /*parent_adjustment_info_in=*/nullptr,
+          /*child_adjustment_info_in=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          *schema_store_, *document_store_, *result_retriever_,
+          clock_->GetSystemTimeMilliseconds()));
+  ASSERT_THAT(page_result_info1.first, Ne(kInvalidNextPageToken));
+  ASSERT_THAT(page_result_info1.second.results, SizeIs(1));
+  ASSERT_THAT(page_result_info1.second.results.at(0).document().uri(),
+              Eq("uri4"));
+  // num_total_hits_ should be 4, since state1 was added into the cache with 4
+  // remaining hits.
+  ASSERT_THAT(result_state_manager.num_total_hits(), Eq(4));
+
+  // State2, first page, 1 result ("uri4").
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info2,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::move(ranker2), /*parent_adjustment_info_in=*/nullptr,
+          /*child_adjustment_info_in=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          *schema_store_, *document_store_, *result_retriever_,
+          clock_->GetSystemTimeMilliseconds()));
+  ASSERT_THAT(page_result_info2.first, Ne(kInvalidNextPageToken));
+  ASSERT_THAT(page_result_info2.second.results, SizeIs(1));
+  ASSERT_THAT(page_result_info2.second.results.at(0).document().uri(),
+              Eq("uri4"));
+  // num_total_hits_ should be 5, since state2 was added into the cache with 1
+  // remaining hits.
+  ASSERT_THAT(result_state_manager.num_total_hits(), Eq(5));
+
+  // State3, first page, 1 result ("uri3").
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PageResultInfo page_result_info3,
+      result_state_manager.CacheAndRetrieveFirstPage(
+          std::move(ranker3), /*parent_adjustment_info_in=*/nullptr,
+          /*child_adjustment_info_in=*/nullptr,
+          CreateResultSpec(/*num_per_page=*/1, ResultSpecProto::NAMESPACE),
+          *schema_store_, *document_store_, *result_retriever_,
+          clock_->GetSystemTimeMilliseconds()));
+  ASSERT_THAT(page_result_info3.first, Ne(kInvalidNextPageToken));
+  ASSERT_THAT(page_result_info3.second.results, SizeIs(1));
+  ASSERT_THAT(page_result_info3.second.results.at(0).document().uri(),
+              Eq("uri3"));
+  // num_total_hits_ should be 8, since state3 was added into the cache with 3
+  // remaining hits.
+  ASSERT_THAT(result_state_manager.num_total_hits(), Eq(8));
+
+  // There are 3 active result states.
+  int64_t current_time_ms = clock_->GetSystemTimeMilliseconds();
+  ASSERT_THAT(result_state_manager.GetNumActiveResultStates(current_time_ms),
+              Eq(3));
+
+  // Delete doc ("namespace", "uri0"), ("namespace", "uri4").
+  ICING_ASSERT_OK(
+      document_store_->Delete("namespace", "uri0", current_time_ms));
+  ICING_ASSERT_OK(
+      document_store_->Delete("namespace", "uri4", current_time_ms));
+
+  // Optimize the document store.
+  // Remapping:
+  // - 0 -> kInvalidDocumentId
+  // - 1 -> 0
+  // - 2 -> 1
+  // - 3 -> 2
+  // - 4 -> kInvalidDocumentId
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::OptimizeResult doc_store_optimize_result,
+      OptimizeDocumentStore());
+  ASSERT_THAT(doc_store_optimize_result.document_id_old_to_new,
+              ElementsAre(kInvalidDocumentId, 0, 1, 2, kInvalidDocumentId));
+
+  // Optimize ResultStateManager.
+  ResultStateManager::OptimizeResult optimize_result =
+      result_state_manager.Optimize(doc_store_optimize_result);
+  EXPECT_THAT(optimize_result.num_result_states_optimized, Eq(3));
+  EXPECT_THAT(optimize_result.num_result_states_invalidated, Eq(0));
+
+  // - State1: "uri1", "uri2", "uri3" (3 hits)
+  // - State2: X (0 hits)
+  // - State3: "uri1", "uri2" (2 hits)
+  //
+  // So num_total_hits_ should be 5. Still, there should be 3 active result
+  // states even though state2 is empty.
+  EXPECT_THAT(result_state_manager.num_total_hits(), Eq(5));
+  EXPECT_THAT(result_state_manager.GetNumActiveResultStates(current_time_ms),
+              Eq(3));
 }
 
 }  // namespace

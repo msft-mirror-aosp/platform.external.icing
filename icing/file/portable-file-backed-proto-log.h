@@ -54,6 +54,7 @@
 #define ICING_FILE_PORTABLE_FILE_BACKED_PROTO_LOG_H_
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -1524,6 +1525,9 @@ PortableFileBackedProtoLog<ProtoT>::GetIterator() const {
                   /*initial_offset=*/kHeaderReservedBytes, file_size_);
 }
 
+// The number of times to retry reading metadata.
+// Remove this behavior once b/518301754 is fixed.
+static constexpr int kMetadataRetryCount = 3;
 template <typename ProtoT>
 libtextclassifier3::StatusOr<int32_t>
 PortableFileBackedProtoLog<ProtoT>::ReadProtoMetadata(
@@ -1546,9 +1550,18 @@ PortableFileBackedProtoLog<ProtoT>::ReadProtoMetadata(
         static_cast<long long>(file_size)));
   }
 
-  if (filesystem->PRead(fd, &portable_metadata, metadata_size, file_offset) !=
-      metadata_size) {
-    return absl_ports::InternalError("");
+  for (int metadata_retry_count = 0; metadata_retry_count < kMetadataRetryCount;
+       ++metadata_retry_count) {
+    if (filesystem->PRead(fd, &portable_metadata, metadata_size, file_offset) !=
+        metadata_size) {
+      return absl_ports::InternalError("");
+    }
+    if (portable_metadata == 0) {
+      ICING_LOG(WARNING) << "Read 0 metadata at offset " << file_offset
+                     << " retrying for attempt " << metadata_retry_count;
+    } else {
+      break;
+    }
   }
 
   // Need to switch it back to host order endianness after reading from disk.
@@ -1558,8 +1571,10 @@ PortableFileBackedProtoLog<ProtoT>::ReadProtoMetadata(
   uint8_t stored_k_proto_magic = GetProtoMagic(host_order_metadata);
   if (stored_k_proto_magic != kProtoMagic) {
     return absl_ports::InternalError(IcingStringUtil::StringPrintf(
-        "Failed to read kProtoMagic, expected %d, actual %d", kProtoMagic,
-        stored_k_proto_magic));
+        "Failed to read kProtoMagic at location %" PRId64
+        " in file of size %" PRId64 ", expected %d, actual %d. Metadata: %d",
+        file_offset, file_size, kProtoMagic, stored_k_proto_magic,
+        host_order_metadata));
   }
 
   return host_order_metadata;
