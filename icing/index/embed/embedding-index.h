@@ -329,6 +329,29 @@ class EmbeddingIndex : public PersistentStorage {
       const std::vector<DocumentId>& document_id_old_to_new,
       DocumentId new_last_added_document_id) ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Transfers and compacts data into a new embedding index under
+  // new_working_path. Unlike Optimize(), this method does not modify or swap
+  // the current index directory, and writes directly into new_working_path.
+  //
+  // - document_store: used to retrieve document info during transfer.
+  // - schema_store: used to retrieve schema info during transfer.
+  // - new_working_path: destination working path for the optimized index.
+  // - document_id_old_to_new: a map for converting old document id to new
+  //   document id.
+  // - new_last_added_document_id: will be used to update the last added
+  //                               document id in the embedding index.
+  //
+  // Returns:
+  //   - OK on success
+  //   - FAILED_PRECONDITION_ERROR if there are pending uncommitted hits
+  //   - INVALID_ARGUMENT_ERROR if new_working_path is the same as the current
+  //   - INTERNAL_ERROR on IO error
+  libtextclassifier3::Status OptimizeInto(
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      const std::string& new_working_path,
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id) const ICING_LOCKS_EXCLUDED(mutex_);
+
   // Runs or re-runs K-Means and redistributes embeddings into clusters for all
   // existing IVF metadata base keys.
   //
@@ -631,6 +654,15 @@ class EmbeddingIndex : public PersistentStorage {
       const std::vector<DocumentId>& document_id_old_to_new,
       EmbeddingIndex* new_index) const ICING_SHARED_LOCKS_REQUIRED(mutex_)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(new_index->mutex_);
+
+  // Helper method for Optimize and OptimizeInto that builds the optimized
+  // index into new_working_path while holding mutex_.
+  libtextclassifier3::Status OptimizeIntoLocked(
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      const std::string& new_working_path,
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id) const
+      ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
   libtextclassifier3::Status PersistMetadataToDisk() override
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
