@@ -38,8 +38,7 @@ class DocHitInfoIteratorFilter
  public:
   static std::unique_ptr<DocHitInfoIterator> ApplyFilter(
       std::unique_ptr<DocHitInfoIterator> iterator,
-      const DocumentFilterPredicate* predicate,
-      bool enable_passing_filter_to_children);
+      const DocumentFilterPredicate* predicate);
 
   libtextclassifier3::Status Advance() override;
 

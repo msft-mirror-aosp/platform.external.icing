@@ -341,13 +341,37 @@ class LiteIndex {
       const TermIdCodec* term_id_codec, DocumentId new_last_added_document_id)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Transfers and compacts data into a new lite index under new_options.
+  //
+  // This is the first stage of two-stage optimization and requires only a
+  // shared_lock (read lock) on `this`. The live index is never modified or
+  // sorted during this call, so concurrent search queries are not blocked.
+  // Hits and terms from surviving documents are transferred directly into the
+  // newly created index, which is sorted and persisted in the background before
+  // returning.
+  //
+  // This method also sets the last_added_docid of the new index to
+  // new_last_added_document_id.
+  //
+  // Returns:
+  //   OK on success
+  //   INVALID_ARGUMENT if new_options has the same filename_base as the current
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::Status OptimizeInto(
+      const Options& new_options,
+      const std::vector<DocumentId>& document_id_old_to_new,
+      const TermIdCodec* term_id_codec,
+      DocumentId new_last_added_document_id) const ICING_LOCKS_EXCLUDED(mutex_);
+
   // Updates the checksums of all index components, updates the combined
   // checksum and returns it.
-  Crc32 UpdateChecksum() ICING_LOCKS_EXCLUDED(mutex_);
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum()
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Calculates the checksum of the index components and returns the combined
   // checksum.
-  Crc32 GetChecksum() const ICING_LOCKS_EXCLUDED(mutex_);
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const
+      ICING_LOCKS_EXCLUDED(mutex_);
 
  private:
   static IcingDynamicTrie::RuntimeOptions MakeTrieRuntimeOptions();
@@ -382,11 +406,13 @@ class LiteIndex {
 
   // Calculate the checksum of all sub-components of the LiteIndex and set it in
   // the header.
-  Crc32 UpdateChecksumInternal() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksumInternal()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Calculates the checksum of all sub-components of the LiteIndex. Does NOT
   // update the header.
-  Crc32 GetChecksumInternal() const ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  libtextclassifier3::StatusOr<Crc32> GetChecksumInternal() const
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Non-locking implementation for UpdateTermProperties.
   libtextclassifier3::Status UpdateTermPropertiesImpl(uint32_t tvi,
@@ -404,9 +430,7 @@ class LiteIndex {
   //    This is more of a sanity check. We should not really be encountering
   //    this case.
   bool NeedSortAtQuerying() const ICING_SHARED_LOCKS_REQUIRED(mutex_) {
-    return HasUnsortedHitsExceedingSortThresholdImpl() ||
-           (!options_.hit_buffer_sort_at_indexing &&
-            GetHitBufferUnsortedSizeImpl() > 0);
+    return HasUnsortedHitsExceedingSortThresholdImpl();
   }
 
   // Non-locking implementation for HasUnsortedHitsExceedingSortThresholdImpl().

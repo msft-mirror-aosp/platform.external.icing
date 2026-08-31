@@ -158,6 +158,20 @@ TEST(IcuI18nUtilsTest, SafeTruncate) {
   EXPECT_THAT(truncated, Eq("👏ñ"));
 }
 
+TEST(IcuI18nUtilsTest, GetUChar32AtReplacementCharacterAndInvalidUtf8) {
+  // Valid U+FFFD (Unicode replacement character) should return 0xFFFD.
+  constexpr std::string_view kValidReplacementChar = "\xEF\xBF\xBD";
+  EXPECT_EQ(i18n_utils::GetUChar32At(kValidReplacementChar.data(),
+                                     kValidReplacementChar.length(), 0),
+            0xFFFD);
+
+  // Ill-formed UTF-8 sequence should return kInvalidUChar32 (-1).
+  constexpr std::string_view kIllFormedUtf8 = "\xFF";
+  EXPECT_EQ(i18n_utils::GetUChar32At(kIllFormedUtf8.data(),
+                                     kIllFormedUtf8.length(), 0),
+            i18n_utils::kInvalidUChar32);
+}
+
 }  // namespace
 }  // namespace lib
 }  // namespace icing

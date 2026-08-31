@@ -23,6 +23,7 @@
 #include "icing/jni/jni-cache.h"
 #include "icing/jni/scoped-primitive-array-critical.h"
 #include "icing/jni/scoped-utf-chars.h"
+#include "icing/proto/ann.pb.h"
 #include "icing/proto/blob.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/initialize.pb.h"
@@ -354,8 +355,37 @@ void nativeInvalidateNextPageToken(JNIEnv* env, jclass clazz, jobject object,
       GetIcingSearchEnginePointer(env, object);
 
   icing->InvalidateNextPageToken(next_page_token);
+}
 
-  return;
+// TODO(b/384947619) - pre-register this method.
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeHandleExpiredDocuments(
+    JNIEnv* env, jclass clazz, jobject object) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::HandleExpiredDocumentsResultProto result_proto =
+      icing->HandleExpiredDocuments();
+  return SerializeProtoToJniByteArray(env, result_proto);
+}
+
+// TODO(b/448886757) - pre-register this method.
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeMaintainAnnIndex(
+    JNIEnv* env, jclass clazz, jobject object, jbyteArray options_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::MaintainAnnIndexOptions options;
+  if (!ParseProtoFromJniByteArray(env, options_bytes, &options)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse MaintainAnnIndexOptions in nativeMaintainAnnIndex";
+    return nullptr;
+  }
+
+  icing::lib::MaintainAnnIndexResultProto result_proto =
+      icing->MaintainAnnIndex(options);
+  return SerializeProtoToJniByteArray(env, result_proto);
 }
 
 // TODO(b/273591938): Change this API back to the pre-registered API.

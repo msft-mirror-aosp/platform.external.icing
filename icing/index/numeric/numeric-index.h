@@ -156,6 +156,26 @@ class NumericIndex : public PersistentStorage {
       const std::vector<DocumentId>& document_id_old_to_new,
       DocumentId new_last_added_document_id) = 0;
 
+  // Transfers and compacts data into a new numeric index under
+  // new_working_path. Unlike Optimize(), this method does not modify or swap
+  // the current index directory, but instead writes new data directly into
+  // new_working_path.
+  //
+  // - new_working_path: destination working path for the optimized index.
+  // - document_id_old_to_new: a map for converting old document id to new
+  //   document id.
+  // - new_last_added_document_id: will be used to update the last added
+  //                               document id in the numeric index.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if new_working_path is the same as the current
+  //   - Any other errors, depending on the actual implementation
+  virtual libtextclassifier3::Status OptimizeInto(
+      const std::string& new_working_path,
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id) const = 0;
+
   // Clears all data in the integer index and set last_added_document_id to
   // kInvalidDocumentId.
   //
