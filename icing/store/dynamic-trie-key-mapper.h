@@ -86,7 +86,15 @@ class DynamicTrieKeyMapper : public KeyMapper<T, Formatter> {
   std::unique_ptr<typename KeyMapper<T, Formatter>::Iterator> GetIterator()
       const override;
 
-  int32_t num_keys() const override { return trie_.size(); }
+  int32_t num_keys() const override {
+    auto size_or = trie_.size();
+    if (!size_or.ok()) {
+      ICING_LOG(ERROR) << "Failed to get size of DynamicTrieKeyMapper: "
+                       << size_or.status().error_message();
+      return 0;
+    }
+    return static_cast<int32_t>(size_or.ValueOrDie());
+  }
 
   libtextclassifier3::Status PersistToDisk() override;
 
@@ -214,15 +222,8 @@ libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Initialize(
       sizeof(IcingDynamicTrie::Node) * options.max_nodes;
   options.value_size = sizeof(T);
 
-  if (!trie_.CreateIfNotExist(options)) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Failed to create DynamicTrieKeyMapper file: ", file_prefix_));
-  }
-  if (!trie_.Init()) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Failed to init DynamicTrieKeyMapper file: ", file_prefix_));
-  }
-  return libtextclassifier3::Status::OK;
+  ICING_RETURN_IF_ERROR(trie_.CreateIfNotExist(options));
+  return trie_.Init();
 }
 
 template <typename T, typename Formatter>
@@ -241,8 +242,8 @@ libtextclassifier3::StatusOr<T> DynamicTrieKeyMapper<T, Formatter>::GetOrPut(
   // This memory address could be unaligned since we're just grabbing the value
   // from somewhere in the trie's suffix array. The suffix array is filled with
   // chars, so the address might not be aligned to T values.
-  const T* unaligned_value =
-      static_cast<const T*>(trie_.GetValueAtIndex(value_index));
+  ICING_ASSIGN_OR_RETURN(const void* unaligned_value,
+                         trie_.GetValueAtIndex(value_index));
 
   // memcpy the value to ensure that the returned value here is in a T-aligned
   // address
@@ -290,12 +291,7 @@ DynamicTrieKeyMapper<T, Formatter>::GetIterator() const {
 
 template <typename T, typename Formatter>
 libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::PersistToDisk() {
-  if (!trie_.Sync()) {
-    return absl_ports::InternalError(absl_ports::StrCat(
-        "Failed to sync DynamicTrieKeyMapper file: ", file_prefix_));
-  }
-
-  return libtextclassifier3::Status::OK;
+  return trie_.Sync();
 }
 
 template <typename T, typename Formatter>

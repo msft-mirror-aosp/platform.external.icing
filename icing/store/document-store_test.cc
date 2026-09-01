@@ -52,6 +52,7 @@
 #include "icing/store/corpus-id.h"
 #include "icing/store/document-associated-score-data.h"
 #include "icing/store/document-filter-data.h"
+#include "icing/store/document-group-info.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-log-creator.h"
 #include "icing/store/namespace-id-fingerprint.h"
@@ -90,18 +91,10 @@ using ::testing::IsTrue;
 using ::testing::Ne;
 using ::testing::Not;
 using ::testing::Optional;
+using ::testing::Pair;
 using ::testing::Pointee;
 using ::testing::Return;
 using ::testing::UnorderedElementsAre;
-
-using ResultSpecProto::ResultGroupingType::
-    ResultSpecProto_ResultGroupingType_NAMESPACE;
-using ResultSpecProto::ResultGroupingType::
-    ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE;
-using ResultSpecProto::ResultGroupingType::
-    ResultSpecProto_ResultGroupingType_NONE;
-using ResultSpecProto::ResultGroupingType::
-    ResultSpecProto_ResultGroupingType_SCHEMA_TYPE;
 
 const NamespaceStorageInfoProto& GetNamespaceStorageInfo(
     const DocumentStorageInfoProto& storage_info,
@@ -755,7 +748,10 @@ TEST_P(DocumentStoreTest, ForceDeleteAlreadyDeletedDocumentReturnsNotFound) {
   ASSERT_TRUE(document_store->GetNonDeletedDocumentFilterData(document_id));
 
   // First time is OK
-  ICING_ASSERT_OK(document_store->ForceDelete(document_id));
+  EXPECT_THAT(document_store->ForceDelete(document_id),
+              IsOkAndHolds(EqualsDocumentMetadata(
+                  test_document1_.schema(), test_document1_.namespace_(),
+                  test_document1_.uri(), document_id)));
 
   // Deleting it again should get NOT_FOUND.
   EXPECT_THAT(document_store->ForceDelete(document_id),
@@ -1397,14 +1393,15 @@ TEST_P(DocumentStoreTest, PurgeExpiredDocuments) {
   DocumentId doc_id5 = put_result5.new_document_id;
 
   // Purge expired documents at t = 1200. doc2, doc3, doc5 should be purged.
-  EXPECT_THAT(document_store->PurgeExpiredDocuments(/*current_time_ms=*/1200),
-              IsOkAndHolds(ElementsAre(
-                  EqualsDocumentMetadata(doc2.schema(), doc2.namespace_(),
-                                         doc2.uri(), doc_id2),
-                  EqualsDocumentMetadata(doc3.schema(), doc3.namespace_(),
-                                         doc3.uri(), doc_id3),
-                  EqualsDocumentMetadata(doc5.schema(), doc5.namespace_(),
-                                         doc5.uri(), doc_id5))));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo expired_docs_group_info,
+      document_store->PurgeExpiredDocuments(/*current_time_ms=*/1200));
+  EXPECT_THAT(expired_docs_group_info.Get(),
+              UnorderedElementsAre(
+                  Pair(EqualsDocumentGroupKey("email", "namespace"),
+                       ElementsAre(EqualsDocumentUriId(doc2.uri(), doc_id2),
+                                   EqualsDocumentUriId(doc3.uri(), doc_id3),
+                                   EqualsDocumentUriId(doc5.uri(), doc_id5)))));
   EXPECT_TRUE(document_store->GetNonDeletedDocumentFilterData(doc_id1));
   EXPECT_FALSE(document_store->GetNonDeletedDocumentFilterData(doc_id2));
   EXPECT_FALSE(document_store->GetNonDeletedDocumentFilterData(doc_id3));
@@ -1478,12 +1475,14 @@ TEST_P(DocumentStoreTest, PurgeExpiredDocuments_shouldSkipDeletedDocuments) {
 
   // Purge expired documents at t = 1200. doc2, doc5 should be purged. Since
   // doc3 was already deleted, it should be skipped.
-  EXPECT_THAT(document_store->PurgeExpiredDocuments(/*current_time_ms=*/1200),
-              IsOkAndHolds(ElementsAre(
-                  EqualsDocumentMetadata(doc2.schema(), doc2.namespace_(),
-                                         doc2.uri(), doc_id2),
-                  EqualsDocumentMetadata(doc5.schema(), doc5.namespace_(),
-                                         doc5.uri(), doc_id5))));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo expired_docs_group_info,
+      document_store->PurgeExpiredDocuments(/*current_time_ms=*/1200));
+  EXPECT_THAT(expired_docs_group_info.Get(),
+              UnorderedElementsAre(
+                  Pair(EqualsDocumentGroupKey("email", "namespace"),
+                       ElementsAre(EqualsDocumentUriId(doc2.uri(), doc_id2),
+                                   EqualsDocumentUriId(doc5.uri(), doc_id5)))));
   EXPECT_TRUE(document_store->GetNonDeletedDocumentFilterData(doc_id1));
   EXPECT_FALSE(document_store->GetNonDeletedDocumentFilterData(doc_id2));
   EXPECT_FALSE(document_store->GetNonDeletedDocumentFilterData(doc_id3));
@@ -1494,27 +1493,10 @@ TEST_P(DocumentStoreTest, PurgeExpiredDocuments_shouldSkipDeletedDocuments) {
 TEST_P(DocumentStoreTest,
        PurgeExpiredDocuments_shouldPurgeDocumentsThatExpireWithinThreshold) {
   auto custom_feature_flags = std::make_unique<FeatureFlags>(
-      /*enable_circular_schema_definitions=*/true,
-      /*enable_scorable_properties=*/true,
-      /*enable_embedding_quantization=*/true,
-      /*enable_repeated_field_joins=*/true,
-      /*enable_embedding_backup_generation=*/true,
-      /*enable_schema_database=*/true,
-      /*release_backup_schema_file_if_overlay_present=*/true,
-      /*enable_strict_page_byte_size_limit=*/true,
-      /*enable_smaller_decompression_buffer_size=*/true,
-      /*enable_eigen_embedding_scoring=*/true,
-      /*enable_passing_filter_to_children=*/true,
-      /*enable_proto_log_new_header_format=*/true,
-      /*enable_embedding_iterator_v2=*/true,
-      /*enable_reusable_decompression_buffer=*/true,
-      /*enable_schema_type_id_optimization=*/true,
-      /*enable_optimize_improvements=*/true,
-      /*expired_document_purge_threshold_ms=*/1000,  // 1 second
-      /*enable_non_existent_qualified_id_join=*/true,
-      /*enable_skip_set_schema_type_equality_check=*/true,
-      /*enable_embed_query_optimization=*/true,
-      /*enable_schema_definition_deduping=*/true);
+      FeatureFlagsBuilder(GetTestFeatureFlags())
+          .set_expired_document_purge_threshold_ms(1000)  // 1 second
+          .Build());
+
   ICING_ASSERT_OK_AND_ASSIGN(
       DocumentStore::CreateResult create_result,
       DocumentStore::Create(
@@ -1575,14 +1557,15 @@ TEST_P(DocumentStoreTest,
 
   // Purge expired documents at t = 2000. doc1, doc2, doc4 should be purged.
   // Doc3 should still be alive.
-  EXPECT_THAT(document_store->PurgeExpiredDocuments(/*current_time_ms=*/2000),
-              IsOkAndHolds(ElementsAre(
-                  EqualsDocumentMetadata(doc1.schema(), doc1.namespace_(),
-                                         doc1.uri(), doc_id1),
-                  EqualsDocumentMetadata(doc2.schema(), doc2.namespace_(),
-                                         doc2.uri(), doc_id2),
-                  EqualsDocumentMetadata(doc4.schema(), doc4.namespace_(),
-                                         doc4.uri(), doc_id4))));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentGroupInfo expired_docs_group_info,
+      document_store->PurgeExpiredDocuments(/*current_time_ms=*/2000));
+  EXPECT_THAT(expired_docs_group_info.Get(),
+              UnorderedElementsAre(
+                  Pair(EqualsDocumentGroupKey("email", "namespace"),
+                       ElementsAre(EqualsDocumentUriId(doc1.uri(), doc_id1),
+                                   EqualsDocumentUriId(doc2.uri(), doc_id2),
+                                   EqualsDocumentUriId(doc4.uri(), doc_id4)))));
   EXPECT_FALSE(document_store->GetNonDeletedDocumentFilterData(doc_id1));
   EXPECT_FALSE(document_store->GetNonDeletedDocumentFilterData(doc_id2));
   EXPECT_TRUE(document_store->GetNonDeletedDocumentFilterData(doc_id3));
@@ -4505,7 +4488,7 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreUpdatesSchemaTypeIds) {
   // - No documents should be deleted since 'dummy' type did not have any
   //   documents.
   // - The derived files should be changed.
-  EXPECT_THAT(update_result.deleted_document_count, Eq(0));
+  EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
   EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
   // Check that the FilterCache holds the new SchemaTypeIds
@@ -4606,6 +4589,18 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreDeletesInvalidDocuments) {
   // - email_without_subject should be deleted since the new required property
   //   is missing.
   // - The derived files should be changed.
+  if (feature_flags_->enable_delete_propagation_from()) {
+    EXPECT_THAT(update_result.deleted_doc_group_info.Get(),
+                UnorderedElementsAre(Pair(
+                    EqualsDocumentGroupKey(email_without_subject.schema(),
+                                           email_without_subject.namespace_()),
+                    ElementsAre(EqualsDocumentUriId(
+                        email_without_subject.uri(),
+                        email_without_subject_document_id)))));
+    EXPECT_THAT(update_result.deleted_doc_group_info.GetTotalNumDocs(), Eq(1));
+  } else {
+    EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
+  }
   EXPECT_THAT(update_result.deleted_document_count, Eq(1));
   EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
@@ -4695,6 +4690,17 @@ TEST_P(DocumentStoreTest,
       document_store->UpdateSchemaStore(schema_store.get()));
   // - email should be deleted.
   // - The derived files should be changed.
+  if (feature_flags_->enable_delete_propagation_from()) {
+    EXPECT_THAT(update_result.deleted_doc_group_info.Get(),
+                UnorderedElementsAre(
+                    Pair(EqualsDocumentGroupKey(email_document.schema(),
+                                                email_document.namespace_()),
+                         ElementsAre(EqualsDocumentUriId(email_document.uri(),
+                                                         email_document_id)))));
+    EXPECT_THAT(update_result.deleted_doc_group_info.GetTotalNumDocs(), Eq(1));
+  } else {
+    EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
+  }
   EXPECT_THAT(update_result.deleted_document_count, Eq(1));
   EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
@@ -4773,7 +4779,7 @@ TEST_P(DocumentStoreTest, UpdateSchemaStoreWithFullyCompatibleDocumentStore) {
   // - No document is deleted since there were no documents with "message"
   //   schema type.
   // - The derived files should be UNCHANGED.
-  EXPECT_THAT(update_result.deleted_document_count, Eq(0));
+  EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
   EXPECT_THAT(update_result.derived_files_changed, IsFalse());
 
   // The "email" document should be unaffected
@@ -4880,7 +4886,7 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreUpdatesSchemaTypeIds) {
   // - No documents should be deleted since 'dummy' type did not have any
   //   documents.
   // - The derived files should be changed.
-  EXPECT_THAT(update_result.deleted_document_count, Eq(0));
+  EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
   EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
   // Check that the FilterCache holds the new SchemaTypeIds
@@ -4984,6 +4990,18 @@ TEST_P(DocumentStoreTest, OptimizedUpdateSchemaStoreDeletesInvalidDocuments) {
   // - email_without_subject should be deleted since the new required property
   //   is missing.
   // - The derived files should be changed.
+  if (feature_flags_->enable_delete_propagation_from()) {
+    EXPECT_THAT(update_result.deleted_doc_group_info.Get(),
+                UnorderedElementsAre(Pair(
+                    EqualsDocumentGroupKey(email_without_subject.schema(),
+                                           email_without_subject.namespace_()),
+                    ElementsAre(EqualsDocumentUriId(
+                        email_without_subject.uri(),
+                        email_without_subject_document_id)))));
+    EXPECT_THAT(update_result.deleted_doc_group_info.GetTotalNumDocs(), Eq(1));
+  } else {
+    EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
+  }
   EXPECT_THAT(update_result.deleted_document_count, Eq(1));
   EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
@@ -5075,6 +5093,17 @@ TEST_P(DocumentStoreTest,
                                                  set_schema_result));
   // - email should be deleted.
   // - The derived files should be changed.
+  if (feature_flags_->enable_delete_propagation_from()) {
+    EXPECT_THAT(update_result.deleted_doc_group_info.Get(),
+                UnorderedElementsAre(
+                    Pair(EqualsDocumentGroupKey(email_document.schema(),
+                                                email_document.namespace_()),
+                         ElementsAre(EqualsDocumentUriId(email_document.uri(),
+                                                         email_document_id)))));
+    EXPECT_THAT(update_result.deleted_doc_group_info.GetTotalNumDocs(), Eq(1));
+  } else {
+    EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
+  }
   EXPECT_THAT(update_result.deleted_document_count, Eq(1));
   EXPECT_THAT(update_result.derived_files_changed, IsTrue());
 
@@ -5155,7 +5184,7 @@ TEST_P(DocumentStoreTest,
   // - No document is deleted since there were no documents with "message"
   //   schema type.
   // - The derived files should be UNCHANGED.
-  EXPECT_THAT(update_result.deleted_document_count, Eq(0));
+  EXPECT_THAT(update_result.deleted_doc_group_info, IsEmpty());
   EXPECT_THAT(update_result.derived_files_changed, IsFalse());
 
   // The "email" document should be unaffected
@@ -5839,8 +5868,7 @@ TEST_P(DocumentStoreTest, DetectCompleteDataLoss) {
 
     // Set dirty bit to true to reflect that something changed in the log.
     header.SetDirtyFlag(true);
-    header.UpdateHeaderChecksums(
-        feature_flags_->enable_proto_log_new_header_format());
+    header.UpdateHeaderChecksums();
 
     WriteDocumentLogHeader(filesystem_, document_log_file, header);
   }
@@ -7688,445 +7716,6 @@ TEST_P(DocumentStoreTest,
   EXPECT_THAT(
       scorable_property_set1->GetScorablePropertyProto("score"),
       Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({10, 20}))));
-}
-
-TEST_P(DocumentStoreTest, GetResultGroupingEntryId_getByFilterName) {
-  // Put 2 schema types into the schema store.
-  SchemaProto schema =
-      SchemaBuilder()
-          .AddType(SchemaTypeConfigBuilder().SetType("Email"))
-          .AddType(SchemaTypeConfigBuilder().SetType("Message"))
-          .Build();
-
-  std::string schema_store_dir = schema_store_dir_ + "_custom";
-  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
-  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
-                          feature_flags_.get()));
-
-  ICING_ASSERT_OK(schema_store->SetSchema(
-      std::move(schema), /*ignore_errors_and_delete_documents=*/false));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-
-  // Put 3 documents into the document store to create 3 different namespaces.
-  DocumentProto document0 = DocumentBuilder()
-                                .SetKey("namespace0", "uri/0")
-                                .SetSchema("Email")
-                                .Build();
-  DocumentProto document1 = DocumentBuilder()
-                                .SetKey("namespace1", "uri/1")
-                                .SetSchema("Message")
-                                .Build();
-  DocumentProto document2 = DocumentBuilder()
-                                .SetKey("namespace2", "uri/2")
-                                .SetSchema("Message")
-                                .Build();
-  ICING_ASSERT_OK(document_store->Put(
-      document_util::CreateDocumentWrapper(std::move(document0))));
-  ICING_ASSERT_OK(document_store->Put(
-      document_util::CreateDocumentWrapper(std::move(document1))));
-  ICING_ASSERT_OK(document_store->Put(
-      document_util::CreateDocumentWrapper(std::move(document2))));
-
-  ASSERT_THAT(document_store->GetNamespaceId("namespace0"), IsOkAndHolds(0));
-  ASSERT_THAT(document_store->GetNamespaceId("namespace1"), IsOkAndHolds(1));
-  ASSERT_THAT(document_store->GetNamespaceId("namespace2"), IsOkAndHolds(2));
-
-  ASSERT_THAT(schema_store->GetSchemaTypeId("Email"), IsOkAndHolds(0));
-  ASSERT_THAT(schema_store->GetSchemaTypeId("Message"), IsOkAndHolds(1));
-
-  // NONE should always return std::nullopt.
-  EXPECT_THAT(
-      document_store->GetResultGroupingEntryId(
-          ResultSpecProto_ResultGroupingType_NONE, "namespace0", "Email"),
-      IsFalse());
-  EXPECT_THAT(
-      document_store->GetResultGroupingEntryId(
-          ResultSpecProto_ResultGroupingType_NONE, "namespace1", "Email"),
-      IsFalse());
-  EXPECT_THAT(
-      document_store->GetResultGroupingEntryId(
-          ResultSpecProto_ResultGroupingType_NONE, "namespace2", "Email"),
-      IsFalse());
-  EXPECT_THAT(
-      document_store->GetResultGroupingEntryId(
-          ResultSpecProto_ResultGroupingType_NONE, "namespace0", "Message"),
-      IsFalse());
-  EXPECT_THAT(
-      document_store->GetResultGroupingEntryId(
-          ResultSpecProto_ResultGroupingType_NONE, "namespace1", "Message"),
-      IsFalse());
-  EXPECT_THAT(
-      document_store->GetResultGroupingEntryId(
-          ResultSpecProto_ResultGroupingType_NONE, "namespace2", "Message"),
-      IsFalse());
-
-  // SCHEMA_TYPE should return id based on the schema type and ignore the
-  // namespace.
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE, "namespace0",
-                  "Email"),
-              Optional(Eq(0)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE, "namespace1",
-                  "Email"),
-              Optional(Eq(0)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE, "namespace2",
-                  "Email"),
-              Optional(Eq(0)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE, "namespace0",
-                  "Message"),
-              Optional(Eq(1)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE, "namespace1",
-                  "Message"),
-              Optional(Eq(1)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE, "namespace2",
-                  "Message"),
-              Optional(Eq(1)));
-
-  // NAMESPACE should return id based on the namespace and ignore the schema
-  // type.
-  EXPECT_THAT(
-      document_store->GetResultGroupingEntryId(
-          ResultSpecProto_ResultGroupingType_NAMESPACE, "namespace0", "Email"),
-      Optional(Eq(0)));
-  EXPECT_THAT(
-      document_store->GetResultGroupingEntryId(
-          ResultSpecProto_ResultGroupingType_NAMESPACE, "namespace1", "Email"),
-      Optional(Eq(1)));
-  EXPECT_THAT(
-      document_store->GetResultGroupingEntryId(
-          ResultSpecProto_ResultGroupingType_NAMESPACE, "namespace2", "Email"),
-      Optional(Eq(2)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE, "namespace0",
-                  "Message"),
-              Optional(Eq(0)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE, "namespace1",
-                  "Message"),
-              Optional(Eq(1)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE, "namespace2",
-                  "Message"),
-              Optional(Eq(2)));
-
-  // NAMESPACE_AND_SCHEMA_TYPE should return id based on both namespace and
-  // schema type.
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  "namespace0", "Email"),
-              Optional(Eq(0x00000000)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  "namespace1", "Email"),
-              Optional(Eq(0x00010000)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  "namespace2", "Email"),
-              Optional(Eq(0x00020000)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  "namespace0", "Message"),
-              Optional(Eq(0x00000001)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  "namespace1", "Message"),
-              Optional(Eq(0x00010001)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  "namespace2", "Message"),
-              Optional(Eq(0x00020001)));
-}
-
-TEST_P(DocumentStoreTest, GetResultGroupingEntryId_getByNonExistingFilterName) {
-  // Put 1 schema type into the schema store.
-  SchemaProto schema = SchemaBuilder()
-                           .AddType(SchemaTypeConfigBuilder().SetType("Email"))
-                           .Build();
-
-  std::string schema_store_dir = schema_store_dir_ + "_custom";
-  filesystem_.DeleteDirectoryRecursively(schema_store_dir.c_str());
-  filesystem_.CreateDirectoryRecursively(schema_store_dir.c_str());
-  ICING_ASSERT_OK_AND_ASSIGN(
-      std::unique_ptr<SchemaStore> schema_store,
-      SchemaStore::Create(&filesystem_, schema_store_dir, &fake_clock_,
-                          feature_flags_.get()));
-
-  ICING_ASSERT_OK(schema_store->SetSchema(
-      std::move(schema), /*ignore_errors_and_delete_documents=*/false));
-
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-
-  // Put 1 document into the document store to create 1 namespace.
-  DocumentProto document0 = DocumentBuilder()
-                                .SetKey("namespace0", "uri/0")
-                                .SetSchema("Email")
-                                .Build();
-  ICING_ASSERT_OK(document_store->Put(
-      document_util::CreateDocumentWrapper(std::move(document0))));
-
-  ASSERT_THAT(document_store->GetNamespaceId("namespace0"), IsOkAndHolds(0));
-  ASSERT_THAT(schema_store->GetSchemaTypeId("Email"), IsOkAndHolds(0));
-
-  // NONE should always return std::nullopt.
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NONE,
-                  "nonExistingNamespace", "nonExistingSchemaType"),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NONE,
-                  "nonExistingNamespace", "Email"),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NONE, "namespace0",
-                  "nonExistingSchemaType"),
-              IsFalse());
-
-  // SCHEMA_TYPE should return id based on the schema type and ignore the
-  // namespace. It is ok that the namespace does not exist.
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE,
-                  "nonExistingNamespace", "nonExistingSchemaType"),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE,
-                  "nonExistingNamespace", "Email"),
-              Optional(Eq(0)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE, "namespace0",
-                  "nonExistingSchemaType"),
-              IsFalse());
-
-  // NAMESPACE should return id based on the namespace and ignore the schema
-  // type. It is ok that the schema type does not exist.
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE,
-                  "nonExistingNamespace", "nonExistingSchemaType"),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE,
-                  "nonExistingNamespace", "Email"),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE, "namespace0",
-                  "nonExistingSchemaType"),
-              Optional(Eq(0)));
-
-  // NAMESPACE_AND_SCHEMA_TYPE should return id based on both namespace and
-  // schema type. Both namespace and schema type must exist.
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  "nonExistingNamespace", "nonExistingSchemaType"),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  "nonExistingNamespace", "Email"),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  "namespace0", "nonExistingSchemaType"),
-              IsFalse());
-}
-
-TEST_P(DocumentStoreTest, GetResultGroupingEntryId_getByIds) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-
-  // GetResultGroupingEntryId() by id only handles the encoding and won't check
-  // if the id exists (except kInvalidNamespaceId and kInvalidSchemaTypeId), so
-  // we don't need to set up schema types and namespaces here.
-
-  // NONE should always return std::nullopt.
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NONE, /*namespace_id=*/0,
-                  /*schema_type_id=*/0),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NONE, /*namespace_id=*/0,
-                  /*schema_type_id=*/1),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NONE, /*namespace_id=*/1,
-                  /*schema_type_id=*/0),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NONE, /*namespace_id=*/1,
-                  /*schema_type_id=*/1),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NONE,
-                  /*namespace_id=*/std::numeric_limits<NamespaceId>::max(),
-                  /*schema_type_id=*/std::numeric_limits<SchemaTypeId>::max()),
-              IsFalse());
-
-  // SCHEMA_TYPE should return id based on the schema type id and ignore the
-  // namespace id.
-  EXPECT_THAT(
-      document_store->GetResultGroupingEntryId(
-          ResultSpecProto_ResultGroupingType_SCHEMA_TYPE, /*namespace_id=*/0,
-          /*schema_type_id=*/0),
-      Optional(Eq(0)));
-  EXPECT_THAT(
-      document_store->GetResultGroupingEntryId(
-          ResultSpecProto_ResultGroupingType_SCHEMA_TYPE, /*namespace_id=*/0,
-          /*schema_type_id=*/1),
-      Optional(Eq(1)));
-  EXPECT_THAT(
-      document_store->GetResultGroupingEntryId(
-          ResultSpecProto_ResultGroupingType_SCHEMA_TYPE, /*namespace_id=*/1,
-          /*schema_type_id=*/0),
-      Optional(Eq(0)));
-  EXPECT_THAT(
-      document_store->GetResultGroupingEntryId(
-          ResultSpecProto_ResultGroupingType_SCHEMA_TYPE, /*namespace_id=*/1,
-          /*schema_type_id=*/1),
-      Optional(Eq(1)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE,
-                  /*namespace_id=*/std::numeric_limits<NamespaceId>::max(),
-                  /*schema_type_id=*/std::numeric_limits<SchemaTypeId>::max()),
-              Optional(Eq(std::numeric_limits<SchemaTypeId>::max())));
-
-  // NAMESPACE should return id based on the namespace id and ignore the schema
-  // type id.
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE,
-                  /*namespace_id=*/0, /*schema_type_id=*/0),
-              Optional(Eq(0)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE,
-                  /*namespace_id=*/0, /*schema_type_id=*/1),
-              Optional(Eq(0)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE,
-                  /*namespace_id=*/1, /*schema_type_id=*/0),
-              Optional(Eq(1)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE,
-                  /*namespace_id=*/1, /*schema_type_id=*/1),
-              Optional(Eq(1)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE,
-                  /*namespace_id=*/std::numeric_limits<NamespaceId>::max(),
-                  /*schema_type_id=*/std::numeric_limits<SchemaTypeId>::max()),
-              Optional(Eq(std::numeric_limits<NamespaceId>::max())));
-
-  // NAMESPACE_AND_SCHEMA_TYPE should return id based on both namespace and
-  // schema type ids.
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  /*namespace_id=*/0, /*schema_type_id=*/0),
-              Optional(Eq(0x00000000)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  /*namespace_id=*/0, /*schema_type_id=*/1),
-              Optional(Eq(0x00000001)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  /*namespace_id=*/1, /*schema_type_id=*/0),
-              Optional(Eq(0x00010000)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  /*namespace_id=*/1, /*schema_type_id=*/1),
-              Optional(Eq(0x00010001)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  /*namespace_id=*/std::numeric_limits<NamespaceId>::max(),
-                  /*schema_type_id=*/std::numeric_limits<SchemaTypeId>::max()),
-              Optional(Eq(0x7fff7fff)));
-}
-
-TEST_P(DocumentStoreTest, GetResultGroupingEntryId_getByInvalidIds) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::CreateResult create_result,
-      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
-                          schema_store_.get()));
-  std::unique_ptr<DocumentStore> document_store =
-      std::move(create_result.document_store);
-
-  // GetResultGroupingEntryId() by id only handles the encoding and won't check
-  // if the id exists (except kInvalidNamespaceId and kInvalidSchemaTypeId), so
-  // we don't need to set up schema types and namespaces here.
-
-  // NONE should always return std::nullopt.
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NONE, kInvalidNamespaceId,
-                  kInvalidSchemaTypeId),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NONE, kInvalidNamespaceId,
-                  /*schema_type_id=*/0),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NONE, /*namespace_id=*/0,
-                  kInvalidSchemaTypeId),
-              IsFalse());
-
-  // SCHEMA_TYPE should return id based on the schema type id and ignore the
-  // namespace id. It is ok that the namespace id is invalid.
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE,
-                  kInvalidNamespaceId, kInvalidSchemaTypeId),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE,
-                  kInvalidNamespaceId, /*schema_type_id=*/0),
-              Optional(Eq(0)));
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_SCHEMA_TYPE,
-                  /*namespace_id=*/0, kInvalidSchemaTypeId),
-              IsFalse());
-
-  // NAMESPACE should return id based on the namespace id and ignore the schema
-  // type id. It is ok that the schema type id is invalid.
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE,
-                  kInvalidNamespaceId, kInvalidSchemaTypeId),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE,
-                  kInvalidNamespaceId, /*schema_type_id=*/0),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE,
-                  /*namespace_id=*/0, kInvalidSchemaTypeId),
-              Optional(Eq(0)));
-  // NAMESPACE_AND_SCHEMA_TYPE should return id based on both namespace and
-  // schema type ids. Both namespace and schema type ids must be valid.
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  kInvalidNamespaceId, kInvalidSchemaTypeId),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  kInvalidNamespaceId, /*schema_type_id=*/0),
-              IsFalse());
-  EXPECT_THAT(document_store->GetResultGroupingEntryId(
-                  ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE,
-                  /*namespace_id=*/0, kInvalidSchemaTypeId),
-              IsFalse());
 }
 
 INSTANTIATE_TEST_SUITE_P(
