@@ -149,13 +149,42 @@ message IcingSearchEngineMarkerProto {
   optional OperationType.Code operation_type = 1;
 }
 
-// Next tag: 62
+// Config options and flags for IcingSearchEngine.
+// - Each field MUST be tagged:
+//   - Required: either CONFIG_OPTION or PURE_ROLLOUT_FLAG.
+//   - Optional: DATA_FEATURE.
+// - Explanation for each tag:
+//   - CONFIG_OPTION: the field is a configuration option for IcingSearchEngine.
+//     - Integer, string fields for configuration.
+//     - Some boolean fields may also be tagged as CONFIG_OPTION. It is usually
+//       rolled out by a (trunk stable) flag, but once it is fully rolled out,
+//       it MUST NOT be deprecated and should still be kept in the proto.
+//       Usually it is because of the rollback compatibility issues from
+//       framework AppSearch, so framework AppSearch may still pass different
+//       values for the field.
+//     - MUST be mutually exclusive with PURE_ROLLOUT_FLAG.
+//   - PURE_ROLLOUT_FLAG: the field is a pure boolean flag for rolling out a
+//     new feature or bugfix.
+//     - After fully rolled out, the field will be deprecated and have default
+//       value true. For example, a bugfix that requires a new code path to be
+//       executed would be a PURE_ROLLOUT_FLAG.
+//     - MUST be mutually exclusive with CONFIG_OPTION.
+//   - DATA_FEATURE: the field affects the content of the Icing data.
+//     - It is used to handle trunk stable flag rollback and rollforward in
+//       framework AppSearch.
+//     - If the field is changed, then derived files should be rebuilt or ground
+//       truth data requires migration.
+//     - In this case, a corresponding field in
+//       IcingSearchEngineFeatureInfoProto is required to be set.
+// Next tag: 64
 message IcingSearchEngineOptions {
+  // [CONFIG_OPTION]
   // Directory to persist files for Icing. Required.
   // If Icing was previously initialized with this directory, it will reload
   // the index saved by the last instance.
   optional string base_dir = 1;
 
+  // [CONFIG_OPTION]
   // The maximum allowable token length. All tokens in excess of this size
   // will be truncated to max_token_length before being indexed.
   //
@@ -169,6 +198,7 @@ message IcingSearchEngineOptions {
   // Optional.
   optional int32 max_token_length = 3 [default = 30];
 
+  // [CONFIG_OPTION]
   // The size (measured in bytes) at which Icing's internal indices should be
   // merged. Icing buffers changes together before merging them into a more
   // compact format. When the buffer exceeds index_merge_size during a Put
@@ -184,10 +214,20 @@ message IcingSearchEngineOptions {
   // Optional.
   optional int32 index_merge_size = 4 [default = 1048576];  // 1 MiB
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to use namespace id or namespace name to build up fingerprint for
   // document_key_mapper_ and corpus_mapper_ in document store.
-  optional bool document_store_namespace_id_fingerprint = 5;
+  //
+  // This is a security fix to prevent cross namespace access attack by
+  // concatenating namespace name with document URI to form the same key.
+  //
+  // DEPRECATED: The flag is always treated as true, and even if it is set to
+  // false, there will be no effect because the code will still use namespace id
+  // to build up fingerprint.
+  optional bool document_store_namespace_id_fingerprint = 5
+      [deprecated = true, default = true];
 
+  // [CONFIG_OPTION]
   // The threshold of the percentage of invalid documents to rebuild index
   // during optimize, i.e. we rebuild index if and only if
   // |invalid_documents| / |all_documents| >= optimize_rebuild_index_threshold
@@ -199,12 +239,14 @@ message IcingSearchEngineOptions {
   // Default to 0 for better rollout of the new index optimize.
   optional float optimize_rebuild_index_threshold = 6 [default = 0.0];
 
+  // [CONFIG_OPTION]
   // Level of compression, NO_COMPRESSION = 0, BEST_SPEED = 1,
   // BEST_COMPRESSION = 9
   // Valid values: [0, 9]
   // Optional.
   optional int32 compression_level = 7 [default = 3];
 
+  // [CONFIG_OPTION]
   // Memory level for compression.
   // 1 uses minimum memory but is slow and reduces compression ratio; 9 uses
   // maximum memory for optimal speed and compression ratio.
@@ -215,6 +257,7 @@ message IcingSearchEngineOptions {
   // Optional.
   optional int32 compression_mem_level = 37 [default = 8];
 
+  // [CONFIG_OPTION]
   // OPTIONAL: Whether to allow circular references between schema types for
   // the schema definition.
   //
@@ -228,17 +271,29 @@ message IcingSearchEngineOptions {
   //
   optional bool allow_circular_schema_definitions = 8;
 
+  // [CONFIG_OPTION]
   // Whether memory map max possible file size for FileBackedVector before
   // growing the actual file size.
+  //
+  // Pre-mapping the file could improve the performance of cache hits, but it
+  // would consume too much virtual memory space.
   optional bool pre_mapping_fbv = 9;
 
-  // Whether use persistent hash map as the key mapper (if false, then fall back
-  // to dynamic trie key mapper).
-  optional bool use_persistent_hash_map = 10;
+  // [PURE_ROLLOUT_FLAG]
+  // Whether use persistent hash map as the key mapper for several derived file
+  // components (if false, then fall back to dynamic trie key mapper).
+  //
+  // DEPRECATED: The flag is always treated as true, and even if it is set to
+  // false, there will be no effect because the code will still use persistent
+  // hash map.
+  optional bool use_persistent_hash_map = 10
+      [deprecated = true, default = true];
 
+  // [CONFIG_OPTION]
   // Integer index bucket split threshold.
   optional int32 integer_index_bucket_split_threshold = 11 [default = 65536];
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether Icing should sort and merge its lite index HitBuffer unsorted tail
   // at indexing time.
   //
@@ -251,6 +306,7 @@ message IcingSearchEngineOptions {
   optional bool lite_index_sort_at_indexing = 12
       [deprecated = true, default = true];
 
+  // [CONFIG_OPTION]
   // Size (in bytes) at which Icing's lite index should sort and merge the
   // HitBuffer's unsorted tail into the sorted head for sorting at indexing
   // time. Size specified here is the maximum byte size to allow for the
@@ -260,25 +316,31 @@ message IcingSearchEngineOptions {
   // indexing latency.
   optional int32 lite_index_sort_size = 13 [default = 8192];  // 8 KiB
 
+  // [PURE_ROLLOUT_FLAG]
   // DEPRECATED: qualified id join index v2 is fully rolled out.
   optional bool use_new_qualified_id_join_index = 14
       [deprecated = true, default = true];
 
+  // [PURE_ROLLOUT_FLAG][DATA_FEATURE]
   // Whether to build the metadata hits used for property existence check, which
   // is required to support the hasProperty function in advanced query.
-  optional bool build_property_existence_metadata_hits = 15;
+  optional bool build_property_existence_metadata_hits = 15
+      [deprecated = true, default = true];
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to enable blob store.
   // If set to true, the BlobStore will be created to store and retrieve blobs.
   //
   // DEPRECATED: The flag is always treated as true.
   optional bool enable_blob_store = 16 [deprecated = true, default = true];
 
+  // [CONFIG_OPTION]
   // The time to live for an orphan blob. If the blob has no reference document
   // for this amount of time, it will be deleted.
   // If set to 0, the blob will never be deleted.
   optional int64 orphan_blob_time_to_live_ms = 17;
 
+  // [PURE_ROLLOUT_FLAG][DATA_FEATURE]
   // Whether to enable schema database.
   //
   // If set to true, the schema database field will be used to store and
@@ -293,6 +355,7 @@ message IcingSearchEngineOptions {
   // DEPRECATED: The flag is always treated as true.
   optional bool enable_schema_database = 18 [deprecated = true, default = true];
 
+  // [PURE_ROLLOUT_FLAG][DATA_FEATURE]
   // Whether to enable embedding index.
   // If set to false, the EmbeddingIndex will only be created with a header, and
   // embedding properties will not be indexed.
@@ -300,10 +363,12 @@ message IcingSearchEngineOptions {
   // DEPRECATED: The flag is always treated as true.
   optional bool enable_embedding_index = 19 [deprecated = true, default = true];
 
+  // [PURE_ROLLOUT_FLAG][DATA_FEATURE]
   // Feature flag guarding the new scorable properties feature.
   // TODO - b/357105837: Remove this flag once the feature is fully rolled out.
   optional bool enable_scorable_properties = 21;
 
+  // [PURE_ROLLOUT_FLAG][DATA_FEATURE]
   // Whether to enable quantization for embedding vectors.
   // If set to false, all embedding vectors will not be quantized. Otherwise,
   // quantization will be controlled by the quantization type specified in the
@@ -313,12 +378,14 @@ message IcingSearchEngineOptions {
   optional bool enable_embedding_quantization = 22
       [deprecated = true, default = true];
 
+  // [CONFIG_OPTION]
   // Level of blob_info_file_log store compression in blob store ,
   // NO_COMPRESSION = 0, BEST_SPEED = 1, BEST_COMPRESSION = 9
   // Valid values: [0, 9]
   // Optional.
   optional int32 blob_store_compression_level = 23 [default = 3];
 
+  // [CONFIG_OPTION]
   // Memory level for compression in blob store.
   // 1 uses minimum memory but is slow and reduces compression ratio; 9 uses
   // maximum memory for optimal speed and compression ratio.
@@ -329,17 +396,25 @@ message IcingSearchEngineOptions {
   // Optional.
   optional int32 blob_store_compression_mem_level = 38 [default = 8];
 
+  // [CONFIG_OPTION]: for framework AppSearch, this flag can only be set to true
+  //   on Android C or above due to rollback compatibility. Therefore, this flag
+  //   MUST NOT be deprecated, and it will continue to serve as a config option
+  //   field.
+  //
   // Whether to allow repeated fields to have a joinable value type.
   optional bool enable_repeated_field_joins = 24;
 
+  // [CONFIG_OPTION]
   // The absolute path to the ICU data file.
   // If set, ICU will be initialized using this data file.
   optional string icu_data_file_absolute_path = 26;
 
+  // TODO(tjbarron, hujiayu): figure out actions for this flag.
   // Whether a backup schema and document should be generated for documents with
   // embedding properties.
   optional bool enable_embedding_backup_generation = 27;
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to calculate time since last optimize using last attempted optimize
   // run time instead of last successful optimize run time.
   // - If set to true, time since last optimize is calculated using last
@@ -352,6 +427,7 @@ message IcingSearchEngineOptions {
   optional bool calculate_time_since_last_attempted_optimize = 28
       [deprecated = true, default = true];
 
+  // [PURE_ROLLOUT_FLAG][DATA_FEATURE]
   // Whether to use qualified id join index v3.
   //
   // If set to true, qualified id join index v3 will be created.
@@ -361,6 +437,7 @@ message IcingSearchEngineOptions {
   optional bool enable_qualified_id_join_index_v3 = 29
       [deprecated = true, default = true];
 
+  // [PURE_ROLLOUT_FLAG][DATA_FEATURE]
   // Whether to enable delete propagation PROPAGATE_FROM.
   //
   // If set to true, enable_qualified_id_join_index_v3 must be also true
@@ -369,6 +446,7 @@ message IcingSearchEngineOptions {
   // Otherwise, delete propagation will be disabled.
   optional bool enable_delete_propagation_from = 30;
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to enable soft index restoration.
   // If set to true, then any error that occurs during index restoration will be
   // ignored, and the failed document will be deleted.
@@ -377,6 +455,7 @@ message IcingSearchEngineOptions {
   optional bool enable_soft_index_restoration = 31
       [default = true, deprecated = true];
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to enable marker file for optimize API.
   // If set to true, then a general marker file will be created before any
   // optimize operation is performed, and deleted after the operation is
@@ -387,6 +466,7 @@ message IcingSearchEngineOptions {
   optional bool enable_marker_file_for_optimize = 32
       [default = true, deprecated = true];
 
+  // [CONFIG_OPTION]
   // Whether to manage blob files.
   // If set to true, then Icing will manage blob files and all APIs will return
   // valid FileDescriptors. If false, then Icing will only manage blob metadata
@@ -394,10 +474,12 @@ message IcingSearchEngineOptions {
   // caller.
   optional bool manage_blob_files = 33 [default = true];
 
+  // [PURE_ROLLOUT_FLAG]
   // DEPRECATED: The flag is always treated as true.
   optional bool release_backup_schema_file_if_overlay_present = 34
       [deprecated = true, default = true];
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to enable strict byte size enforcement on a result page.
   // - If set to true, then ResultRetrieverV2 will not include the next result
   //   document if it would exceed the page byte size threshold (except for the
@@ -407,15 +489,18 @@ message IcingSearchEngineOptions {
   optional bool enable_strict_page_byte_size_limit = 35
       [deprecated = true, default = true];
 
+  // [CONFIG_OPTION]
   // The threshold in bytes for compressing documents. If a document is larger
   // than or equal to this threshold, it will be compressed based on
   // compression_level. 0 means always compress.
   optional uint32 compression_threshold_bytes = 36;
 
+  // [PURE_ROLLOUT_FLAG]
   // DEPRECATED: The flag is always treated as true.
   optional bool enable_smaller_decompression_buffer_size = 39
       [deprecated = true, default = true];
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to enable the Eigen library for embedding scoring.
   // If set to true **and** Eigen is compiled in (when ICING_DISABLE_EIGEN is
   // not defined), Eigen will be used for embedding scoring.
@@ -424,14 +509,17 @@ message IcingSearchEngineOptions {
   optional bool enable_eigen_embedding_scoring = 40
       [deprecated = true, default = true];
 
+  // [PURE_ROLLOUT_FLAG]
   // DEPRECATED: The flag is always treated as true.
   optional bool enable_passing_filter_to_children = 41
       [deprecated = true, default = true];
 
+  // [PURE_ROLLOUT_FLAG]
   // DEPRECATED: The flag is always treated as true.
   optional bool enable_proto_log_new_header_format = 42
       [deprecated = true, default = true];
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to enable the new embedding iterator DocHitInfoIteratorEmbeddingV2.
   // This new iterator optimizes the access order of the embedding data for
   // sequential reads.
@@ -440,10 +528,12 @@ message IcingSearchEngineOptions {
   optional bool enable_embedding_iterator_v2 = 43
       [deprecated = true, default = true];
 
+  // [PURE_ROLLOUT_FLAG]
   // DEPRECATED: The flag is always treated as true.
   optional bool enable_reusable_decompression_buffer = 44
       [deprecated = true, default = true];
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to enable schema-type id optimization for setSchema. When enabled,
   // the type-ids of existing types will be preserved when possible, and there
   // will be no schema type-id reassignment for adding new types.
@@ -452,12 +542,15 @@ message IcingSearchEngineOptions {
   optional bool enable_schema_type_id_optimization = 45
       [deprecated = true, default = true];
 
+  // [CONFIG_OPTION]
   // The number of shards to use for the embedding index. 1 means no sharding.
   optional uint32 embedding_index_num_shards = 46 [default = 1];
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to enable optimize improvements.
   optional bool enable_optimize_improvements = 47;
 
+  // [CONFIG_OPTION]
   // The time threshold for an expired document to be purged.
   // - Since we schedule a task to purge expired documents according to the next
   //   expiration time of the documents, it is possible that some documents
@@ -474,6 +567,7 @@ message IcingSearchEngineOptions {
   // The default value is 1 minute (1 * 60 * 1000 ms).
   optional int64 expired_document_purge_threshold_ms = 48 [default = 60000];
 
+  // [PURE_ROLLOUT_FLAG][DATA_FEATURE]
   // Whether to allow a document to reference a join parent (by its qualified
   // id) that does not yet exist. When enabled, the join index will handle cases
   // where a child document is indexed before its parent. The join relationship
@@ -481,8 +575,12 @@ message IcingSearchEngineOptions {
   // join relationship will be lost if the child is indexed before the parent.
   optional bool enable_non_existent_qualified_id_join = 49;
 
+  // [CONFIG_OPTION]
   // Whether to skip the schema type equality check during SetSchema. We
   // serialize the schema proto to strings when doing this check, which is slow.
+  //
+  // This flag MUST be set to FALSE for direct clients of Icing lib, unless the
+  // client also chooses to do a manual diff before calling Icing.SetSchema.
   //
   // This will be set to true in AppSearch.
   // - AppSearch already checks if schema types are unchanged for a new
@@ -492,6 +590,7 @@ message IcingSearchEngineOptions {
   //   can be skipped if caller is AppSearch.
   optional bool enable_skip_set_schema_type_equality_check = 50;
 
+  // [CONFIG_OPTION]
   // Whether to enable the background task scheduler. This value should be true
   // for all Icing lib direct clients (e.g. iOS), and false for AppSearch since
   // task scheduling must be handled at the AppSearch layer.
@@ -501,6 +600,7 @@ message IcingSearchEngineOptions {
   optional bool enable_background_task_scheduler =
       51;  // TODO(b/384947619): set default to true
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to enable a query optimization that will rewrite embedding query
   // iterators that are being AND'ed with other iterators such that those other
   // iterators can be pushed down into the embedding iterator as a delegate.
@@ -509,6 +609,7 @@ message IcingSearchEngineOptions {
   optional bool enable_embed_query_optimization = 52
       [deprecated = true, default = true];
 
+  // [PURE_ROLLOUT_FLAG][DATA_FEATURE]
   // Whether to enable deduping schema types's property definitions when
   // storing SchemaTypeConfigs in the schema store.
   //
@@ -520,6 +621,7 @@ message IcingSearchEngineOptions {
   // is also enabled (which it is by default).
   optional bool enable_schema_definition_deduping = 53;
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to enable database stableness logging.
   // If set to true, Icing will log the database stableness information to a
   // file, and inspect the log during initialization and report additional
@@ -528,6 +630,7 @@ message IcingSearchEngineOptions {
   // See IcingDatabaseStablenessProto for more details.
   optional bool enable_database_stableness_log = 54;
 
+  // [CONFIG_OPTION]
   // Whether to enable manual control of PersistToDisk in the IcingSearchEngine.
   //
   // Setting this flag to true prevents the IcingSearchEngine destructor from
@@ -537,6 +640,7 @@ message IcingSearchEngineOptions {
   // Note: This flag should ONLY be enabled in tests.
   optional bool enable_manual_persist_to_disk = 55;
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to enable the account property incompatibility check.
   //
   // If set to true, Icing will check for the following incompatibility when
@@ -549,6 +653,7 @@ message IcingSearchEngineOptions {
   //   property is COMPATIBLE.
   optional bool enable_account_property_incompatibility_check = 56;
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to release schema-store's cached proto instances after use.
   //
   // Once enabled, the schema-store will release its cached proto instances
@@ -557,15 +662,18 @@ message IcingSearchEngineOptions {
   // disk).
   optional bool schema_store_release_cached_proto_after_use = 57;
 
+  // [CONFIG_OPTION]
   // Whether to enable auto flush for icing. If set to true,
   // put_document_request.persist_type will be set to RECOVERY_PROOF for
   // BatchPut.
   optional bool auto_flush = 58 [default = false];
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to remove schema store's move assignment and instead use in-place
   // re-initialization during SchemaStore::SetSchema().
   optional bool remove_schema_store_move_assignment = 59;
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to enable fine-grained index rebuilding when schema changes occur.
   //
   // When index-incompatible schema changes occur during SetSchema (e.g.,
@@ -590,15 +698,33 @@ message IcingSearchEngineOptions {
   //   reindexing.
   optional bool enable_fine_grained_index_rebuild = 60;
 
+  // [PURE_ROLLOUT_FLAG]
   // Whether to unblock read requests during ANN index maintenance (k-means
   // calculation).
   optional bool enable_read_during_ann_maintenance = 61;
+
+  // [PURE_ROLLOUT_FLAG]
+  // Whether to enable result states optimization.
+  //
+  // If set to true, the result state manager will transfer data and convert
+  // related ids after Optimize() is called, instead of invalidating all
+  // existing result states.
+  optional bool enable_optimize_result_states = 62;
+
+  // [PURE_ROLLOUT_FLAG]
+  // Whether to enable the fix for index restoration critical error handling.
+  //
+  // If set to true, when a critical error occurs during index restoration,
+  // Icing will return the error and fail the restoration process instead of
+  // continuing the restoration process with the next document. This will avoid
+  // crashes given that some instances may be invalid after the error.
+  optional bool enable_index_restoration_critical_error_handling_fix = 63;
 
   reserved 2, 20, 25;
 }
 
 // Result of a call to IcingSearchEngine.Initialize
-// Next tag: 7
+// Next tag: 8
 message InitializeResultProto {
   // Status code can be one of:
   //   OK
@@ -637,4 +763,8 @@ message InitializeResultProto {
   // This field is not populated by libicing and is populated by the
   // IcingSearchEngine java class.
   optional int32 response_bytes = 6;
+
+  // Whether the entire Icing database was wiped/reset during initialization due
+  // to unrecoverable data corruption or exceeding max init attempts.
+  optional bool has_reset = 7;
 }
