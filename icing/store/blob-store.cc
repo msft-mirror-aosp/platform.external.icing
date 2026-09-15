@@ -141,9 +141,11 @@ BlobProto CreateBlobProtoFromFileDescriptor(int file_descriptor) {
 libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
     const Filesystem* filesystem, std::string base_dir, const Clock* clock,
     int64_t orphan_blob_time_to_live_ms, int32_t compression_level,
-    int32_t compression_mem_level, bool manage_blob_files) {
+    int32_t compression_mem_level, bool manage_blob_files,
+    const FeatureFlags* feature_flags) {
   ICING_RETURN_ERROR_IF_NULL(filesystem);
   ICING_RETURN_ERROR_IF_NULL(clock);
+  ICING_RETURN_ERROR_IF_NULL(feature_flags);
 
   // Make sure the blob file directory exists.
   if (!filesystem->CreateDirectoryRecursively(
@@ -174,10 +176,7 @@ libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
           filesystem, blob_info_proto_file_name,
           PortableFileBackedProtoLog<BlobInfoProto>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize, compression_level,
-              /*compression_threshold_bytes=*/0, compression_mem_level,
-              /*enable_smaller_decompression_buffer_size_in=*/false,
-              /*enable_proto_log_new_header_format_in=*/
-              true)));
+              /*compression_threshold_bytes=*/0, compression_mem_level)));
   // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
   //   It is a remaining task to rollout new header format for proto log.
 
@@ -420,11 +419,11 @@ BlobProto BlobStore::CommitBlob(
   return blob_proto;
 }
 
-BlobProto BlobStore::GetAllBlobInfo() {
+BlobProto BlobStore::GetAllBlobInfos() const {
   BlobProto blob_proto;
   blob_proto.mutable_status()->set_code(StatusProto::OK);
-  for (auto itr = blob_handle_to_offset_.begin();
-       itr != blob_handle_to_offset_.end(); ++itr) {
+  for (auto itr = blob_handle_to_offset_.cbegin();
+       itr != blob_handle_to_offset_.cend(); ++itr) {
     auto blob_info_proto_or = blob_info_log_->ReadProto(itr->second);
     if (!blob_info_proto_or.ok()) {
       continue;
@@ -435,7 +434,7 @@ BlobProto BlobStore::GetAllBlobInfo() {
   return blob_proto;
 }
 
-BlobProto BlobStore::PutBlobInfos(BlobProto&& blob_proto) {
+BlobProto BlobStore::PutBlobInfos(const BlobProto& blob_proto) {
   if (manage_blob_files_) {
     ICING_LOG(ERROR)
         << "Cannot put blob infos to blob store that manages blob files.";
@@ -533,10 +532,8 @@ BlobStore::GetPotentiallyOptimizableBlobHandles() const {
 }
 
 libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
-    const std::unordered_set<std::string>& dead_blob_handles) {
-  std::vector<std::string> blob_file_names_to_remove;
-  blob_file_names_to_remove.reserve(dead_blob_handles.size());
-
+    const std::unordered_set<std::string>& dead_blob_handles,
+    const FeatureFlags* feature_flags) {
   // Create the temp blob info log file.
   std::string temp_blob_info_proto_file_name =
       absl_ports::StrCat(MakeBlobInfoProtoLogFileName(base_dir_), "_temp");
@@ -546,60 +543,10 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
   }
 
   ICING_ASSIGN_OR_RETURN(
-      PortableFileBackedProtoLog<BlobInfoProto>::CreateResult
-          temp_log_create_result,
-      PortableFileBackedProtoLog<BlobInfoProto>::Create(
-          &filesystem_, temp_blob_info_proto_file_name,
-          PortableFileBackedProtoLog<BlobInfoProto>::Options(
-              /*compress_in=*/true, constants::kMaxProtoSize,
-              compression_level_, /*compression_threshold_bytes=*/0,
-              compression_mem_level_,
-              /*enable_smaller_decompression_buffer_size_in=*/false,
-              /*enable_proto_log_new_header_format=*/true)));
-  // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
-  //   It is a remaining task to rollout new header format for proto log.
-  std::unique_ptr<PortableFileBackedProtoLog<BlobInfoProto>> new_blob_info_log =
-      std::move(temp_log_create_result.proto_log);
+      OptimizeBlobInfoResult optimize_blob_info_result,
+      OptimizeBlobInfoInto(temp_blob_info_proto_file_name, dead_blob_handles));
 
-  auto itr = blob_info_log_->GetIterator();
-  std::unordered_map<std::string, int32_t> new_blob_handle_to_offset;
-  while (itr.Advance().ok()) {
-    auto blob_info_proto_or = blob_info_log_->ReadProto(itr.GetOffset());
-    if (!blob_info_proto_or.ok()) {
-      if (absl_ports::IsNotFound(blob_info_proto_or.status())) {
-        // Skip erased proto.
-        continue;
-      }
-
-      // Return real error.
-      return std::move(blob_info_proto_or).status();
-    }
-    BlobInfoProto blob_info_proto = std::move(blob_info_proto_or).ValueOrDie();
-    std::string blob_handle_str =
-        BuildBlobHandleStr(blob_info_proto.blob_handle());
-    if (dead_blob_handles.find(blob_handle_str) != dead_blob_handles.end()) {
-      // Delete all dead blob files.
-
-      if (manage_blob_files_) {
-        std::string file_path =
-            MakeBlobFilePath(base_dir_, blob_info_proto.creation_time_ms());
-        if (!filesystem_.DeleteFile(file_path.c_str())) {
-          return absl_ports::InternalError(
-              absl_ports::StrCat("Failed to delete blob file: ", file_path));
-        }
-      } else {
-        blob_file_names_to_remove.push_back(
-            std::to_string(blob_info_proto.creation_time_ms()));
-      }
-    } else {
-      // Write the alive blob info to the new blob info log file.
-      ICING_ASSIGN_OR_RETURN(int32_t new_offset,
-                             new_blob_info_log->WriteProto(blob_info_proto));
-      new_blob_handle_to_offset[blob_handle_str] = new_offset;
-    }
-  }
-  new_blob_info_log->PersistToDisk();
-  new_blob_info_log.reset();
+  // Reset blob_info_log_ before swapping to release file handles.
   blob_info_log_.reset();
   std::string old_blob_info_proto_file_name =
       MakeBlobInfoProtoLogFileName(base_dir_);
@@ -621,14 +568,77 @@ libtextclassifier3::StatusOr<std::vector<std::string>> BlobStore::Optimize(
           PortableFileBackedProtoLog<BlobInfoProto>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize,
               compression_level_, /*compression_threshold_bytes=*/0,
-              compression_mem_level_,
-              /*enable_smaller_decompression_buffer_size_in=*/false,
-              /*enable_proto_log_new_header_format=*/true)));
+              compression_mem_level_)));
   // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
   //   It is a remaining task to rollout new header format for proto log.
   blob_info_log_ = std::move(log_create_result.proto_log);
-  blob_handle_to_offset_ = std::move(new_blob_handle_to_offset);
-  return blob_file_names_to_remove;
+  blob_handle_to_offset_ =
+      std::move(optimize_blob_info_result.blob_handle_to_offset);
+
+  if (manage_blob_files_) {
+    for (const std::string& file_name :
+         optimize_blob_info_result.blob_file_names_to_remove) {
+      std::string file_path =
+          absl_ports::StrCat(MakeBlobFileDir(base_dir_), "/", file_name);
+      if (!filesystem_.DeleteFile(file_path.c_str())) {
+        return absl_ports::InternalError(
+            absl_ports::StrCat("Failed to delete blob file: ", file_path));
+      }
+    }
+    return std::vector<std::string>();
+  }
+
+  return optimize_blob_info_result.blob_file_names_to_remove;
+}
+
+libtextclassifier3::StatusOr<BlobStore::OptimizeBlobInfoResult>
+BlobStore::OptimizeBlobInfoInto(
+    const std::string& new_blob_info_proto_file_name,
+    const std::unordered_set<std::string>& dead_blob_handles) const {
+  ICING_ASSIGN_OR_RETURN(
+      PortableFileBackedProtoLog<BlobInfoProto>::CreateResult
+          new_log_create_result,
+      PortableFileBackedProtoLog<BlobInfoProto>::Create(
+          &filesystem_, new_blob_info_proto_file_name,
+          PortableFileBackedProtoLog<BlobInfoProto>::Options(
+              /*compress_in=*/true, constants::kMaxProtoSize,
+              compression_level_, /*compression_threshold_bytes=*/0,
+              compression_mem_level_)));
+  // TODO(b/435513415): pass feature flags object down to BlobStore and use it.
+  //   It is a remaining task to rollout new header format for proto log.
+  std::unique_ptr<PortableFileBackedProtoLog<BlobInfoProto>> new_blob_info_log =
+      std::move(new_log_create_result.proto_log);
+
+  OptimizeBlobInfoResult result;
+  result.blob_file_names_to_remove.reserve(dead_blob_handles.size());
+
+  auto itr = blob_info_log_->GetIterator();
+  while (itr.Advance().ok()) {
+    auto blob_info_proto_or = blob_info_log_->ReadProto(itr.GetOffset());
+    if (!blob_info_proto_or.ok()) {
+      if (absl_ports::IsNotFound(blob_info_proto_or.status())) {
+        // Skip erased proto.
+        continue;
+      }
+
+      // Return real error.
+      return std::move(blob_info_proto_or).status();
+    }
+    BlobInfoProto blob_info_proto = std::move(blob_info_proto_or).ValueOrDie();
+    std::string blob_handle_str =
+        BuildBlobHandleStr(blob_info_proto.blob_handle());
+    if (dead_blob_handles.find(blob_handle_str) != dead_blob_handles.end()) {
+      result.blob_file_names_to_remove.push_back(
+          std::to_string(blob_info_proto.creation_time_ms()));
+    } else {
+      // Write the alive blob info to the new blob info log file.
+      ICING_ASSIGN_OR_RETURN(int32_t new_offset,
+                             new_blob_info_log->WriteProto(blob_info_proto));
+      result.blob_handle_to_offset[std::move(blob_handle_str)] = new_offset;
+    }
+  }
+  ICING_RETURN_IF_ERROR(new_blob_info_log->PersistToDisk());
+  return result;
 }
 
 libtextclassifier3::StatusOr<std::vector<NamespaceBlobStorageInfoProto>>

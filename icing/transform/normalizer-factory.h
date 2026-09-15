@@ -18,6 +18,7 @@
 #include <memory>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/proto/status.pb.h"
 #include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 
@@ -26,14 +27,20 @@ namespace lib {
 
 namespace normalizer_factory {
 
-// Creates a normalizer.
+// Creates a normalizer based on the provided options.
+//
+// @param options: The options for creating the normalizer.
+// @param icu_normalizer_creation_status: Optional output parameter that will be
+//        populated with the status of IcuNormalizer if it's creation is
+//        attempted.
 //
 // Returns:
 //   A normalizer on success
 //   INVALID_ARGUMENT if options.max_term_byte_size <= 0
 //   INTERNAL_ERROR on errors
 libtextclassifier3::StatusOr<std::unique_ptr<Normalizer>> Create(
-    const NormalizerOptions& options);
+    const NormalizerOptions& options,
+    StatusProto* icu_normalizer_creation_status = nullptr);
 
 }  // namespace normalizer_factory
 

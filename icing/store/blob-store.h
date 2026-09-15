@@ -25,6 +25,7 @@
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/portable-file-backed-proto-log.h"
 #include "icing/proto/blob.pb.h"
@@ -68,7 +69,8 @@ class BlobStore {
   static libtextclassifier3::StatusOr<BlobStore> Create(
       const Filesystem* filesystem, std::string base_dir, const Clock* clock,
       int64_t orphan_blob_time_to_live_ms, int32_t compression_level,
-      int32_t compression_mem_level, bool manage_blob_files);
+      int32_t compression_mem_level, bool manage_blob_files,
+      const FeatureFlags* feature_flags);
 
   // Gets or creates a file for write only purpose for the given blob handle.
   // To mark the blob is completed written, CommitBlob must be called. Once
@@ -147,7 +149,7 @@ class BlobStore {
   // Returns:
   //   BlobProto with all the blob info on success
   //   InternalError on IO error
-  BlobProto GetAllBlobInfo();
+  BlobProto GetAllBlobInfos() const;
 
   // Puts the blob info protos from the blob proto to the blob info proto log
   // file.
@@ -155,7 +157,7 @@ class BlobStore {
   // Returns:
   //   BlobProto with all the blob info on success
   //   InternalError on IO error
-  BlobProto PutBlobInfos(BlobProto&& blob_proto);
+  BlobProto PutBlobInfos(const BlobProto& blob_proto);
 
   // Persists the blobs to disk.
   libtextclassifier3::Status PersistToDisk();
@@ -179,7 +181,33 @@ class BlobStore {
   //   manages blob files, this list will be empty.
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::StatusOr<std::vector<std::string>> Optimize(
-      const std::unordered_set<std::string>& dead_blob_handles);
+      const std::unordered_set<std::string>& dead_blob_handles,
+      const FeatureFlags* feature_flags);
+
+  // Result of optimizing the blob info metadata log file.
+  // Note: Physical blob files are stored in a separate directory and are not
+  // copied or modified during OptimizeBlobInfoInto.
+  struct OptimizeBlobInfoResult {
+    // The list of dead blob file names to be removed on disk.
+    std::vector<std::string> blob_file_names_to_remove;
+
+    // The map of blob handle string to its offset in the optimized proto log file.
+    std::unordered_map<std::string, int32_t> blob_handle_to_offset;
+  };
+
+  // Optimizes only the blob info metadata into the given file without copying
+  // physical blob files.
+  //
+  // Alive blobs' metadata will be written into new_blob_info_proto_file_name.
+  //
+  // A blob is considered dead if its blob handle is in dead_blob_handles.
+  //
+  // Returns:
+  //   An OptimizeBlobInfoResult on success.
+  //   INTERNAL_ERROR on I/O error
+  libtextclassifier3::StatusOr<OptimizeBlobInfoResult> OptimizeBlobInfoInto(
+      const std::string& new_blob_info_proto_file_name,
+      const std::unordered_set<std::string>& dead_blob_handles) const;
 
   // Calculates the StorageInfo for the Blob Store.
   //

@@ -114,8 +114,7 @@ libtextclassifier3::Status DocHitInfoIteratorOr::Advance() {
       right_document_id_ == kInvalidDocumentId) {
     // Reached the end, set these to invalid values and return
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
 
   // Now chose the best one that is not invalid.
@@ -182,8 +181,7 @@ libtextclassifier3::Status DocHitInfoIteratorOrNary::Advance() {
     // 0 is the smallest (last) DocumentId, can't advance further. Reset to
     // invalid values and return directly
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
   // The maximum possible doc id for the current Advance() call.
   const DocumentId next_document_id_max = doc_hit_info_.document_id() - 1;
@@ -211,8 +209,7 @@ libtextclassifier3::Status DocHitInfoIteratorOrNary::Advance() {
     // None of the iterators had a next document_id, reset to invalid values and
     // return
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
 
   // Found the next hit DocumentId, now calculate the section info.

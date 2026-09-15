@@ -46,6 +46,15 @@ class IcuNormalizerTest : public testing::Test {
   std::unique_ptr<Normalizer> normalizer_;
 };
 
+TEST_F(IcuNormalizerTest, SuccessfulIcuNormalizerSetsOkStatus) {
+  StatusProto icu_normalizer_creation_status;
+  NormalizerOptions options(/*max_term_byte_size=*/1024);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto normalizer,
+      normalizer_factory::Create(options, &icu_normalizer_creation_status));
+  EXPECT_THAT(icu_normalizer_creation_status.code(), Eq(StatusProto::OK));
+}
+
 TEST_F(IcuNormalizerTest, Creation) {
   NormalizerOptions options1(/*max_term_byte_size=*/5);
   EXPECT_THAT(normalizer_factory::Create(options1), IsOk());
@@ -463,6 +472,26 @@ TEST_F(IcuNormalizerTest, SharedPrefixMatchLength) {
   term = "ἈἉἊἋIcing";
   match_end = normalizer->FindNormalizedMatchEndPosition(term, "ααααmdi");
   EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("ἈἉἊἋ"));
+}
+
+TEST_F(IcuNormalizerTest, HanziToPinyinTransliteration) {
+  NormalizerRulesConfig rules_config;
+  rules_config.enable_pinyin_normalization = true;
+  NormalizerOptions options(/*max_term_byte_size=*/1024,
+                            /*enable_icu_normalizer=*/true, rules_config);
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
+                             normalizer_factory::Create(options));
+
+  EXPECT_THAT(normalizer->NormalizeTerm("每天"),
+              EqualsNormalizedTerm("mei tian"));
+  EXPECT_THAT(normalizer->NormalizeTerm("学习"),
+              EqualsNormalizedTerm("xue xi"));
+}
+
+TEST_F(IcuNormalizerTest, HanziToPinyinTransliterationDisabledByDefault) {
+  // By default, Hanzi characters are not transliterated to pinyin.
+  EXPECT_THAT(normalizer_->NormalizeTerm("每天"), EqualsNormalizedTerm("每天"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("学习"), EqualsNormalizedTerm("学习"));
 }
 
 }  // namespace

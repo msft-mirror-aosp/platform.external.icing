@@ -236,10 +236,11 @@ bool FlashIndexStorage::OpenHeader(int64_t file_size) {
                      << ") does not match the requested block size ("
                      << block_size << "). Defaulting to existing block size "
                      << read_header.header()->block_size;
-    ICING_ASSIGN_OR_RETURN(HeaderBlock read_header,
+    ICING_ASSIGN_OR_RETURN(HeaderBlock new_read_header,
                            HeaderBlock::Read(filesystem_, storage_sfd_.get(),
                                              read_header.header()->block_size),
                            false);
+    read_header = std::move(new_read_header);
   }
   header_block_ = std::make_unique<HeaderBlock>(std::move(read_header));
 
@@ -275,10 +276,11 @@ bool FlashIndexStorage::PersistToDisk() {
 
 libtextclassifier3::Status FlashIndexStorage::Reset() {
   // Reset in-memory members to default values.
-  num_blocks_ = 0;
-  header_block_.reset();
-  storage_sfd_.reset();
+  has_in_memory_freelists_ = false;
   in_memory_freelists_.clear();
+  header_block_.reset();
+  num_blocks_ = 0;
+  storage_sfd_.reset();
 
   // Delete the underlying file.
   if (!filesystem_->DeleteFile(index_filename_.c_str())) {

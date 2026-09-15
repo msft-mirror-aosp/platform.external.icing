@@ -62,7 +62,7 @@ class SectionManager {
     //     exceeds the threshold (kTotalNumSections)
     libtextclassifier3::Status ProcessSchemaTypePropertyConfig(
         SchemaTypeId schema_type_id, const PropertyConfigProto& property_config,
-        std::string&& property_path);
+        std::string&& property_path, std::string_view type_config_name);
 
     // Builds and returns a SectionManager instance.
     std::unique_ptr<SectionManager> Build() && {

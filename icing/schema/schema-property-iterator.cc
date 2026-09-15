@@ -15,16 +15,19 @@
 #include "icing/schema/schema-property-iterator.h"
 
 #include <algorithm>
+#include <iterator>
 #include <string>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/str_cat.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/schema/property-util.h"
+#include "icing/schema/schema-util.h"
 
 namespace icing {
 namespace lib {
@@ -102,16 +105,19 @@ libtextclassifier3::Status SchemaPropertyIterator::Advance() {
     // - Each level has to record the index of property it is currently at, so
     //   we can resume the iteration when returning back to it. Also other
     //   essential info will be maintained in LevelInfo as well.
-    auto nested_type_config_iter =
-        type_config_map_.find(curr_property_config.schema_type());
-    if (nested_type_config_iter == type_config_map_.end()) {
+    libtextclassifier3::StatusOr<
+        SchemaUtil::TypeConfigInfoCache::TypeConfigHolder>
+        nested_type_config_or =
+            type_config_info_cache_.GetFullSchemaTypeConfigHolder(
+                curr_property_config.schema_type());
+    if (!nested_type_config_or.ok()) {
       // This should never happen because our schema should already be
       // validated by this point.
       return absl_ports::NotFoundError(absl_ports::StrCat(
           "Type config not found: ", curr_property_config.schema_type()));
     }
-    const SchemaTypeConfigProto& nested_type_config =
-        nested_type_config_iter->second;
+    SchemaUtil::TypeConfigInfoCache::TypeConfigHolder nested_type_config =
+        std::move(nested_type_config_or).ValueOrDie();
 
     if (levels_.back().GetLevelNestedIndexable()) {
       // We should set sorted_top_level_indexable_nested_properties_ to the list
@@ -151,9 +157,9 @@ libtextclassifier3::Status SchemaPropertyIterator::Advance() {
           last, sorted_top_level_indexable_nested_properties_.end());
     }
 
-    bool is_cycle =
-        parent_type_config_names_.find(nested_type_config.schema_type()) !=
-        parent_type_config_names_.end();
+    bool is_cycle = parent_type_config_names_.find(
+                        nested_type_config.base_type_config().schema_type()) !=
+                    parent_type_config_names_.end();
     bool is_parent_property_path =
         current_top_level_indexable_nested_properties_idx_ <
             sorted_top_level_indexable_nested_properties_.size() &&
@@ -177,10 +183,10 @@ libtextclassifier3::Status SchemaPropertyIterator::Advance() {
         levels_.back().GetLevelNestedIndexable() &&
         curr_property_config.document_indexing_config()
             .index_nested_properties();
-    levels_.push_back(LevelInfo(nested_type_config,
+    levels_.push_back(LevelInfo(std::move(nested_type_config),
                                 std::move(curr_property_path),
                                 all_nested_properties_indexable));
-    parent_type_config_names_.insert(nested_type_config.schema_type());
+    parent_type_config_names_.insert(levels_.back().GetSchemaTypeName());
   }
 
   // Before returning, move all remaining uniterated properties from

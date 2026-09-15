@@ -42,17 +42,18 @@ namespace {
 // Helper function to append a new section metadata
 libtextclassifier3::Status AppendNewSectionMetadata(
     std::vector<SectionMetadata>* metadata_list,
-    std::string&& concatenated_path,
-    const PropertyConfigProto& property_config) {
+    std::string&& concatenated_path, const PropertyConfigProto& property_config,
+    std::string_view type_config_name) {
   // Validates next section id, makes sure that section id is the same as the
   // list index so that we could find any section metadata by id in O(1) later.
   SectionId new_section_id = static_cast<SectionId>(metadata_list->size());
   if (!IsSectionIdValid(new_section_id)) {
     // Max number of sections reached
     return absl_ports::OutOfRangeError(IcingStringUtil::StringPrintf(
-        "Too many properties to be indexed, max number of properties "
+        "Too many properties to be indexed for type config %s, max number of "
+        "properties "
         "allowed: %d",
-        kMaxSectionId - kMinSectionId + 1));
+        type_config_name.data(), kMaxSectionId - kMinSectionId + 1));
   }
 
   // Creates section metadata
@@ -89,7 +90,7 @@ void AppendSection(
 libtextclassifier3::Status
 SectionManager::Builder::ProcessSchemaTypePropertyConfig(
     SchemaTypeId schema_type_id, const PropertyConfigProto& property_config,
-    std::string&& property_path) {
+    std::string&& property_path, std::string_view type_config_name) {
   if (schema_type_id < 0 || schema_type_id >= section_metadata_cache_.size()) {
     return absl_ports::InvalidArgumentError("Invalid schema type id");
   }
@@ -99,9 +100,9 @@ SectionManager::Builder::ProcessSchemaTypePropertyConfig(
   // property's indexing configuration itself is not indexable.
   // This would be the case for unknown and non-indexable property paths that
   // are defined in the indexable_nested_properties_list.
-  ICING_RETURN_IF_ERROR(
-      AppendNewSectionMetadata(&section_metadata_cache_[schema_type_id],
-                               std::move(property_path), property_config));
+  ICING_RETURN_IF_ERROR(AppendNewSectionMetadata(
+      &section_metadata_cache_[schema_type_id], std::move(property_path),
+      property_config, type_config_name));
   return libtextclassifier3::Status::OK;
 }
 

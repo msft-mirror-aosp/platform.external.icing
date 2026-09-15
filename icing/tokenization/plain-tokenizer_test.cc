@@ -164,6 +164,27 @@ TEST_F(PlainTokenizerTest, Whitespace) {
                                EqualsToken(Token::Type::REGULAR, "World"))));
 }
 
+TEST_F(PlainTokenizerTest, ContinuousWhitespace) {
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
+
+  // Multiple continuous whitespaces will be ignored.
+  const int kNumSeparators = 256;
+  std::string text_with_spaces =
+      absl_ports::StrCat("Hello", std::string(kNumSeparators, ' '), "World");
+  EXPECT_THAT(
+      plain_tokenizer->TokenizeAll(text_with_spaces),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "Hello"),
+                               EqualsToken(Token::Type::REGULAR, "World"))));
+}
+
 TEST_F(PlainTokenizerTest, Punctuation) {
   language_segmenter_factory::SegmenterOptions options(ULOC_US,
                                                        jni_cache_.get());

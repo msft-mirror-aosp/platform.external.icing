@@ -99,6 +99,26 @@ class TextNode : public Node {
   bool is_prefix_;
 };
 
+class FunctionNode : public Node {
+ public:
+  explicit FunctionNode(std::string function_name)
+      : FunctionNode(std::move(function_name), {}) {}
+  explicit FunctionNode(std::string function_name,
+                        std::vector<std::unique_ptr<Node>> args)
+      : function_name_(std::move(function_name)),
+        args_(std::move(args)) {}
+
+  void Accept(AbstractSyntaxTreeVisitor* visitor) const override {
+    visitor->VisitFunction(this);
+  }
+  const std::string& function_name() const { return function_name_; }
+  const std::vector<std::unique_ptr<Node>>& args() const { return args_; }
+
+ private:
+  std::string function_name_;
+  std::vector<std::unique_ptr<Node>> args_;
+};
+
 class MemberNode : public Node {
  public:
   explicit MemberNode(std::vector<std::unique_ptr<TextNode>> children,
@@ -118,26 +138,6 @@ class MemberNode : public Node {
   // This is nullable. When it is not nullptr, this class will represent a
   // function call.
   std::unique_ptr<FunctionNode> function_;
-};
-
-class FunctionNode : public Node {
- public:
-  explicit FunctionNode(std::string function_name)
-      : FunctionNode(std::move(function_name), {}) {}
-  explicit FunctionNode(std::string function_name,
-                        std::vector<std::unique_ptr<Node>> args)
-      : function_name_(std::move(function_name)),
-        args_(std::move(args)) {}
-
-  void Accept(AbstractSyntaxTreeVisitor* visitor) const override {
-    visitor->VisitFunction(this);
-  }
-  const std::string& function_name() const { return function_name_; }
-  const std::vector<std::unique_ptr<Node>>& args() const { return args_; }
-
- private:
-  std::string function_name_;
-  std::vector<std::unique_ptr<Node>> args_;
 };
 
 class UnaryOperatorNode : public Node {
