@@ -30,8 +30,7 @@ namespace query_optimization_util {
 // equivalent but more efficient iterator sub-tree. Otherwise, the iterators
 // will be returned as a normal AND iterator.
 std::unique_ptr<DocHitInfoIterator> OptimizeAndIteratorsIfPossible(
-    std::vector<std::unique_ptr<DocHitInfoIterator>>&& iterators,
-    const FeatureFlags& feature_flags);
+    std::vector<std::unique_ptr<DocHitInfoIterator>>&& iterators);
 
 }  // namespace query_optimization_util
 }  // namespace lib

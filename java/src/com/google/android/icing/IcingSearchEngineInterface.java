@@ -19,6 +19,8 @@ import com.google.android.icing.proto.GetSchemaResultProto;
 import com.google.android.icing.proto.GetSchemaTypeResultProto;
 import com.google.android.icing.proto.HandleExpiredDocumentsResultProto;
 import com.google.android.icing.proto.InitializeResultProto;
+import com.google.android.icing.proto.MaintainAnnIndexOptions;
+import com.google.android.icing.proto.MaintainAnnIndexResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
@@ -169,6 +171,9 @@ public interface IcingSearchEngineInterface extends Closeable {
    * reclaiming disk space or rebuilding indices which requires additional disk I/O.
    */
   HandleExpiredDocumentsResultProto handleExpiredDocuments();
+
+  /** Triggers the maintenance process for all IVF based embedding search indexes. */
+  MaintainAnnIndexResultProto maintainAnnIndex(MaintainAnnIndexOptions options);
 
   /** Gets a file descriptor to write blob data. */
   BlobProto openWriteBlob(PropertyProto.BlobHandleProto blobHandle);

@@ -54,14 +54,18 @@ message VisibilityConfigProto {
   optional PackageIdentifierProto publicly_visible_target_package = 4;
 }
 
-// Defines a proto to represent a PackageIdentifier
-// Next tag: 3
+// Defines a proto to represent a PackageIdentifier.
+// Either package_sha256cert or package_sha256_certs should be set.
+// Next tag: 4
 message PackageIdentifierProto {
   // REQUIRED: the package name of the given PackageIdentifier
   optional string package_name = 1;
 
-  // REQUIRED: the sha 256 cert of the given PackageIdentifier
+  // OPTIONAL: the sha 256 cert for single-signer packages
   optional bytes package_sha256cert = 2;
+
+  // OPTIONAL: all SHA-256 certs for multi-signer packages
+  repeated bytes package_sha256_certs = 3;
 }
 
 // Defines a proto to represent a set of required Android permission

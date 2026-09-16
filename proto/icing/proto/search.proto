@@ -27,7 +27,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Client-supplied specifications on what documents to retrieve.
-// Next tag: 15
+// Next tag: 16
 message SearchSpecProto {
   // REQUIRED: The "raw" query string that users may type. For example, "cat"
   // will search for documents with the term cat in it.
@@ -128,6 +128,12 @@ message SearchSpecProto {
   // Strings to be used as parameters in the query. The strings will be treated
   // as pure TEXT and will be normalized and tokenized.
   repeated string query_parameter_strings = 13;
+
+  // The number of clusters to search for ANN embedding query. Used globally
+  // across all semanticSearch calls in the query expression.
+  // If nprobe <= 0, ANN search is skipped and only linear search is performed.
+  // Default is 0.
+  optional int32 embedding_query_nprobe = 15;
 
   reserved 6;
 }
@@ -366,6 +372,11 @@ message SnippetProto {
     // An index of [0] is implied. If there is more than one value for a
     // property, then the value index will be added to the property path (like
     // 'attachements[0]').
+    //
+    // Note for embedding search: For ANN matches, snippeting is currently not
+    // fully supported. The position of the embedding match in the section will
+    // be set to -1. As a result, the index of the property name in the snippet
+    // entry will also be [-1] if there's an ANN match on a repeated property.
     optional string property_name = 1;
 
     // The term-match info for this property. Only populated if the property is
@@ -382,7 +393,7 @@ message SnippetProto {
 }
 
 // Icing lib-supplied results from a search results.
-// Next tag: 9
+// Next tag: 11
 message SearchResultProto {
   // Status code can be one of:
   //   OK
@@ -457,6 +468,17 @@ message SearchResultProto {
   // The start time of the binder transaction latency. This is used to measure
   // the latency of passing data from the VM via the binder.
   optional int64 vm_binder_transaction_latency_start_time_ms = 8;
+
+  // Combined size of the SearchSpecProto, ScoringSpecProto, and ResultSpecProto
+  // requests in bytes, or size of the GetNextPageRequestProto request in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 request_bytes = 9;
+
+  // Size of the SearchResultProto response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 10;
 }
 
 // Next tag: 3
@@ -493,7 +515,7 @@ message GetResultSpecProto {
       [default = 2147483647];  // INT_MAX
 }
 
-// Next tag: 12
+// Next tag: 13
 message SuggestionSpecProto {
   // REQUIRED: The "raw" prefix string that users may type. For example, "f"
   // will search for suggested query that start with "f" like "foo", "fool".
@@ -559,6 +581,12 @@ message SuggestionSpecProto {
 
   // Features enabled in this suggestion spec.
   repeated string enabled_features = 11;
+
+  // The number of clusters to search for ANN embedding query. Used globally
+  // across all semanticSearch calls in the query expression.
+  // If nprobe <= 0, ANN search is skipped and only linear search is performed.
+  // Default is 0.
+  optional int32 embedding_query_nprobe = 12;
 }
 
 // A group that holds namespace and document_uris under it.
@@ -567,7 +595,7 @@ message NamespaceDocumentUriGroup {
   repeated string document_uris = 2;
 }
 
-// Next tag: 5
+// Next tag: 7
 message SuggestionResponse {
   message Suggestion {
     // The suggested query string for client to search for.
@@ -590,6 +618,16 @@ message SuggestionResponse {
   // The start time of the binder transaction latency. This is used to measure
   // the latency of passing data from the VM via the binder.
   optional int64 vm_binder_transaction_latency_start_time_ms = 4;
+
+  // Size of the SuggestionSpecProto request in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 request_bytes = 5;
+
+  // Size of the SuggestionResponse response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 6;
 }
 
 // Specification for a left outer join.

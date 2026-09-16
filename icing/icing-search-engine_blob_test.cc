@@ -89,9 +89,7 @@ class IcingSearchEngineBlobTest : public ::testing::TestWithParam<bool> {
   IcingSearchEngineOptions GetDefaultIcingOptions() {
     IcingSearchEngineOptions icing_options;
     icing_options.set_base_dir(GetTestBaseDir());
-    icing_options.set_enable_blob_store(true);
     icing_options.set_orphan_blob_time_to_live_ms(kBlobInfoTTLMs);
-    icing_options.set_enable_marker_file_for_optimize(true);
     icing_options.set_manage_blob_files(GetParam());
     return icing_options;
   }
@@ -181,30 +179,6 @@ TEST_P(IcingSearchEngineBlobTest, InvalidBlobHandle) {
   BlobProto read_blob_proto = icing.OpenReadBlob(blob_handle);
   EXPECT_THAT(read_blob_proto.status(),
               ProtoStatusIs(StatusProto::INVALID_ARGUMENT));
-}
-
-TEST_P(IcingSearchEngineBlobTest, BlobStoreDisabled) {
-  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
-  icing_options.set_enable_blob_store(false);
-
-  IcingSearchEngine icing(icing_options, GetTestJniCache());
-  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
-
-  PropertyProto::BlobHandleProto blob_handle;
-  std::vector<unsigned char> data = GenerateRandomBytes(24);
-  std::array<uint8_t, 32> digest = CalculateDigest(data);
-  blob_handle.set_digest((void*)digest.data(), digest.size());
-  blob_handle.set_namespace_("namespaceA");
-
-  BlobProto write_blob_proto = icing.OpenWriteBlob(blob_handle);
-  EXPECT_THAT(write_blob_proto.status(),
-              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
-  BlobProto commit_blob_proto = icing.CommitBlob(blob_handle);
-  EXPECT_THAT(commit_blob_proto.status(),
-              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
-  BlobProto read_blob_proto = icing.OpenReadBlob(blob_handle);
-  EXPECT_THAT(read_blob_proto.status(),
-              ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
 }
 
 TEST_P(IcingSearchEngineBlobTest, WriteAndReadBlob) {

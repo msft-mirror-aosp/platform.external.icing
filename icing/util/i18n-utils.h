@@ -28,8 +28,10 @@ namespace lib {
 // not require any special dependencies, such as data files for ICU.
 namespace i18n_utils {
 
-// An invalid value defined by Unicode.
-static constexpr UChar32 kInvalidUChar32 = 0xFFFD;
+// Sentinel for "could not decode a code point". Chosen to be a value that
+// U8_NEXT can never return for a *valid* sequence (it returns a negative value
+// for ill-formed input). DO NOT use 0xFFFD here - that is a real code point.
+static constexpr UChar32 kInvalidUChar32 = -1;
 
 // Converts a UTF16 string to a UTF8 string.
 //

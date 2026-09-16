@@ -42,6 +42,7 @@
 #include "icing/tokenization/tokenizer.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/character-iterator.h"
+#include "icing/util/embedding-util.h"
 #include "icing/util/i18n-utils.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
@@ -55,6 +56,9 @@ inline std::string AddIndexToPath(int values_size, int index,
                                   const std::string& property_path) {
   if (values_size == 1) {
     return property_path;
+  }
+  if (index == -1) {
+    return absl_ports::StrCat(property_path, "[-1]");
   }
   return absl_ports::StrCat(
       property_path, property_util::ConvertToPropertyExprIndexStr(index));
@@ -625,7 +629,13 @@ std::unordered_map<int, std::vector<int>> GetGlobalEmbeddingSectionPositions(
   std::unordered_map<int, std::vector<int>> global_embedding_section_positions;
   for (int i = 0; i < property.vector_values_size(); ++i) {
     const PropertyProto::VectorProto& vector_value = property.vector_values(i);
-    int dimension = vector_value.values().size();
+    auto dimension_or = embedding_util::GetDimension(vector_value);
+    if (!dimension_or.ok()) {
+      ICING_LOG(WARNING) << "Failed to get dimension for vector property: "
+                         << dimension_or.status().error_message();
+      continue;
+    }
+    int dimension = static_cast<int>(dimension_or.ValueOrDie());
     std::string_view model_signature = vector_value.model_signature();
     auto dimension_itr = embedding_query_vector_metadata.find(dimension);
     if (dimension_itr == embedding_query_vector_metadata.end()) {
@@ -705,15 +715,21 @@ void GetEmbeddingMatchInfo(
                        << ", property " << property_path;
       continue;
     }
-    const std::vector<int>& global_positions = global_positions_itr->second;
-    if (match.position >= global_positions.size()) {
-      // This would indicate that the embedding query results recorded for the
-      // query is incorrect, which should never happen.
-      ICING_LOG(ERROR) << "Incorrect embedding query results match info "
-                          "recorded for query vector index "
-                       << match.query_vector_index << ", document " << doc_id
-                       << ", property " << property_path;
-      continue;
+    int position_key;
+    if (match.position >= 0) {
+      const std::vector<int>& global_positions = global_positions_itr->second;
+      if (match.position >= global_positions.size()) {
+        // This would indicate that the embedding query results recorded for the
+        // query is incorrect, which should never happen.
+        ICING_LOG(ERROR) << "Incorrect embedding query results match info "
+                            "recorded for query vector index "
+                         << match.query_vector_index << ", document " << doc_id
+                         << ", property " << property_path;
+        continue;
+      }
+      position_key = global_positions.at(match.position);
+    } else {
+      position_key = -1;
     }
 
     // Create the match proto and add it to the entries map.
@@ -721,8 +737,7 @@ void GetEmbeddingMatchInfo(
     match_proto.set_semantic_score(match.score);
     match_proto.set_embedding_query_vector_index(match.query_vector_index);
     match_proto.set_embedding_query_metric_type(match.metric_type);
-    match_info_entries[global_positions.at(match.position)].push_back(
-        match_proto);
+    match_info_entries[position_key].push_back(std::move(match_proto));
 
     --match_options->max_matches_remaining;
   }

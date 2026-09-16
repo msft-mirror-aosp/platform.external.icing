@@ -29,6 +29,7 @@
 #include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-filter-data.h"
+#include "icing/store/document-group-info.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/util/logging.h"
@@ -57,7 +58,7 @@ DeletePropagationHandler::Create(
                                   document_store, current_time_ms);
 }
 
-libtextclassifier3::StatusOr<std::vector<DocumentStore::DocumentMetadata>>
+libtextclassifier3::StatusOr<DocumentGroupInfo>
 DeletePropagationHandler::Handle(
     const std::unordered_set<DocumentId>& parent_doc_ids) {
   ICING_ASSIGN_OR_RETURN(
@@ -65,7 +66,7 @@ DeletePropagationHandler::Handle(
       GetPropagatedChildDocumentIds(parent_doc_ids));
 
   // Delete all propagated child documents.
-  std::vector<DocumentStore::DocumentMetadata> deleted_doc_metadata_list;
+  DocumentGroupInfo deleted_doc_group_info;
   for (DocumentId child_doc_id : propagated_child_doc_ids) {
     auto deleted_doc_metadata_or = document_store_.ForceDelete(child_doc_id);
     if (!deleted_doc_metadata_or.ok()) {
@@ -79,11 +80,11 @@ DeletePropagationHandler::Handle(
       // Real error.
       return std::move(deleted_doc_metadata_or).status();
     }
-    deleted_doc_metadata_list.push_back(
+    deleted_doc_group_info.AddDocument(
         std::move(deleted_doc_metadata_or).ValueOrDie());
   }
 
-  return deleted_doc_metadata_list;
+  return deleted_doc_group_info;
 }
 
 libtextclassifier3::StatusOr<std::unordered_set<DocumentId>>

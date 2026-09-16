@@ -151,13 +151,15 @@ class DocHitInfoIteratorTermMain : public DocHitInfoIterator {
 
  private:
   // Remaining number of hits including the current hit.
-  // Returns -1 if cached_doc_hit_infos_idx_ is invalid.
+  // Returns 0 if cached_doc_hit_infos_idx_ is invalid indicating that there are
+  // no hits in cached_doc_hit_infos_.
   int cached_doc_hit_info_count() const {
     if (cached_doc_hit_infos_idx_ == -1 ||
         cached_doc_hit_infos_idx_ >= cached_doc_hit_infos_.size()) {
-      return -1;
+      return 0;
     }
-    return cached_doc_hit_infos_.size() - cached_doc_hit_infos_idx_;
+    return static_cast<int>(cached_doc_hit_infos_.size()) -
+           cached_doc_hit_infos_idx_;
   }
 };
 

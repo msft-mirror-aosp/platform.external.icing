@@ -16,6 +16,7 @@
 #define ICING_SCORING_SCORED_DOCUMENT_HIT_H_
 
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -36,21 +37,33 @@ class ScoredDocumentHit {
    public:
     JoinedScoredDocumentHit operator()(
         ScoredDocumentHit&& scored_doc_hit) const;
+
+    JoinedScoredDocumentHit operator()(
+        const ScoredDocumentHit& scored_doc_hit) const;
   };
 
-  ScoredDocumentHit(DocumentId document_id, SectionIdMask hit_section_id_mask,
-                    double score)
+  explicit ScoredDocumentHit(DocumentId document_id,
+                             SectionIdMask hit_section_id_mask, double score)
       : document_id_(document_id),
         hit_section_id_mask_(hit_section_id_mask),
         score_(score) {}
 
-  ScoredDocumentHit(DocumentId document_id, SectionIdMask hit_section_id_mask,
-                    double score, std::vector<double> additional_scores)
+  explicit ScoredDocumentHit(DocumentId document_id,
+                             SectionIdMask hit_section_id_mask, double score,
+                             std::vector<double> additional_scores)
       : document_id_(document_id),
         hit_section_id_mask_(hit_section_id_mask),
         score_(score) {
     SetAdditionalScores(std::move(additional_scores));
   }
+
+  explicit ScoredDocumentHit(
+      DocumentId document_id, SectionIdMask hit_section_id_mask, double score,
+      std::unique_ptr<std::vector<double>> additional_scores)
+      : document_id_(document_id),
+        hit_section_id_mask_(hit_section_id_mask),
+        score_(score),
+        additional_scores_(std::move(additional_scores)) {}
 
   ScoredDocumentHit(const ScoredDocumentHit& other)
       : document_id_(other.document_id_),
@@ -82,6 +95,12 @@ class ScoredDocumentHit {
     if (score() > other.score()) return false;
     return document_id() < other.document_id();
   }
+
+  // Returns the optimized ScoredDocumentHit, or std::nullopt if the
+  // ScoredDocumentHit should be removed (i.e. the original document id maps to
+  // kInvalidDocumentId since it has been deleted).
+  std::optional<ScoredDocumentHit> Optimize(
+      const std::vector<DocumentId>& document_id_old_to_new) &&;
 
   DocumentId document_id() const { return document_id_; }
 
@@ -173,6 +192,11 @@ class JoinedScoredDocumentHit {
         JoinedScoredDocumentHit&& scored_doc_hit) const {
       return scored_doc_hit;
     }
+
+    JoinedScoredDocumentHit operator()(
+        const JoinedScoredDocumentHit& scored_doc_hit) const {
+      return scored_doc_hit;
+    }
   };
 
   explicit JoinedScoredDocumentHit(
@@ -188,6 +212,12 @@ class JoinedScoredDocumentHit {
     }
     return parent_scored_document_hit_ < other.parent_scored_document_hit_;
   }
+
+  // Returns the optimized JoinedScoredDocumentHit, or std::nullopt if the
+  // JoinedScoredDocumentHit should be removed (i.e. the original parent
+  // document id maps to kInvalidDocumentId since it has been deleted).
+  std::optional<JoinedScoredDocumentHit> Optimize(
+      const std::vector<DocumentId>& document_id_old_to_new) &&;
 
   double final_score() const { return final_score_; }
 

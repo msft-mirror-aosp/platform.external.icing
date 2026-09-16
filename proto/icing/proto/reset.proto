@@ -23,7 +23,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Result of a call to IcingSearchEngine.Reset
-// Next tag: 4
+// Next tag: 5
 message ResetResultProto {
   // Status code can be one of:
   //   OK
@@ -39,4 +39,9 @@ message ResetResultProto {
   // The start time of the binder transaction latency. This is used to measure
   // the latency of passing data from the VM via the binder.
   optional int64 vm_binder_transaction_latency_start_time_ms = 3;
+
+  // Size of the ResetResultProto response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 4;
 }

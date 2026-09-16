@@ -15,11 +15,13 @@
 #ifndef ICING_TRANSFORM_ICU_ICU_NORMALIZER_H_
 #define ICING_TRANSFORM_ICU_ICU_NORMALIZER_H_
 
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <string_view>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/character-iterator.h"
 #include "unicode/unorm2.h"
@@ -27,7 +29,6 @@
 
 namespace icing {
 namespace lib {
-
 // Used to normalize UTF8 strings for text matching. It enforces a set of rules:
 //  1. Transforms text to be lowercase UTF8.
 //  2. Transforms full-width Latin characters to ASCII characters if possible.
@@ -50,7 +51,7 @@ class IcuNormalizer : public Normalizer {
   //   INVALID_ARGUMENT if max_term_byte_size <= 0
   //   INTERNAL_ERROR if failed to create any subcomponent
   static libtextclassifier3::StatusOr<std::unique_ptr<IcuNormalizer>> Create(
-      int max_term_byte_size);
+      int max_term_byte_size, const NormalizerRulesConfig& rules_config);
 
   // Normalizes the input term based on rules. See .cc file for rule details.
   //
@@ -81,7 +82,7 @@ class IcuNormalizer : public Normalizer {
     //   A term transformer on success
     //   INTERNAL_ERROR if failed to create any subcomponent
     static libtextclassifier3::StatusOr<std::unique_ptr<TermTransformer>>
-    Create();
+    Create(const std::u16string& rules);
 
     // Closes the UTransliterator instance
     ~TermTransformer();

@@ -177,7 +177,6 @@ class IndexProcessorTest : public Test {
     doc_store_dir_ = base_dir_ + "/doc_store";
 
     Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                           /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
         index_, Index::Create(options, &filesystem_, &icing_filesystem_,
@@ -1128,7 +1127,6 @@ TEST_F(IndexProcessorTest, IndexingDocAutomaticMerge) {
           document));
   Index::Options options(index_dir_,
                          /*index_merge_size=*/document.ByteSizeLong() * 100,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/64);
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, &icing_filesystem_,
@@ -1202,7 +1200,6 @@ TEST_F(IndexProcessorTest, IndexingDocMergeFailureResets) {
   // only allow one document to be added before requiring a merge.
   Index::Options options(index_dir_,
                          /*index_merge_size=*/document.ByteSizeLong(),
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/16);
   ICING_ASSERT_OK_AND_ASSIGN(
       index_, Index::Create(options, &filesystem_, mock_icing_filesystem_.get(),

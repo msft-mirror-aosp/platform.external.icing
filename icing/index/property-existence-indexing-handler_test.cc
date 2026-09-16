@@ -78,6 +78,8 @@ static constexpr std::string_view kValueType = "Value";
 static constexpr std::string_view kPropertyBody = "body";
 static constexpr std::string_view kPropertyTimestamp = "timestamp";
 static constexpr std::string_view kPropertyScore = "score";
+static constexpr std::string_view kPropertyVector = "vectorValues";
+static constexpr std::string_view kPropertyBlobHandle = "blobHandleValues";
 
 class PropertyExistenceIndexingHandlerTest : public Test {
  protected:
@@ -152,6 +154,15 @@ class PropertyExistenceIndexingHandlerTest : public Test {
                     .AddProperty(PropertyConfigBuilder()
                                      .SetName(kPropertyScore)
                                      .SetDataType(TYPE_DOUBLE)
+                                     .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(
+                        PropertyConfigBuilder()
+                            .SetName(kPropertyVector)
+                            .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH)
+                            .SetCardinality(CARDINALITY_OPTIONAL))
+                    .AddProperty(PropertyConfigBuilder()
+                                     .SetName(kPropertyBlobHandle)
+                                     .SetDataType(TYPE_BLOB_HANDLE)
                                      .SetCardinality(CARDINALITY_OPTIONAL)))
             .Build();
     ICING_ASSERT_OK(schema_store_->SetSchema(
@@ -220,12 +231,21 @@ std::vector<DocHitInfo> GetHits(std::unique_ptr<DocHitInfoIterator> iterator) {
 
 TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
       Index::Create(options, &filesystem_, &icing_filesystem_,
                     feature_flags_.get()));
+
+  PropertyProto::VectorProto vector;
+  vector.add_values(0.1);
+  vector.add_values(0.2);
+  vector.add_values(0.3);
+  vector.set_model_signature("my_model");
+
+  PropertyProto::BlobHandleProto blob_handle;
+  blob_handle.set_digest(std::string(32, ' '));
+  blob_handle.set_namespace_("icing");
 
   // Create a document with every property.
   DocumentProto document0 =
@@ -235,6 +255,8 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
           .AddStringProperty(std::string(kPropertyBody), "foo")
           .AddInt64Property(std::string(kPropertyTimestamp), 123)
           .AddDoubleProperty(std::string(kPropertyScore), 456.789)
+          .AddVectorProperty(std::string(kPropertyVector), vector)
+          .AddBlobHandleProperty(std::string(kPropertyBlobHandle), blob_handle)
           .Build();
   // Create a document with missing body.
   DocumentProto document1 =
@@ -243,6 +265,7 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
           .SetSchema(std::string(kValueType))
           .AddInt64Property(std::string(kPropertyTimestamp), 123)
           .AddDoubleProperty(std::string(kPropertyScore), 456.789)
+          .AddVectorProperty(std::string(kPropertyVector), vector)
           .Build();
   // Create a document with missing timestamp.
   DocumentProto document2 =
@@ -251,6 +274,7 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
           .SetSchema(std::string(kValueType))
           .AddStringProperty(std::string(kPropertyBody), "foo")
           .AddDoubleProperty(std::string(kPropertyScore), 456.789)
+          .AddBlobHandleProperty(std::string(kPropertyBlobHandle), blob_handle)
           .Build();
 
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -325,11 +349,25 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandlePropertyExistence) {
       ElementsAre(EqualsDocHitInfo(document_id2, std::vector<SectionId>{0}),
                   EqualsDocHitInfo(document_id1, std::vector<SectionId>{0}),
                   EqualsDocHitInfo(document_id0, std::vector<SectionId>{0})));
+
+  // Get all documents that have "vector".
+  ICING_ASSERT_OK_AND_ASSIGN(itr, QueryExistence(index.get(), kPropertyVector));
+  EXPECT_THAT(
+      GetHits(std::move(itr)),
+      ElementsAre(EqualsDocHitInfo(document_id1, std::vector<SectionId>{0}),
+                  EqualsDocHitInfo(document_id0, std::vector<SectionId>{0})));
+
+  // Get all documents that have "blob_handle".
+  ICING_ASSERT_OK_AND_ASSIGN(itr,
+                             QueryExistence(index.get(), kPropertyBlobHandle));
+  EXPECT_THAT(
+      GetHits(std::move(itr)),
+      ElementsAre(EqualsDocHitInfo(document_id2, std::vector<SectionId>{0}),
+                  EqualsDocHitInfo(document_id0, std::vector<SectionId>{0})));
 }
 
 TEST_F(PropertyExistenceIndexingHandlerTest, HandleNestedPropertyExistence) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,
@@ -471,7 +509,6 @@ TEST_F(PropertyExistenceIndexingHandlerTest, HandleNestedPropertyExistence) {
 
 TEST_F(PropertyExistenceIndexingHandlerTest, SingleEmptyStringIsNonExisting) {
   Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
-                         /*lite_index_sort_at_indexing=*/true,
                          /*lite_index_sort_size=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<Index> index,

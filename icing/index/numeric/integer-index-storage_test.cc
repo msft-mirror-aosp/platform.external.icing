@@ -30,9 +30,11 @@
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/persistent-storage.h"
+#include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/integer-index-data.h"
 #include "icing/index/numeric/posting-list-integer-index-serializer.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -1556,17 +1558,19 @@ TEST_P(IntegerIndexStorageTest, IteratorCallStatsSingleBucketChainedBlocks) {
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
-  int32_t num_keys_to_add = 800;
+  // Create keys to fill 1 single bucket with 3 chained posting lists. Using
+  // block_size / sizeof(IntegerIndexData) * 2 will fill more than 2 blocks
+  // because of the block header.
+  int32_t expected_num_blocks_inspected = 3;
+  int32_t num_keys_to_add = FlashIndexStorage::SelectBlockSize() /
+                            sizeof(IntegerIndexData) *
+                            (expected_num_blocks_inspected - 1);
   ASSERT_THAT(num_keys_to_add,
               Lt(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit));
   for (int i = 0; i < num_keys_to_add; ++i) {
     ICING_ASSERT_OK(storage->AddKeys(/*document_id=*/i, kDefaultSectionId,
                                      /*new_keys=*/{i}));
   }
-
-  // Those 800 keys are in 1 single bucket with 3 chained posting lists, so we
-  // will be inspecting 3 blocks.
-  int32_t expected_num_blocks_inspected = 3;
 
   // GetIterator for range [INT_MIN, INT_MAX] and Advance all.
   ICING_ASSERT_OK_AND_ASSIGN(

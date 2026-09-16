@@ -67,9 +67,9 @@ libtextclassifier3::StatusOr<LiteIndex::Options> CreateLiteIndexOptions(
         "Requested hit buffer size %d is too large.",
         options.index_merge_size));
   }
-  return LiteIndex::Options(
-      options.base_dir + "/idx/lite.", options.index_merge_size,
-      options.lite_index_sort_at_indexing, options.lite_index_sort_size);
+  return LiteIndex::Options(options.base_dir + "/idx/lite.",
+                            options.index_merge_size,
+                            options.lite_index_sort_size);
 }
 
 std::string MakeMainIndexFilepath(const std::string& base_dir) {
@@ -169,15 +169,14 @@ libtextclassifier3::StatusOr<std::unique_ptr<Index>> Index::Create(
       LiteIndex::Create(lite_index_options, icing_filesystem));
   // Sort the lite index if we've enabled sorting the HitBuffer at indexing
   // time, and there's an unsorted tail exceeding the threshold.
-  if (options.lite_index_sort_at_indexing &&
-      lite_index->HasUnsortedHitsExceedingSortThreshold()) {
+  if (lite_index->HasUnsortedHitsExceedingSortThreshold()) {
     lite_index->SortHits();
   }
 
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<MainIndex> main_index,
       MainIndex::Create(MakeMainIndexFilepath(options.base_dir), filesystem,
-                        icing_filesystem));
+                        icing_filesystem, feature_flags));
   return std::unique_ptr<Index>(
       new Index(options, std::move(term_id_codec), std::move(lite_index),
                 std::move(main_index), filesystem, feature_flags));
@@ -200,7 +199,7 @@ libtextclassifier3::Status Index::TruncateTo(DocumentId document_id) {
   if (main_index_->last_added_document_id() != kInvalidDocumentId &&
       main_index_->last_added_document_id() > document_id) {
     ICING_VLOG(1) << "Clipping to " << document_id
-                  << ". Throwing out lite index which is at "
+                  << ". Throwing out main index which is at "
                   << main_index_->last_added_document_id();
     ICING_RETURN_IF_ERROR(main_index_->Reset());
   }
@@ -310,6 +309,26 @@ libtextclassifier3::Status Index::Optimize(
   }
   return lite_index_->Optimize(document_id_old_to_new, term_id_codec_.get(),
                                new_last_added_document_id);
+}
+
+libtextclassifier3::Status Index::OptimizeInto(
+    const std::string& new_base_dir,
+    const std::vector<DocumentId>& document_id_old_to_new,
+    DocumentId new_last_added_document_id) const {
+  if (new_base_dir == options_.base_dir) {
+    return absl_ports::InvalidArgumentError(
+        "New base directory is the same as current");
+  }
+  ICING_ASSIGN_OR_RETURN(
+      LiteIndex::Options new_lite_options,
+      CreateLiteIndexOptions(Options(new_base_dir, options_.index_merge_size,
+                                     options_.lite_index_sort_size)));
+  ICING_RETURN_IF_ERROR(lite_index_->OptimizeInto(
+      new_lite_options, document_id_old_to_new, term_id_codec_.get(),
+      new_last_added_document_id));
+
+  return main_index_->OptimizeInto(MakeMainIndexFilepath(new_base_dir),
+                                   document_id_old_to_new);
 }
 
 libtextclassifier3::Status Index::Editor::BufferTerm(

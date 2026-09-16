@@ -96,8 +96,7 @@ libtextclassifier3::Status DocHitInfoIteratorByUri::Advance() {
 
   if (current_document_id_index_ >= target_document_ids_.size()) {
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
   doc_hit_info_.set_document_id(
       target_document_ids_[current_document_id_index_]);

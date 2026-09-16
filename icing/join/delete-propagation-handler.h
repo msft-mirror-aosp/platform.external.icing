@@ -17,11 +17,11 @@
 
 #include <cstdint>
 #include <unordered_set>
-#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/schema/schema-store.h"
+#include "icing/store/document-group-info.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 
@@ -48,10 +48,10 @@ class DeletePropagationHandler {
   //   only deletes the propagated child documents.
   //
   // Returns:
-  //   - A vector of deleted child document metadata on success.
+  //   - A DocumentGroupInfo of deleted child documents on success.
   //   - INTERNAL_ERROR on any I/O errors.
-  libtextclassifier3::StatusOr<std::vector<DocumentStore::DocumentMetadata>>
-  Handle(const std::unordered_set<DocumentId>& parent_doc_ids);
+  libtextclassifier3::StatusOr<DocumentGroupInfo> Handle(
+      const std::unordered_set<DocumentId>& parent_doc_ids);
 
  private:
   explicit DeletePropagationHandler(

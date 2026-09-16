@@ -34,6 +34,7 @@
 #include "icing/result/projector.h"
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-state-v2.h"
+#include "icing/result/result-utils.h"
 #include "icing/result/snippet-context.h"
 #include "icing/result/snippet-retriever.h"
 #include "icing/schema/schema-store.h"
@@ -102,7 +103,8 @@ bool ApplySnippet(ResultAdjustmentInfo* adjustment_info,
 
 std::optional<int> GroupResultLimiterV2::GetGroupResultLimitsIndex(
     const ScoredDocumentHit& scored_document_hit,
-    const std::unordered_map<int32_t, int>& entry_id_group_id_map,
+    const std::unordered_map<result_utils::ResultGroupingEntryId, int>&
+        entry_id_group_index_map,
     const DocumentStore& document_store,
     ResultSpecProto::ResultGroupingType result_group_type,
     int64_t current_time_ms) const {
@@ -122,17 +124,18 @@ std::optional<int> GroupResultLimiterV2::GetGroupResultLimitsIndex(
   NamespaceId namespace_id = document_filter_data_optional->namespace_id();
   SchemaTypeId schema_type_id = document_filter_data_optional->schema_type_id();
 
-  std::optional<int32_t> entry_id = document_store.GetResultGroupingEntryId(
-      result_group_type, namespace_id, schema_type_id);
+  std::optional<result_utils::ResultGroupingEntryId> entry_id =
+      result_utils::EncodeResultGroupingEntryId(result_group_type, namespace_id,
+                                                schema_type_id);
   if (!entry_id.has_value()) {
     // No limit. Return -1 to skip the group result limit.
     return -1;
   }
 
-  auto iter = entry_id_group_id_map.find(*entry_id);
-  if (iter == entry_id_group_id_map.end()) {
-    // If a ResultGrouping Entry Id isn't found in entry_id_group_id_map, then
-    // there are no limits placed on results from this entry id.
+  auto iter = entry_id_group_index_map.find(*entry_id);
+  if (iter == entry_id_group_index_map.end()) {
+    // If a ResultGrouping Entry Id isn't found in entry_id_group_index_map,
+    // then there are no limits placed on results from this entry id.
     return -1;
   }
   return iter->second;
@@ -190,8 +193,7 @@ std::pair<PageResult, bool> ResultRetrieverV2::RetrieveNextPage(
       //
       // (Use subtraction to avoid integer overflow).
       size_t result_bytes = result.result_proto->ByteSizeLong();
-      if (feature_flags_.enable_strict_page_byte_size_limit() &&
-          !results.empty() &&
+      if (!results.empty() &&
           result_bytes >= result_state.num_total_bytes_per_page_threshold() -
                               num_total_bytes) {
         // Exceeds the byte size threshold, so skip the current document. Also
@@ -241,7 +243,7 @@ ResultRetrieverV2::RetrieveResult ResultRetrieverV2::Retrieve(
   // and check if the document should be excluded.
   std::optional<int> idx = group_result_limiter_->GetGroupResultLimitsIndex(
       next_best_document_hit.parent_scored_document_hit(),
-      result_state.entry_id_group_id_map(), doc_store_,
+      result_state.entry_id_group_index_map, doc_store_,
       result_state.result_group_type(), current_time_ms);
   if (!idx.has_value()) {
     // Should exclude the document, so return an invalid result.
@@ -279,12 +281,12 @@ ResultRetrieverV2::RetrieveResult ResultRetrieverV2::Retrieve(
   DocumentProto document = std::move(document_or).ValueOrDie();
 
   // Apply parent projection
-  ApplyProjection(result_state.parent_adjustment_info(), &document);
+  ApplyProjection(result_state.parent_adjustment_info.get(), &document);
 
   SearchResultProto::ResultProto result;
   // Add parent snippet if requested.
   bool has_parent_snippets = ApplySnippet(
-      result_state.parent_adjustment_info(), *snippet_retriever_, document,
+      result_state.parent_adjustment_info.get(), *snippet_retriever_, document,
       doc_id,
       next_best_document_hit.parent_scored_document_hit().hit_section_id_mask(),
       &result);
@@ -318,11 +320,11 @@ ResultRetrieverV2::RetrieveResult ResultRetrieverV2::Retrieve(
     }
 
     DocumentProto child_document = std::move(child_document_or).ValueOrDie();
-    ApplyProjection(result_state.child_adjustment_info(), &child_document);
+    ApplyProjection(result_state.child_adjustment_info.get(), &child_document);
 
     SearchResultProto::ResultProto* child_result = result.add_joined_results();
     // Add child snippet if requested.
-    ApplySnippet(result_state.child_adjustment_info(), *snippet_retriever_,
+    ApplySnippet(result_state.child_adjustment_info.get(), *snippet_retriever_,
                  child_document, child_doc_id,
                  child_scored_document_hit.hit_section_id_mask(), child_result);
 
