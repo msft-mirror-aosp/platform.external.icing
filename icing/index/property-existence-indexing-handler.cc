@@ -60,7 +60,9 @@ void ConstructPropertyExistenceMetaToken(
         property.double_values_size() > 0 ||
         property.boolean_values_size() > 0 ||
         property.bytes_values_size() > 0 ||
-        property.document_values_size() > 0) {
+        property.document_values_size() > 0 ||
+        property.vector_values_size() > 0 ||
+        property.blob_handle_values_size() > 0) {
       meta_tokens.insert(
           absl_ports::StrCat(kPropertyExistenceTokenPrefix, new_path));
     }

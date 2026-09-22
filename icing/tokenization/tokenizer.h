@@ -44,9 +44,10 @@ class Tokenizer {
   // An iterator helping to get tokens.
   // Example usage:
   //
+  // std::vector<Token> tokens;
   // while (iterator.Advance()) {
-  //   const Token& token = iterator.GetToken();
-  //   // Do something
+  //   iterator.GetTokens(&tokens);
+  //   // Do something for each Token
   // }
   class Iterator {
    public:
@@ -55,10 +56,17 @@ class Tokenizer {
     // Advances to the next token. Returns false if it has reached the end.
     virtual bool Advance() = 0;
 
-    // Returns the current token, maybe with compound tokens as well. It can be
-    // called only when Advance() returns true, otherwise an empty Token vector
-    // may be returned.
-    virtual std::vector<Token> GetTokens() const = 0;
+    // Populates `out_tokens` with the current token, maybe with compound tokens
+    // as well. It can be called only when Advance() returns true. The vector is
+    // cleared before being populated.
+    virtual void GetTokens(std::vector<Token>* out_tokens) const = 0;
+
+    // Make it faster to write/refactor tests.
+    std::vector<Token> GetTokensForTest() const {
+      std::vector<Token> result;
+      this->GetTokens(&result);
+      return result;
+    }
 
     virtual libtextclassifier3::StatusOr<CharacterIterator>
     CalculateTokenStart() {
@@ -80,7 +88,9 @@ class Tokenizer {
     // iterator.ResetToTokenStartingAfter(4);
     // // The first full token starting after position 4 (the 'b' in "bar") is
     // // "baz".
-    // PrintToken(iterator.GetToken());  // prints "baz"
+    // std::vector<Token> tokens;
+    // iterator.GetTokens(&tokens);
+    // PrintToken(tokens[0]);  // prints "baz"
     virtual bool ResetToTokenStartingAfter(int32_t utf32_offset) {
       return false;
     }
@@ -93,7 +103,9 @@ class Tokenizer {
     // iterator.ResetToTokenEndingBefore(4);
     // // The first full token ending before position 4 (the 'b' in "bar") is
     // // "foo".
-    // PrintToken(iterator.GetToken());  // prints "foo"
+    // std::vector<Token> tokens;
+    // iterator.GetTokens(&tokens);
+    // PrintToken(tokens[0]);  // prints "baz"
     virtual bool ResetToTokenEndingBefore(int32_t utf32_offset) {
       return false;
     }

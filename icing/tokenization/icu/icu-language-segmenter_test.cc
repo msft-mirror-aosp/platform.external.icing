@@ -61,6 +61,16 @@ class IcuLanguageSegmenterAllLocalesTest
 
 }  // namespace
 
+TEST_P(IcuLanguageSegmenterAllLocalesTest, SuccessfulIcuSegmenterSetsOkStatus) {
+  StatusProto icu_segmenter_creation_status;
+  ICING_ASSERT_OK_AND_ASSIGN(auto language_segmenter,
+                             language_segmenter_factory::Create(
+                                 language_segmenter_factory::SegmenterOptions(
+                                     GetLocale(), jni_cache_.get()),
+                                 &icu_segmenter_creation_status));
+  EXPECT_THAT(icu_segmenter_creation_status.code(), Eq(StatusProto::OK));
+}
+
 TEST_P(IcuLanguageSegmenterAllLocalesTest, EmptyText) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,

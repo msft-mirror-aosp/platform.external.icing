@@ -150,10 +150,10 @@ class DocumentDependentGraphTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         join_index_, QualifiedIdJoinIndexImplV3::Create(
                          filesystem_, join_index_dir_, *feature_flags_));
-    ICING_ASSERT_OK_AND_ASSIGN(
-        join_indexing_handler_,
-        QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                               join_index_.get()));
+    ICING_ASSERT_OK_AND_ASSIGN(join_indexing_handler_,
+                               QualifiedIdJoinIndexingHandler::Create(
+                                   &fake_clock_, doc_store_.get(),
+                                   join_index_.get(), feature_flags_.get()));
   }
 
   void TearDown() override {

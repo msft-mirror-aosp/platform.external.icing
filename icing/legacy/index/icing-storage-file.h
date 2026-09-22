@@ -17,8 +17,10 @@
 #ifndef ICING_LEGACY_INDEX_ICING_STORAGE_FILE_H_
 #define ICING_LEGACY_INDEX_ICING_STORAGE_FILE_H_
 
+#include <cstdint>
 #include <string>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-storage.h"
 
@@ -33,7 +35,7 @@ class IcingStorageFile : virtual public IIcingStorage {
 
   // This must be called before the object is usable.
   // Returns true if the storage is in a usable state.
-  bool Init() override;
+  libtextclassifier3::Status Init() override;
 
   // Default implementation is a no-op.
   bool UpgradeTo(int new_version) override { return true; }
@@ -49,7 +51,7 @@ class IcingStorageFile : virtual public IIcingStorage {
 
   // Syncs any unwritten data to disk.
   // REQUIRES: is_initialized() == true
-  bool Sync() override;
+  libtextclassifier3::Status Sync() override;
 
   // Gets the file size of the underlying file.
   // Returns kBadFileSize on error.

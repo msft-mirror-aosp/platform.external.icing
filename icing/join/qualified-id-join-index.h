@@ -27,9 +27,11 @@
 #include "icing/file/persistent-storage.h"
 #include "icing/join/document-id-to-join-info.h"
 #include "icing/join/document-join-id-pair.h"
+#include "icing/join/qualified-id.h"
 #include "icing/schema/joinable-property.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
 #include "icing/util/crc32.h"
@@ -114,8 +116,8 @@ class QualifiedIdJoinIndex : public PersistentStorage {
       std::vector<NamespaceIdFingerprint>&&
           ref_namespace_id_uri_fingerprints) = 0;
 
-  // (v3 only) Puts a new child document and its referenced parent documents
-  // into the join index.
+  // (v3 only, deprecated) Puts a new child document and its referenced parent
+  // documents into the join index.
   //
   // Returns:
   //   - OK on success
@@ -124,6 +126,18 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   virtual libtextclassifier3::Status Put(
       const DocumentJoinIdPair& child_document_join_id_pair,
       std::vector<DocumentId>&& parent_document_ids) = 0;
+
+  // (v3 only) Puts new join data into the index using qualified ids: adds a new
+  // child document and its referenced parent documents into the join index.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if child_document_join_id_pair is invalid
+  //   - Any FileBackedVector or KeyMapper errors
+  virtual libtextclassifier3::Status Put(
+      const DocumentStore* document_store,
+      const DocumentJoinIdPair& child_document_join_id_pair,
+      std::vector<QualifiedId>&& parent_qualified_ids) = 0;
 
   // (v2 only) Returns a JoinDataIterator for iterating through all join data of
   // the specified (schema_type_id, joinable_property_id).
@@ -158,6 +172,18 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   virtual libtextclassifier3::Status MigrateParent(
       DocumentId old_document_id, DocumentId new_document_id) = 0;
 
+  // Migrates existing join data for a parent document from its qualified id to
+  // a new document id. This is used when a document that was previously
+  // referenced as a "missing parent" (by its qualified id) is indexed and
+  // assigned a document id.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if new_document_id is invalid
+  //   - Any errors, depending on the implementation
+  virtual libtextclassifier3::Status MigrateParent(
+      const QualifiedId& parent_qualified_id, DocumentId new_document_id) = 0;
+
   // Reduces internal file sizes by reclaiming space and ids of deleted
   // documents. Qualified id type joinable index will convert all entries to the
   // new document ids.
@@ -176,9 +202,34 @@ class QualifiedIdJoinIndex : public PersistentStorage {
   //     an invalid state and the caller should handle it properly (e.g. discard
   //     and rebuild)
   virtual libtextclassifier3::Status Optimize(
+      const DocumentStore* document_store,
       const std::vector<DocumentId>& document_id_old_to_new,
       const std::vector<NamespaceId>& namespace_id_old_to_new,
       DocumentId new_last_added_document_id) = 0;
+
+  // Transfers and compacts data into a new qualified id join index under
+  // new_working_path. Unlike Optimize(), this method does not modify or swap
+  // the current index directory, and writes directly into new_working_path.
+  //
+  // - document_store: only used in V3.
+  // - new_working_path: destination working path for the optimized index.
+  // - document_id_old_to_new: a map for converting old document id to new
+  //   document id.
+  // - namespace_id_old_to_new: a map for converting old namespace id to new
+  //   namespace id.
+  // - new_last_added_document_id: will be used to update the last added
+  //                               document id in the qualified id type joinable
+  //                               index.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if new_working_path is the same as the current
+  //   - INTERNAL_ERROR on I/O error
+  virtual libtextclassifier3::Status OptimizeInto(
+      const DocumentStore* document_store, const std::string& new_working_path,
+      const std::vector<DocumentId>& document_id_old_to_new,
+      const std::vector<NamespaceId>& namespace_id_old_to_new,
+      DocumentId new_last_added_document_id) const = 0;
 
   // Clears all data and set last_added_document_id to kInvalidDocumentId.
   //

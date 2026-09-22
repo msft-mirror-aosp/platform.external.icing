@@ -16,6 +16,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <cstring>
+#include <optional>
 #include <queue>
 #include <string>
 #include <string_view>
@@ -33,8 +36,11 @@
 #include "icing/feature-flags.h"
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/schema/property-util.h"
 #include "icing/util/logging.h"
+#include "icing/util/sha256.h"
 #include "icing/util/status-macros.h"
+#include <google/protobuf/repeated_field.h>
 
 namespace icing {
 namespace lib {
@@ -98,6 +104,7 @@ bool AreEmbeddingIndexingConfigsEqual(
 bool ArePropertiesEqual(const PropertyConfigProto& old_property,
                         const PropertyConfigProto& new_property) {
   return old_property.property_name() == new_property.property_name() &&
+         old_property.description() == new_property.description() &&
          old_property.data_type() == new_property.data_type() &&
          old_property.schema_type() == new_property.schema_type() &&
          old_property.cardinality() == new_property.cardinality() &&
@@ -122,7 +129,7 @@ bool IsCardinalityCompatible(const PropertyConfigProto& old_property,
   if (old_property.cardinality() < new_property.cardinality()) {
     // We allow a new, less restrictive cardinality (i.e. a REQUIRED field
     // can become REPEATED or OPTIONAL, but not the other way around).
-    ICING_VLOG(1) << absl_ports::StrCat(
+    ICING_LOG(INFO) << absl_ports::StrCat(
         "Cardinality is more restrictive than before ",
         PropertyConfigProto::Cardinality::Code_Name(old_property.cardinality()),
         "->",
@@ -139,7 +146,7 @@ bool IsDataTypeCompatible(const PropertyConfigProto& old_property,
     // TODO(cassiewang): Maybe we can be a bit looser with this, e.g. we just
     // string cast an int64_t to a string. But for now, we'll stick with
     // simplistics.
-    ICING_VLOG(1) << absl_ports::StrCat(
+    ICING_LOG(INFO) << absl_ports::StrCat(
         "Data type ",
         PropertyConfigProto::DataType::Code_Name(old_property.data_type()),
         "->",
@@ -152,9 +159,9 @@ bool IsDataTypeCompatible(const PropertyConfigProto& old_property,
 bool IsSchemaTypeCompatible(const PropertyConfigProto& old_property,
                             const PropertyConfigProto& new_property) {
   if (old_property.schema_type() != new_property.schema_type()) {
-    ICING_VLOG(1) << absl_ports::StrCat("Schema type ",
-                                        old_property.schema_type(), "->",
-                                        new_property.schema_type());
+    ICING_LOG(INFO) << absl_ports::StrCat("Schema type ",
+                                          old_property.schema_type(), "->",
+                                          new_property.schema_type());
     return false;
   }
   return true;
@@ -167,31 +174,278 @@ bool IsPropertyCompatible(const PropertyConfigProto& old_property,
          IsCardinalityCompatible(old_property, new_property);
 }
 
-void AddIncompatibleChangeToDelta(
-    std::unordered_set<std::string>& incompatible_delta,
+// Check account properties compatibility with full support for nested paths:
+// 1. Demoting: Changing an existing property from an account property to a
+//    regular property is COMPATIBLE.
+// 2. Promoting: Changing an existing regular property into an account
+//    property is INCOMPATIBLE.
+// 3. New property: Introducing a completely new property and defining it
+//    as an account property is COMPATIBLE.
+bool IsAccountPropertyIncompatible(
     const SchemaTypeConfigProto& old_type_config,
-    const SchemaUtil::DependentMap& new_schema_dependent_map,
-    const SchemaUtil::TypeConfigMap& old_type_config_map,
-    const SchemaUtil::TypeConfigMap& new_type_config_map) {
-  // If this type is incompatible, then every type that depends on it might
-  // also be incompatible. Use the dependent map to mark those ones as
-  // incompatible too.
-  incompatible_delta.insert(old_type_config.schema_type());
-  auto dependent_types_itr =
-      new_schema_dependent_map.find(old_type_config.schema_type());
-  if (dependent_types_itr != new_schema_dependent_map.end()) {
-    for (const auto& [dependent_type, _] : dependent_types_itr->second) {
-      // The types from new_schema that depend on the current
-      // old_type_config may not present in old_schema.
-      // Those types will be listed at schema_delta.schema_types_new
-      // instead.
-      std::string dependent_type_str(dependent_type);
-      if (old_type_config_map.find(dependent_type_str) !=
-          old_type_config_map.end()) {
-        incompatible_delta.insert(std::move(dependent_type_str));
+    const SchemaTypeConfigProto& new_type_config,
+    const SchemaUtil::TypeConfigMap& old_type_config_map) {
+  // Track all account properties that already existed in the older definition.
+  std::unordered_set<std::string_view> old_account_properties;
+  for (const auto& prop : old_type_config.account_properties()) {
+    old_account_properties.insert(prop);
+  }
+
+  // Iterate through each account property path declared in the new schema
+  // version.
+  for (std::string_view new_account_path :
+       new_type_config.account_properties()) {
+    // If the path was already an account property in the past, it remains fully
+    // compatible.
+    if (old_account_properties.count(new_account_path) > 0) {
+      continue;
+    }
+
+    // Trace down the path components inside the old schema to evaluate if this
+    // property chain is newly introduced or if it's an existing regular field
+    // being upgraded.
+    std::vector<std::string_view> path_segments =
+        property_util::SplitPropertyPathExpr(new_account_path);
+
+    const SchemaTypeConfigProto* current_old_type = &old_type_config;
+    bool property_existed_in_old_schema = true;
+
+    for (size_t i = 0; i < path_segments.size(); ++i) {
+      property_util::PropertyInfo prop_info =
+          property_util::ParsePropertyNameExpr(path_segments[i]);
+
+      const PropertyConfigProto* matched_old_prop = nullptr;
+      for (const auto& old_prop : current_old_type->properties()) {
+        if (old_prop.property_name() == prop_info.name) {
+          matched_old_prop = &old_prop;
+          break;
+        }
+      }
+
+      // If any node in the path is missing from the old schema layout, it
+      // counts as a brand-new property path addition, which is safe and
+      // compatible.
+      if (matched_old_prop == nullptr) {
+        property_existed_in_old_schema = false;
+        break;
+      }
+
+      // If there are more segments to explore, descend into the nested
+      // document.
+      if (i < path_segments.size() - 1) {
+        if (matched_old_prop->data_type() !=
+            PropertyConfigProto::DataType::DOCUMENT) {
+          property_existed_in_old_schema = false;
+          break;
+        }
+
+        auto old_lookup_it =
+            old_type_config_map.find(matched_old_prop->schema_type());
+        if (old_lookup_it == old_type_config_map.end()) {
+          property_existed_in_old_schema = false;
+          break;
+        }
+        current_old_type = &old_lookup_it->second;
+      }
+    }
+
+    // If the entire property path previously existed but lacked an account
+    // designation, it means a normal structural field was promoted. This breaks
+    // backfilling compatibility.
+    if (property_existed_in_old_schema) {
+      ICING_LOG(INFO) << absl_ports::StrCat(
+          "Property path '", old_type_config.schema_type(), ".",
+          new_account_path,
+          "' was promoted to an account property, which is incompatible.");
+      return true;  // Found an incompatibility.
+    }
+  }
+
+  return false;  // All account properties are compatible.
+}
+
+// Validates that all path expressions defined in 'account_properties' across
+// all schema types point to valid, existing properties within the schema
+// definition. This executes as a top-down verification phase after basic
+// property checks pass.
+libtextclassifier3::Status ValidateAllAccountProperties(
+    const SchemaProto& schema) {
+  // 1. Build a forward lookup map from schema_type name to its config proto.
+  // This allows O(1) random-access retrieval of any child type config during
+  // deep nested document path traversal, keeping overall complexity at O(N).
+  std::unordered_map<std::string_view, const SchemaTypeConfigProto*>
+      schema_type_lookup;
+  for (const auto& type_config : schema.types()) {
+    schema_type_lookup[type_config.schema_type()] = &type_config;
+  }
+
+  // 2. Iterate through every schema type defined in the master schema.
+  for (const auto& type_config : schema.types()) {
+    std::string_view schema_type(type_config.schema_type());
+
+    // 3. Process each account property path expression defined for the current
+    // type.
+    for (const auto& account_property : type_config.account_properties()) {
+      std::vector<std::string_view> path_segments =
+          property_util::SplitPropertyPathExpr(account_property);
+
+      const SchemaTypeConfigProto* current_type = &type_config;
+
+      // 4. Trace the path segments sequentially from top to bottom.
+      for (size_t i = 0; i < path_segments.size(); ++i) {
+        property_util::PropertyInfo prop_info =
+            property_util::ParsePropertyNameExpr(path_segments[i]);
+
+        const PropertyConfigProto* matched_prop = nullptr;
+        // Search for a matching property declaration inside the current tier's
+        // configuration.
+        for (const auto& prop : current_type->properties()) {
+          if (prop.property_name() == prop_info.name) {
+            matched_prop = &prop;
+            break;
+          }
+        }
+
+        if (matched_prop == nullptr) {
+          return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+              "Account property path '", account_property,
+              "' is invalid or does not exist in schema type '", schema_type,
+              "'"));
+        }
+
+        // 5. If this is an intermediate segment (not the leaf node), we must
+        // descend further.
+        if (i < path_segments.size() - 1) {
+          if (matched_prop->data_type() !=
+              PropertyConfigProto::DataType::DOCUMENT) {
+            return absl_ports::InvalidArgumentError(
+                absl_ports::StrCat("Account property path '", account_property,
+                                   "' is invalid because '", prop_info.name,
+                                   "' is not a DOCUMENT type"));
+          }
+
+          auto lookup_it = schema_type_lookup.find(matched_prop->schema_type());
+          if (lookup_it == schema_type_lookup.end()) {
+            return absl_ports::InvalidArgumentError(
+                absl_ports::StrCat("Account property path '", account_property,
+                                   "' references a non-existent schema type '",
+                                   matched_prop->schema_type(), "'"));
+          }
+
+          // Advance our structural pointer deeper into the child document
+          // definition for the next loop cycle.
+          current_type = lookup_it->second;
+        }
       }
     }
   }
+  return libtextclassifier3::Status::OK;
+}
+
+// Propagates schema type incompatibilities through the dependency graph.
+// Every type already present in `incompatible_delta` is treated as a seed: any
+// type that (transitively) depends on a seed is itself incompatible and gets
+// added to `incompatible_delta`. This lets callers collect all directly
+// incompatible types first and then propagate them in a single BFS pass,
+// rather than running a separate BFS per seed type.
+void PropagateIncompatibleChangeToDelta(
+    std::unordered_set<std::string>& incompatible_delta,
+    const SchemaUtil::DependentMap& new_schema_dependent_map,
+    const SchemaUtil::TypeConfigMap& old_type_config_map) {
+  // Seed the BFS queue with all types that are already marked incompatible.
+  std::queue<std::string_view> queue;
+  for (const std::string& incompatible_type : incompatible_delta) {
+    queue.push(incompatible_type);
+  }
+
+  while (!queue.empty()) {
+    std::string_view curr_type = queue.front();
+    queue.pop();
+    auto dependent_types_itr = new_schema_dependent_map.find(curr_type);
+    if (dependent_types_itr == new_schema_dependent_map.end()) {
+      continue;
+    }
+    for (const auto& [dependent_type, _] : dependent_types_itr->second) {
+      // The types from new_schema that depend on the current type may not be
+      // present in old_schema. Those types will be listed at
+      // schema_delta.schema_types_new instead.
+      std::string dependent_type_str(dependent_type);
+      if (old_type_config_map.find(dependent_type_str) !=
+          old_type_config_map.end()) {
+        if (incompatible_delta.insert(std::move(dependent_type_str)).second) {
+          queue.push(dependent_type);
+        }
+      }
+    }
+  }
+}
+
+constexpr uint8_t kTermIndexMask = 1 << 0;
+constexpr uint8_t kIntegerIndexMask = 1 << 1;
+constexpr uint8_t kEmbeddingIndexMask = 1 << 2;
+constexpr uint8_t kAllIndexMask =
+    kTermIndexMask | kIntegerIndexMask | kEmbeddingIndexMask;
+
+// Returns a bitmask representing all index types (Term/String, Integer, and
+// Embedding/Vector) that are present in the given root_type_config and any of
+// its nested schema types (via DataType::DOCUMENT properties).
+//
+// When a schema type undergoes section ID reassignment (e.g. due to adding,
+// removing, or modifying indexed properties in either the schema type itself
+// or one of its nested document types), we need to determine which index trees
+// (Term, Integer, Embedding) are actually used by this schema type tree.
+// Instead of blindly marking all three index trees as incompatible, we use
+// this function to accurately check which index types are present in both the
+// old and new schema definitions. Only the specific indexes that are actually
+// present are marked as incompatible and cleared during a fine-grained schema
+// rebuild.
+//
+// NOTE: When a DOCUMENT property uses indexable_nested_properties_list rather
+// than index_nested_properties=true, this function conservatively inspects ALL
+// indexed properties of the child schema type (not just those listed). This
+// is a safe over-approximation: it may mark an index type as needing a
+// rebuild when it wasn't strictly affected, but it will never fail to mark
+// an index type that does need rebuilding.
+uint8_t GetIndexTypesMask(const SchemaTypeConfigProto& root_type_config,
+                          const SchemaUtil::TypeConfigMap& type_config_map) {
+  uint8_t mask = 0;
+  std::unordered_set<std::string_view> visited;
+  std::queue<const SchemaTypeConfigProto*> queue;
+
+  visited.insert(root_type_config.schema_type());
+  queue.push(&root_type_config);
+
+  while (!queue.empty()) {
+    const SchemaTypeConfigProto* current_config = queue.front();
+    queue.pop();
+    for (const PropertyConfigProto& property : current_config->properties()) {
+      if (!SchemaUtil::IsIndexedProperty(property)) {
+        continue;
+      }
+      if (property.data_type() == PropertyConfigProto::DataType::STRING) {
+        mask |= kTermIndexMask;
+      } else if (property.data_type() == PropertyConfigProto::DataType::INT64) {
+        mask |= kIntegerIndexMask;
+      } else if (property.data_type() ==
+                 PropertyConfigProto::DataType::VECTOR) {
+        mask |= kEmbeddingIndexMask;
+      } else if (property.data_type() ==
+                 PropertyConfigProto::DataType::DOCUMENT) {
+        auto child_itr = type_config_map.find(property.schema_type());
+        // If the property is a nested document, push the child schema type to
+        // the queue to recursively inspect its properties. Use visited set to
+        // prevent infinite cycles (e.g. A -> B -> A).
+        if (child_itr != type_config_map.end() &&
+            visited.insert(child_itr->second.schema_type()).second) {
+          queue.push(&child_itr->second);
+        }
+      }
+      if (mask == kAllIndexMask) {
+        return mask;
+      }
+    }
+  }
+  return mask;
 }
 
 // Returns if C1 <= C2 based on the following rule, where C1 and C2 are
@@ -311,6 +565,338 @@ void FindScorablePropertyInconsistentTypes(
 
 }  // namespace
 
+// SchemaUtil::TypeConfigInfoCache methods.
+libtextclassifier3::Status SchemaUtil::TypeConfigInfoCache::AddTypeConfig(
+    SchemaTypeConfigProto&& type_config) {
+  const std::string& type_name = type_config.schema_type();
+  if (!enable_schema_definition_deduping_) {
+    // Schema definition deduping is disabled. Just insert the type config
+    // directly.
+    type_config_map_.insert({type_name, std::move(type_config)});
+    return libtextclassifier3::Status::OK;
+  }
+
+  // Schema definition deduping enabled
+  // Step 1: Check that the type config is not already in the type_config_map_.
+  if (type_config_map_.find(type_name) != type_config_map_.end()) {
+    ICING_VLOG(1) << "Schema type '" << type_name
+                  << "' not added because it already exists in the "
+                     "type_config_info_cache.";
+    return libtextclassifier3::Status::OK;
+  }
+
+  // Step 2: Compute the properties digest.
+  std::optional<Sha256Digest> properties_digest =
+      SchemaUtil::GetSchemaPropertiesDigest(type_config);
+  Sha256Digest properties_digest_value;
+  if (properties_digest) {
+    properties_digest_value = std::move(*properties_digest);
+  } else {
+    // The properties digest is empty or corrupted. We can still recompute the
+    // properties digest if either:
+    // 1. The properties digest is empty (this indicates that this is the first
+    //    time the config is provided and it has not been processed yet)
+    // 2. The properties field is not empty. This means that the current digest
+    //    value must be corrupted. Therefore, we will recalculate this.
+    //
+    // Populate the properties digest field once recomputed so that the correct
+    // digest is stored in the type_config_map_.
+    if (type_config.properties_digest().empty() ||
+        !type_config.properties().empty()) {
+      properties_digest_value =
+          SchemaUtil::PopulatePropertiesDigestField(type_config);
+    } else {
+      return absl_ports::InternalError(absl_ports::StrCat(
+          "Cannot add schema type config '", type_name,
+          "' because its digest is corrupted and cannot be recomputed."));
+    }
+  }
+
+  // Step 3: Insert the type config into the maps.
+  std::vector<std::string>& schema_types =
+      properties_sha256_digest_map_[properties_digest_value];
+  if (schema_types.empty()) {
+    // First type with this properties digest. Insert into both maps directly as
+    // is.
+    schema_types.push_back(type_name);
+    type_config_map_.insert({type_name, std::move(type_config)});
+    return libtextclassifier3::Status::OK;
+  }
+
+  // Guaranteed to have at least one type matching this properties digest at
+  // this point.
+  if (type_config.properties().empty()) {
+    // Type has already been deduped.
+    // - This happens when we're adding types to create the TypeConfigInfoCache
+    //   from an existing, already deduped schema.
+    // Insert into both maps directly.
+    schema_types.push_back(type_name);
+    type_config_map_.insert({type_name, std::move(type_config)});
+    return libtextclassifier3::Status::OK;
+  }
+
+  // The input type config is a fully defined type config. We need to check if
+  // it should be deduped before inserting into the type-config map.
+  auto first_type_itr = type_config_map_.find(schema_types.front());
+  if (first_type_itr == type_config_map_.end()) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Type '", schema_types.front(),
+        "exists in the properties_sha256_digest_map_ but not the "
+        "type_config_map_. This should never happen."));
+  }
+  const SchemaTypeConfigProto& first_type_config = first_type_itr->second;
+  if (first_type_config.properties().empty()) {
+    // First type in the digest vector is not the canonical type config.
+    // - This happens when we're adding types to create the TypeConfigInfoCache
+    //   from an existing, already deduped schema, and deduped types are added
+    //   before the canonical type config.
+    // The input type will be the canonical type for this property digest.
+    //
+    // Insert to front of the vector and do not dedupe.
+    schema_types.insert(schema_types.begin(), type_name);
+  } else {
+    // Otherwise, push to the back of the vector.
+    // This is a duplicate type config that should not have any property
+    // definitions. Clear the properties field before inserting into the map.
+    schema_types.push_back(type_name);
+    type_config.clear_properties();
+  }
+
+  type_config_map_.insert({type_name, std::move(type_config)});
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::StatusOr<SchemaUtil::TypeConfigMap>
+SchemaUtil::TypeConfigInfoCache::CalculateSchemaUpdatePlan(
+    std::vector<SchemaTypeConfigProto>&& types_to_add,
+    std::unordered_set<std::string_view>&& types_to_remove) const {
+  TypeConfigMap types_to_update;
+  types_to_update.reserve(types_to_add.size());
+
+  if (!enable_schema_definition_deduping_) {
+    // Deduping is disabled. All type configs can be removed/added directly.
+    // Move all types to add into the type_config_map and return.
+    for (SchemaTypeConfigProto& type : types_to_add) {
+      types_to_update.insert({type.schema_type(), std::move(type)});
+    }
+    return types_to_update;
+  }
+
+  // Step 1: Handle type additions
+  std::unordered_map<Sha256Digest, std::vector<std::string>>
+      added_type_names_by_digest;
+
+  for (SchemaTypeConfigProto& type : types_to_add) {
+    // Populate properties digest field and decide if this type should be
+    // deduped.
+    Sha256Digest digest = SchemaUtil::PopulatePropertiesDigestField(type);
+    std::string type_name = type.schema_type();
+    added_type_names_by_digest[digest].push_back(type_name);
+
+    bool already_in_cache = properties_sha256_digest_map_.count(digest) > 0;
+    bool is_first_new_addition =
+        (added_type_names_by_digest[digest].size() == 1);
+    if (already_in_cache || !is_first_new_addition) {
+      // This type is a duplicate of something in the cache OR
+      // a duplicate of another type being added in this same batch.
+      //
+      // This type can be deduped. Clear the properties field before adding to
+      // the update map.
+      type.clear_properties();
+    }
+    types_to_update.insert({type_name, std::move(type)});
+  }
+
+  // Step 2: Handle type removals
+  std::unordered_map<Sha256Digest, std::unordered_set<std::string>>
+      removed_names_by_digest;
+  for (std::string_view type_view : types_to_remove) {
+    std::string type_name(type_view);
+    auto itr = type_config_map_.find(type_name);
+    if (itr == type_config_map_.end()) {
+      // Type doesn't exist in the current cache. Skip it.
+      continue;
+    }
+    std::optional<Sha256Digest> digest = GetSchemaPropertiesDigest(itr->second);
+    if (!digest) {
+      return absl_ports::InternalError(absl_ports::StrCat(
+          "Cannot delete type due to corrupted digest: ", type_name));
+    }
+    removed_names_by_digest[*digest].insert(std::move(type_name));
+  }
+
+  for (auto& [digest, removed_types] : removed_names_by_digest) {
+    auto cache_it = properties_sha256_digest_map_.find(digest);
+    if (cache_it == properties_sha256_digest_map_.end() ||
+        cache_it->second.empty()) {
+      continue;
+    }
+
+    const std::vector<std::string>& existing_types = cache_it->second;
+    const std::string& original_canonical = existing_types.front();
+    // Case 1: We can safely remove all types in matching_types_to_remove
+    // without needing to transfer canonical type definitions.
+    //
+    // This happens in these 2 scenarios:
+    // 1. The original canonical type for this digest still exists in the
+    //    cache after this update (i.e. it's not in types_to_remove).
+    // 2. No more types will be left for this digest after this update (i.e.
+    //    all types for this digest are being removed and none were added).
+    bool removing_canonical = removed_types.count(original_canonical) > 0;
+    bool removing_all_existing =
+        (removed_types.size() == existing_types.size());
+    bool adding_new = added_type_names_by_digest.count(digest) > 0;
+    if (!removing_canonical || (removing_all_existing && !adding_new)) {
+      continue;
+    }
+
+    // Case 2: We need to find a new canonical type and transfer the property
+    // definitions.
+    //
+    // There are 2 sub-cases:
+    // a. We added new types for this digest in step 1 (type addition step)
+    // b. We did not add new types for this digest in step 1.
+    //
+    // First make sure we can get the original canonical type.
+    auto original_canonical_itr = type_config_map_.find(original_canonical);
+    if (original_canonical_itr == type_config_map_.end()) {
+      return absl_ports::InternalError(absl_ports::StrCat(
+          "Cannot find the original canonical type config '",
+          original_canonical,
+          "' in the type_config_map. This should never happen."));
+    }
+    const SchemaTypeConfigProto& original_canonical_proto =
+        original_canonical_itr->second;
+    std::string target_canonical_name;
+    if (adding_new) {
+      // Sub-case a: We added new types for this digest in step 1.
+      // Use the first added type as the new canonical type.
+      target_canonical_name = added_type_names_by_digest[digest].front();
+    } else {
+      // Sub-case b: We did not add new types for this digest in step 1.
+      // A previously deduped type will be promoted to canonical.
+      for (const std::string& existing_type : existing_types) {
+        if (removed_types.count(existing_type) == 0) {
+          target_canonical_name = existing_type;
+          break;
+        }
+      }
+    }
+
+    if (!target_canonical_name.empty()) {
+      // If the target is a new type, it would have already been added to
+      // types_to_update in step 1.
+      auto update_itr = types_to_update.find(target_canonical_name);
+      if (update_itr == types_to_update.end()) {
+        // Target canonical is a previously deduped type. Look it up from the
+        // cache and add its copy to the update map.
+        auto existing_itr = type_config_map_.find(target_canonical_name);
+        if (existing_itr == type_config_map_.end()) {
+          return absl_ports::InternalError(absl_ports::StrCat(
+              "Cannot find new target canonical type config '",
+              target_canonical_name,
+              "' in the type_config_map. This should never happen."));
+        }
+        types_to_update[target_canonical_name] =
+            SchemaTypeConfigProto(existing_itr->second);
+      }
+
+      // Guaranteed that the target canonical is in the update map at this
+      // point. Copy the properties from the original canonical type to the
+      // target canonical type.
+      SchemaTypeConfigProto& target_canonical_proto =
+          types_to_update[target_canonical_name];
+      target_canonical_proto.mutable_properties()->CopyFrom(
+          original_canonical_proto.properties());
+    }
+  }
+
+  return types_to_update;
+}
+
+libtextclassifier3::StatusOr<SchemaUtil::TypeConfigInfoCache::TypeConfigHolder>
+SchemaUtil::TypeConfigInfoCache::GetFullSchemaTypeConfigHolder(
+    std::string_view schema_type) const {
+  auto type_config_itr = type_config_map_.find(
+      std::string(schema_type.data(), schema_type.size()));
+  if (type_config_itr == type_config_map_.end()) {
+    return absl_ports::NotFoundError(
+        absl_ports::StrCat("Schema type config '", schema_type, "' not found"));
+  }
+
+  const SchemaTypeConfigProto& type_config = type_config_itr->second;
+  // Schema definitions are not deduped, or the type config has already been
+  // fully defined. We can just return the type config as-is.
+  if (!enable_schema_definition_deduping_ ||
+      !type_config.properties().empty()) {
+    return TypeConfigHolder(type_config, type_config.properties());
+  }
+
+  // This type config has been deduped. Construct the full proto by looking
+  // up the properties_sha256_digest_map_.
+  std::optional<Sha256Digest> properties_digest =
+      SchemaUtil::GetSchemaPropertiesDigest(type_config);
+  if (!properties_digest) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Cannot get properties digest for type '", schema_type, "'"));
+  }
+  auto duplicate_types_itr =
+      properties_sha256_digest_map_.find(*properties_digest);
+  if (duplicate_types_itr == properties_sha256_digest_map_.end() ||
+      duplicate_types_itr->second.empty()) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "properties_digest for type '", schema_type,
+        "' does not exist in the properties_sha256_digest_map_. This should "
+        "never happen."));
+  }
+
+  // Return a TypeConfigHolder with references to the properties from the
+  // canonical type config.
+  auto canonical_type_config_itr =
+      type_config_map_.find(duplicate_types_itr->second.front());
+  if (canonical_type_config_itr == type_config_map_.end()) {
+    return absl_ports::InternalError(absl_ports::StrCat(
+        "Failed to find the canonical type config for type '", schema_type,
+        "' in the type_config_map. This should never happen."));
+  }
+
+  return TypeConfigHolder(type_config,
+                          canonical_type_config_itr->second.properties());
+}
+
+libtextclassifier3::StatusOr<const SchemaTypeConfigProto*>
+SchemaUtil::TypeConfigInfoCache::GetRawSchemaTypeConfigPointer(
+    std::string_view schema_type) const {
+  auto type_config_itr = type_config_map_.find(
+      std::string(schema_type.data(), schema_type.size()));
+  if (type_config_itr == type_config_map_.end()) {
+    return absl_ports::NotFoundError(
+        absl_ports::StrCat("Schema type config '", schema_type, "' not found"));
+  }
+
+  return &type_config_itr->second;
+}
+
+libtextclassifier3::StatusOr<bool>
+SchemaUtil::TypeConfigInfoCache::IsSchemaTypeConfigDeduped(
+    std::string_view schema_type) const {
+  if (!enable_schema_definition_deduping_) {
+    return false;
+  }
+
+  ICING_ASSIGN_OR_RETURN(const SchemaTypeConfigProto* raw_type_config,
+                         GetRawSchemaTypeConfigPointer(schema_type));
+  if (!raw_type_config->properties().empty()) {
+    return false;
+  }
+  ICING_ASSIGN_OR_RETURN(TypeConfigHolder type_config_holder,
+                         GetFullSchemaTypeConfigHolder(schema_type));
+  // The (possibly de-duped) type config had no properties. Therefore, this is
+  // deduped *unless* the type actually has no properties.
+  return !type_config_holder.properties().empty();
+}
+
+// SchemaUtil methods.
 libtextclassifier3::Status CalculateTransitiveNestedTypeRelations(
     const SchemaUtil::DependentMap& direct_nested_types_map,
     const std::unordered_set<std::string_view>& joinable_types,
@@ -723,10 +1309,8 @@ libtextclassifier3::StatusOr<SchemaUtil::DependentMap> SchemaUtil::Validate(
 
       ICING_RETURN_IF_ERROR(ValidateCardinality(property_config.cardinality(),
                                                 schema_type, property_name));
-      if (feature_flags.enable_scorable_properties()) {
-        ICING_RETURN_IF_ERROR(
-            ValidateScorableType(schema_type, property_config));
-      }
+      // The scorable properties feature has been fully rolled out.
+      ICING_RETURN_IF_ERROR(ValidateScorableType(schema_type, property_config));
 
       if (data_type == PropertyConfigProto::DataType::STRING) {
         ICING_RETURN_IF_ERROR(ValidateStringIndexingConfig(
@@ -789,6 +1373,10 @@ libtextclassifier3::StatusOr<SchemaUtil::DependentMap> SchemaUtil::Validate(
   // Verify that every child type's property set has included all compatible
   // properties from parent types.
   ICING_RETURN_IF_ERROR(ValidateInheritedProperties(schema));
+
+  if (feature_flags.enable_account_property_incompatibility_check()) {
+    ICING_RETURN_IF_ERROR(ValidateAllAccountProperties(schema));
+  }
   return dependent_map;
 }
 
@@ -1091,17 +1679,27 @@ void SchemaUtil::BuildTypeConfigMap(
     type_config_map->emplace(type_config.schema_type(), type_config);
   }
 }
+libtextclassifier3::Status SchemaUtil::BuildTypeConfigInfoCache(
+    const SchemaProto& schema,
+    SchemaUtil::TypeConfigInfoCache* type_config_info_cache) {
+  type_config_info_cache->Clear();
+  for (const SchemaTypeConfigProto& type_config : schema.types()) {
+    ICING_RETURN_IF_ERROR(type_config_info_cache->AddTypeConfig(type_config));
+  }
+  return libtextclassifier3::Status::OK;
+}
 
 SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
-    const SchemaTypeConfigProto& type_config) {
+    const google::protobuf::RepeatedPtrField<PropertyConfigProto>& properties) {
   ParsedPropertyConfigs parsed_property_configs;
 
   // TODO(cassiewang): consider caching property_config_map for some properties,
   // e.g. using LRU cache. Or changing schema.proto to use go/protomap.
-  for (const PropertyConfigProto& property_config : type_config.properties()) {
+  for (int position = 0; position < properties.size(); ++position) {
+    const PropertyConfigProto& property_config = properties.Get(position);
     std::string_view property_name = property_config.property_name();
-    parsed_property_configs.property_config_map.emplace(property_name,
-                                                        &property_config);
+    parsed_property_configs.property_config_map.emplace(
+        property_name, PropertyConfigInfo{&property_config, position});
     if (property_config.cardinality() ==
         PropertyConfigProto::Cardinality::REQUIRED) {
       parsed_property_configs.required_properties.insert(property_name);
@@ -1131,7 +1729,7 @@ SchemaUtil::ParsedPropertyConfigs SchemaUtil::ParsePropertyConfigs(
   return parsed_property_configs;
 }
 
-const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
+SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     const SchemaProto& old_schema, const SchemaProto& new_schema,
     const DependentMap& new_schema_dependent_map,
     const FeatureFlags& feature_flags) {
@@ -1141,11 +1739,12 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
   BuildTypeConfigMap(old_schema, &old_type_config_map);
   BuildTypeConfigMap(new_schema, &new_type_config_map);
 
-  if (feature_flags.enable_scorable_properties()) {
-    FindScorablePropertyInconsistentTypes(
-        old_type_config_map, new_type_config_map, new_schema_dependent_map,
-        &schema_delta);
-  }
+  std::unordered_set<std::string> section_id_changed_types;
+
+  // The scorable properties feature has been fully rolled out.
+  FindScorablePropertyInconsistentTypes(
+      old_type_config_map, new_type_config_map, new_schema_dependent_map,
+      &schema_delta);
 
   // Iterate through and check each field of the old schema
   for (const auto& old_type_config : old_schema.types()) {
@@ -1163,7 +1762,7 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     }
 
     ParsedPropertyConfigs new_parsed_property_configs =
-        ParsePropertyConfigs(new_schema_type_and_config->second);
+        ParsePropertyConfigs(new_schema_type_and_config->second.properties());
 
     // We only need to check the old, existing properties to see if they're
     // compatible since we'll have old data that may be invalidated or need to
@@ -1179,9 +1778,18 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
         old_type_config.properties_size() !=
         new_schema_type_and_config->second.properties_size();
     bool is_incompatible = false;
-    bool is_index_incompatible = false;
+    bool is_term_index_incompatible = false;
+    bool is_integer_index_incompatible = false;
+    bool is_embedding_index_incompatible = false;
     bool is_join_incompatible = false;
-    for (const auto& old_property_config : old_type_config.properties()) {
+    // Track whether the schema type has undergone any changes that affect how
+    // section IDs are assigned or mapped to properties (e.g. changes in nested
+    // document indexing config or changes in the set of indexed properties).
+    bool is_section_id_mapping_changed = false;
+    for (int position = 0; position < old_type_config.properties_size();
+         ++position) {
+      const PropertyConfigProto& old_property_config =
+          old_type_config.properties(position);
       std::string_view property_name = old_property_config.property_name();
       if (old_property_config.cardinality() ==
           PropertyConfigProto::Cardinality::REQUIRED) {
@@ -1217,27 +1825,34 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
       if (new_property_name_and_config ==
           new_parsed_property_configs.property_config_map.end()) {
         // Didn't find the old property
-        ICING_VLOG(1) << absl_ports::StrCat(
+        ICING_LOG(INFO) << absl_ports::StrCat(
             "Previously defined property type '", old_type_config.schema_type(),
             ".", old_property_config.property_name(),
             "' was not defined in new schema");
         is_incompatible = true;
-        is_index_incompatible |= is_indexed_property;
+        is_section_id_mapping_changed |= is_indexed_property;
         is_join_incompatible |=
             is_joinable_property || is_nested_document_property;
         continue;
       }
 
       const PropertyConfigProto* new_property_config =
-          new_property_name_and_config->second;
+          new_property_name_and_config->second.property_config;
+      bool property_order_changed =
+          feature_flags.enable_schema_definition_deduping() &&
+          position != new_property_name_and_config->second.position;
       if (!has_property_changed &&
-          !ArePropertiesEqual(old_property_config, *new_property_config)) {
-        // Finally found a property that changed.
+          (!ArePropertiesEqual(old_property_config, *new_property_config) ||
+           property_order_changed)) {
+        // Found a property that changed. A property change is either a
+        // PropertyConfigProto change or (when schema deduping is enabled) a
+        // change in the property's position in the type config's repeated
+        // properties field.
         has_property_changed = true;
       }
 
       if (!IsPropertyCompatible(old_property_config, *new_property_config)) {
-        ICING_VLOG(1) << absl_ports::StrCat(
+        ICING_LOG(INFO) << absl_ports::StrCat(
             "Property '", old_type_config.schema_type(), ".",
             old_property_config.property_name(), "' is incompatible.");
         is_incompatible = true;
@@ -1246,21 +1861,30 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
       // Any change in the indexed property requires a reindexing
       if (!AreStringIndexingConfigsEqual(
               old_property_config.string_indexing_config(),
-              new_property_config->string_indexing_config()) ||
-          !AreIntegerIndexingConfigsEqual(
+              new_property_config->string_indexing_config())) {
+        is_term_index_incompatible = true;
+      }
+      if (!AreIntegerIndexingConfigsEqual(
               old_property_config.integer_indexing_config(),
-              new_property_config->integer_indexing_config()) ||
-          !AreDocumentIndexingConfigsEqual(
-              old_property_config.document_indexing_config(),
-              new_property_config->document_indexing_config()) ||
-          !AreEmbeddingIndexingConfigsEqual(
+              new_property_config->integer_indexing_config())) {
+        is_integer_index_incompatible = true;
+      }
+      if (!AreEmbeddingIndexingConfigsEqual(
               old_property_config.embedding_indexing_config(),
               new_property_config->embedding_indexing_config())) {
-        is_index_incompatible = true;
+        is_embedding_index_incompatible = true;
+      }
+      if (!AreDocumentIndexingConfigsEqual(
+              old_property_config.document_indexing_config(),
+              new_property_config->document_indexing_config())) {
+        // Changes to nested document indexing configs (such as toggling
+        // index_nested_properties) alter which child properties get indexed and
+        // thus change section ID assignment for this schema type.
+        is_section_id_mapping_changed = true;
       }
 
-      if (old_property_config.joinable_config().value_type() !=
-          new_property_config->joinable_config().value_type()) {
+      if (!AreJoinableConfigsEqual(old_property_config.joinable_config(),
+                                   new_property_config->joinable_config())) {
         is_join_incompatible = true;
       }
     }
@@ -1272,23 +1896,26 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
     // here to detect new required properties.
     if (!IsSubset(new_parsed_property_configs.required_properties,
                   old_required_properties)) {
-      ICING_VLOG(1) << absl_ports::StrCat(
+      ICING_LOG(INFO) << absl_ports::StrCat(
           "New schema '", old_type_config.schema_type(),
           "' has REQUIRED properties that are not "
           "present in the previously defined schema");
       is_incompatible = true;
     }
 
-    // If we've gained any new indexed properties (this includes gaining new
-    // indexed nested document properties), then the section ids may change.
-    // Since the section ids are stored in the index, we'll need to
-    // reindex everything.
-    if (!IsSubset(new_parsed_property_configs.indexed_properties,
-                  old_indexed_properties)) {
-      ICING_VLOG(1) << "Set of indexed properties in schema type '"
-                    << old_type_config.schema_type()
-                    << "' has changed, required reindexing.";
-      is_index_incompatible = true;
+    // Check if the set of indexed properties has changed in any way (gained new
+    // indexed properties, removed existing indexed properties, or modified
+    // indexable status of properties).
+    if (old_indexed_properties !=
+        new_parsed_property_configs.indexed_properties) {
+      is_section_id_mapping_changed = true;
+    }
+
+    if (is_section_id_mapping_changed) {
+      ICING_LOG(INFO) << "Set of indexed properties in schema type '"
+                      << old_type_config.schema_type()
+                      << "' has changed, requiring section ID remapping.";
+      section_id_changed_types.insert(old_type_config.schema_type());
     }
 
     // If we've gained any new joinable properties, then the joinable property
@@ -1302,28 +1929,43 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
                   old_joinable_properties) ||
         !IsSubset(new_parsed_property_configs.nested_document_properties,
                   old_nested_document_properties)) {
-      ICING_VLOG(1) << "Set of joinable properties in schema type '"
-                    << old_type_config.schema_type()
-                    << "' has changed, required reconstructing joinable cache.";
+      ICING_LOG(INFO)
+          << "Set of joinable properties in schema type '"
+          << old_type_config.schema_type()
+          << "' has changed, required reconstructing joinable cache.";
       is_join_incompatible = true;
     }
 
-    if (is_incompatible) {
-      AddIncompatibleChangeToDelta(schema_delta.schema_types_incompatible,
-                                   old_type_config, new_schema_dependent_map,
-                                   old_type_config_map, new_type_config_map);
+    if (feature_flags.enable_account_property_incompatibility_check() &&
+        IsAccountPropertyIncompatible(old_type_config,
+                                      new_schema_type_and_config->second,
+                                      old_type_config_map)) {
+      is_incompatible = true;
     }
 
-    if (is_index_incompatible) {
-      AddIncompatibleChangeToDelta(schema_delta.schema_types_index_incompatible,
-                                   old_type_config, new_schema_dependent_map,
-                                   old_type_config_map, new_type_config_map);
+    if (is_incompatible) {
+      schema_delta.schema_types_incompatible.insert(
+          old_type_config.schema_type());
+    }
+
+    if (is_term_index_incompatible) {
+      schema_delta.schema_types_term_index_incompatible.insert(
+          old_type_config.schema_type());
+    }
+
+    if (is_integer_index_incompatible) {
+      schema_delta.schema_types_integer_index_incompatible.insert(
+          old_type_config.schema_type());
+    }
+
+    if (is_embedding_index_incompatible) {
+      schema_delta.schema_types_embedding_index_incompatible.insert(
+          old_type_config.schema_type());
     }
 
     if (is_join_incompatible) {
-      AddIncompatibleChangeToDelta(schema_delta.schema_types_join_incompatible,
-                                   old_type_config, new_schema_dependent_map,
-                                   old_type_config_map, new_type_config_map);
+      schema_delta.schema_types_join_incompatible.insert(
+          old_type_config.schema_type());
     }
 
     // Scorable-property inconsistent types are already added to the schema
@@ -1334,26 +1976,112 @@ const SchemaUtil::SchemaDelta SchemaUtil::ComputeCompatibilityDelta(
             old_type_config.schema_type()) !=
             schema_delta.schema_types_scorable_property_inconsistent.end();
 
-    if (!is_incompatible && !is_index_incompatible && !is_join_incompatible &&
+    if (!is_incompatible && !is_section_id_mapping_changed &&
+        !is_term_index_incompatible && !is_integer_index_incompatible &&
+        !is_embedding_index_incompatible && !is_join_incompatible &&
         !is_scorable_property_cache_incompatible && has_property_changed) {
       schema_delta.schema_types_changed_fully_compatible.insert(
           old_type_config.schema_type());
     }
-
-    // Lastly, remove this type from the map. We know that this type can't
-    // come up in future iterations through the old schema types because the old
-    // type config has unique types.
-    new_type_config_map.erase(old_type_config.schema_type());
   }
 
-  // Any types that are still present in the new_type_config_map are newly added
-  // types.
+  // Now that all directly-incompatible types have been collected, propagate
+  // each kind of incompatibility through the schema dependency graph in a
+  // single BFS pass per delta set (instead of one BFS per seed type).
+  for (std::unordered_set<std::string>* delta_set : {
+           &section_id_changed_types,
+           &schema_delta.schema_types_incompatible,
+           &schema_delta.schema_types_term_index_incompatible,
+           &schema_delta.schema_types_integer_index_incompatible,
+           &schema_delta.schema_types_embedding_index_incompatible,
+           &schema_delta.schema_types_join_incompatible,
+       }) {
+    PropagateIncompatibleChangeToDelta(*delta_set, new_schema_dependent_map,
+                                       old_type_config_map);
+  }
+
+  // For all schema types affected by section ID reassignment (either directly
+  // altered or propagated via dependencies), accurately determine which index
+  // types (Term, Integer, Embedding) are actually present in their schema
+  // trees.
+  //
+  // We compute the bitwise OR of index masks across both the old and new schema
+  // definitions (old_mask | new_mask). This ensures that if a property type was
+  // present in the old schema but removed in the new schema, we still mark that
+  // specific old index type as incompatible to correctly clear or reset stale
+  // index data during a fine-grained rebuild.
+  for (const std::string& type_name : section_id_changed_types) {
+    uint8_t index_mask = 0;
+    if (!feature_flags.enable_fine_grained_index_rebuild()) {
+      index_mask = kAllIndexMask;
+    } else {
+      auto old_itr = old_type_config_map.find(type_name);
+      if (old_itr != old_type_config_map.end()) {
+        index_mask |= GetIndexTypesMask(old_itr->second, old_type_config_map);
+      }
+      auto new_itr = new_type_config_map.find(type_name);
+      if (new_itr != new_type_config_map.end()) {
+        index_mask |= GetIndexTypesMask(new_itr->second, new_type_config_map);
+      }
+    }
+
+    if ((index_mask & kTermIndexMask) != 0) {
+      schema_delta.schema_types_term_index_incompatible.insert(type_name);
+    }
+    if ((index_mask & kIntegerIndexMask) != 0) {
+      schema_delta.schema_types_integer_index_incompatible.insert(type_name);
+    }
+    if ((index_mask & kEmbeddingIndexMask) != 0) {
+      schema_delta.schema_types_embedding_index_incompatible.insert(type_name);
+    }
+  }
+
   schema_delta.schema_types_new.reserve(new_type_config_map.size());
   for (auto& kvp : new_type_config_map) {
-    schema_delta.schema_types_new.insert(std::move(kvp.first));
+    if (old_type_config_map.find(kvp.first) == old_type_config_map.end()) {
+      schema_delta.schema_types_new.insert(kvp.first);
+    }
   }
 
   return schema_delta;
+}
+
+Sha256Digest SchemaUtil::ComputeSchemaPropertiesSha256Digest(
+    const SchemaTypeConfigProto& type_config) {
+  SchemaTypeConfigProto properties_only_type_config;
+  *properties_only_type_config.mutable_properties() = type_config.properties();
+  std::string serialized_properties =
+      properties_only_type_config.SerializeAsString();
+  const uint8_t* properties_data =
+      reinterpret_cast<const uint8_t*>(serialized_properties.data());
+
+  Sha256 sha256;
+  sha256.Update(properties_data, serialized_properties.size());
+  return std::move(sha256).Finalize();
+}
+
+Sha256Digest SchemaUtil::PopulatePropertiesDigestField(
+    SchemaTypeConfigProto& type_config) {
+  Sha256Digest properties_sha256_digest =
+      ComputeSchemaPropertiesSha256Digest(type_config);
+  type_config.set_properties_digest(
+      reinterpret_cast<const char*>(properties_sha256_digest.data()),
+      properties_sha256_digest.size());
+
+  return properties_sha256_digest;
+}
+
+std::optional<Sha256Digest> SchemaUtil::GetSchemaPropertiesDigest(
+    const SchemaTypeConfigProto& type_config) {
+  const std::string& digest_bytes = type_config.properties_digest();
+
+  if (digest_bytes.size() == kSha256DigestBytes) {
+    Sha256Digest properties_sha256_digest;
+    std::memcpy(properties_sha256_digest.data(), digest_bytes.data(),
+                kSha256DigestBytes);
+    return properties_sha256_digest;
+  }
+  return std::nullopt;
 }
 
 }  // namespace lib

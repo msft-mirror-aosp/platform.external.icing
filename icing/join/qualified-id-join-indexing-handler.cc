@@ -25,6 +25,7 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/feature-flags.h"
 #include "icing/join/document-join-id-pair.h"
 #include "icing/join/qualified-id-join-index.h"
 #include "icing/join/qualified-id.h"
@@ -48,14 +49,16 @@ namespace lib {
     std::unique_ptr<QualifiedIdJoinIndexingHandler>>
 QualifiedIdJoinIndexingHandler::Create(
     const Clock* clock, const DocumentStore* doc_store,
-    QualifiedIdJoinIndex* qualified_id_join_index) {
+    QualifiedIdJoinIndex* qualified_id_join_index,
+    const FeatureFlags* feature_flags) {
   ICING_RETURN_ERROR_IF_NULL(clock);
   ICING_RETURN_ERROR_IF_NULL(doc_store);
   ICING_RETURN_ERROR_IF_NULL(qualified_id_join_index);
+  ICING_RETURN_ERROR_IF_NULL(feature_flags);
 
   return std::unique_ptr<QualifiedIdJoinIndexingHandler>(
-      new QualifiedIdJoinIndexingHandler(clock, doc_store,
-                                         qualified_id_join_index));
+      new QualifiedIdJoinIndexingHandler(
+          clock, doc_store, qualified_id_join_index, feature_flags));
 }
 
 libtextclassifier3::Status QualifiedIdJoinIndexingHandler::Handle(
@@ -165,6 +168,16 @@ libtextclassifier3::Status QualifiedIdJoinIndexingHandler::HandleV3(
   if (IsDocumentIdValid(old_document_id)) {
     ICING_RETURN_IF_ERROR(
         qualified_id_join_index_.MigrateParent(old_document_id, document_id));
+  } else if (feature_flags_.enable_non_existent_qualified_id_join()) {
+    // This means that the document is new, which could also have child
+    // documents since child documents are allowed to reference non-existing
+    // parent documents. Now, we try to migrate its child documents to the new
+    // document id.
+    const DocumentProto& document =
+        tokenized_document.document_wrapper().document();
+    QualifiedId qualified_id_str(document.namespace_(), document.uri());
+    ICING_RETURN_IF_ERROR(
+        qualified_id_join_index_.MigrateParent(qualified_id_str, document_id));
   }
 
   // (Child perspective)
@@ -178,9 +191,14 @@ libtextclassifier3::Status QualifiedIdJoinIndexingHandler::HandleV3(
     DocumentJoinIdPair child_doc_join_id_pair(
         document_id, qualified_id_property.metadata.id);
 
-    // Extract parent qualified ids and lookup their corresponding document ids.
-    std::vector<DocumentId> parent_doc_ids;
-    parent_doc_ids.reserve(qualified_id_property.values.size());
+    // Extract parent qualified ids.
+    std::vector<DocumentId> parent_doc_ids;  // Deprecated.
+    std::vector<QualifiedId> parent_qualified_ids;
+    if (feature_flags_.enable_non_existent_qualified_id_join()) {
+      parent_qualified_ids.reserve(qualified_id_property.values.size());
+    } else {
+      parent_doc_ids.reserve(qualified_id_property.values.size());
+    }
     for (std::string_view parent_qualified_id_str :
          qualified_id_property.values) {
       libtextclassifier3::StatusOr<QualifiedId> parent_qualified_id_or =
@@ -191,6 +209,10 @@ libtextclassifier3::Status QualifiedIdJoinIndexingHandler::HandleV3(
       }
       QualifiedId parent_qualified_id =
           std::move(parent_qualified_id_or).ValueOrDie();
+      if (feature_flags_.enable_non_existent_qualified_id_join()) {
+        parent_qualified_ids.push_back(std::move(parent_qualified_id));
+        continue;
+      }
 
       // Lookup document store to get the parent document id.
       libtextclassifier3::StatusOr<DocumentId> parent_doc_id_or =
@@ -203,10 +225,17 @@ libtextclassifier3::Status QualifiedIdJoinIndexingHandler::HandleV3(
       }
       parent_doc_ids.push_back(parent_doc_id_or.ValueOrDie());
     }
+    libtextclassifier3::Status status;
+    if (feature_flags_.enable_non_existent_qualified_id_join()) {
+      // Index join relationship by parent qualified ids.
+      status = qualified_id_join_index_.Put(&doc_store_, child_doc_join_id_pair,
+                                            std::move(parent_qualified_ids));
 
-    // Add all parent document ids to the index.
-    libtextclassifier3::Status status = qualified_id_join_index_.Put(
-        child_doc_join_id_pair, std::move(parent_doc_ids));
+    } else {
+      // Index join relationship by parent document ids.
+      status = qualified_id_join_index_.Put(child_doc_join_id_pair,
+                                            std::move(parent_doc_ids));
+    }
     if (!status.ok()) {
       ICING_LOG(WARNING)
           << "Failed to add data into qualified id join index due to: "

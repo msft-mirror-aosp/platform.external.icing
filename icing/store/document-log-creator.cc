@@ -104,8 +104,7 @@ DocumentLogCreator::Create(const Filesystem* filesystem,
           filesystem, MakeDocumentLogFilenameV1(base_dir),
           PortableFileBackedProtoLog<DocumentWrapper>::Options(
               /*compress_in=*/true, constants::kMaxProtoSize, compression_level,
-              compression_threshold_bytes, compression_mem_level,
-              feature_flags->enable_smaller_decompression_buffer_size())));
+              compression_threshold_bytes, compression_mem_level)));
 
   CreateResult create_result = {std::move(log_create_result),
                                 preexisting_file_version, new_file};
@@ -141,8 +140,7 @@ libtextclassifier3::Status DocumentLogCreator::MigrateFromV0ToV1(
           PortableFileBackedProtoLog<DocumentWrapper>::Options(
               /*compress_in=*/true,
               /*max_proto_size_in=*/constants::kMaxProtoSize, compression_level,
-              compression_threshold_bytes, compression_mem_level,
-              feature_flags->enable_smaller_decompression_buffer_size()));
+              compression_threshold_bytes, compression_mem_level));
   if (!v1_create_result_or.ok()) {
     return absl_ports::Annotate(
         v1_create_result_or.status(),

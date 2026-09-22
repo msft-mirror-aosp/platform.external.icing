@@ -27,6 +27,7 @@
 #ifndef GOOGLE3_ICING_PORTABLE_GZIP_STREAM_H_
 #define GOOGLE3_ICING_PORTABLE_GZIP_STREAM_H_
 
+#include <cstddef>
 #include <cstdint>
 
 #include "icing/portable/zlib.h"
@@ -36,7 +37,7 @@ namespace icing {
 namespace lib {
 namespace protobuf_ports {
 
-static constexpr int64_t kDefaultBufferSize = 64 * 1024;  // 64kb
+static constexpr size_t kDefaultBufferSize = 64 * 1024;  // 64kb
 static constexpr int kDefaultMemLevel = 8;
 
 // A ZeroCopyInputStream that reads compressed data through zlib
@@ -56,7 +57,8 @@ class GzipInputStream : public google::protobuf::io::ZeroCopyInputStream {
 
   // buffer_size and format may be -1 for default of 64kB and GZIP format
   explicit GzipInputStream(google::protobuf::io::ZeroCopyInputStream* sub_stream,
-                           Format format = AUTO, int buffer_size = -1);
+                           Format format, void* output_buffer,
+                           size_t buffer_size);
   virtual ~GzipInputStream();
 
   // Return last error message or NULL if no error.
@@ -72,12 +74,12 @@ class GzipInputStream : public google::protobuf::io::ZeroCopyInputStream {
  private:
   Format format_;
 
-  google::protobuf::io::ZeroCopyInputStream* sub_stream_;
+  google::protobuf::io::ZeroCopyInputStream* sub_stream_;  // Does not own.
 
   z_stream zcontext_;
   int zerror_;
 
-  void* output_buffer_;
+  void* output_buffer_;  // Does not own.
   void* output_position_;
   size_t output_buffer_length_;
   int64_t byte_count_;

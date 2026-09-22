@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -26,6 +27,8 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
@@ -43,6 +46,7 @@
 #include "icing/store/document-id.h"
 #include "icing/store/suggestion-result-checker.h"
 #include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -55,7 +59,8 @@ class MainIndex {
   //  - INTERNAL error if unable to create the lexicon or flash storage.
   static libtextclassifier3::StatusOr<std::unique_ptr<MainIndex>> Create(
       const std::string& index_directory, const Filesystem* filesystem,
-      const IcingFilesystem* icing_filesystem);
+      const IcingFilesystem* icing_filesystem,
+      const FeatureFlags* feature_flags);
 
   // Reads magic from existing flash index storage file header. We need this
   // during Icing initialization phase to determine the version.
@@ -177,17 +182,23 @@ class MainIndex {
       std::vector<TermIdHitPair>&& hits, DocumentId last_added_document_id);
 
   libtextclassifier3::Status PersistToDisk() {
-    if (main_lexicon_->Sync() && flash_index_storage_->PersistToDisk()) {
-      return libtextclassifier3::Status::OK;
+    ICING_RETURN_IF_ERROR(main_lexicon_->Sync());
+    if (!flash_index_storage_->PersistToDisk()) {
+      return absl_ports::InternalError(
+          "Unable to persist flash index storage.");
     }
-    return absl_ports::InternalError("Unable to sync main index components.");
+    return libtextclassifier3::Status::OK;
   }
 
   // Updates and returns the checksums of the components in the MainIndex.
-  Crc32 UpdateChecksum() { return main_lexicon_->UpdateCrc(); }
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksum() {
+    return main_lexicon_->UpdateCrc();
+  }
 
   // Calculates and returns the checksums of the components in the MainIndex.
-  Crc32 GetChecksum() const { return main_lexicon_->GetCrc(); }
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const {
+    return main_lexicon_->GetCrc();
+  }
 
   DocumentId last_added_document_id() const {
     return flash_index_storage_->get_last_indexed_docid();
@@ -232,10 +243,27 @@ class MainIndex {
   libtextclassifier3::Status Optimize(
       const std::vector<DocumentId>& document_id_old_to_new);
 
+  // Transfers and compacts data into a new main index under new_directory.
+  // Unlike Optimize(), this method does not modify or swap the current index
+  // directory, and writes directly into new_directory.
+  //
+  // - new_directory: destination directory for the optimized index.
+  // - document_id_old_to_new: a map for converting old document id to new
+  //   document id.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if new_directory is the same as the current
+  //   - INTERNAL_ERROR on IO error
+  libtextclassifier3::Status OptimizeInto(
+      const std::string& new_directory,
+      const std::vector<DocumentId>& document_id_old_to_new) const;
+
  private:
   explicit MainIndex(const std::string& index_directory,
                      const Filesystem* filesystem,
-                     const IcingFilesystem* icing_filesystem);
+                     const IcingFilesystem* icing_filesystem,
+                     const FeatureFlags* feature_flags);
 
   libtextclassifier3::Status Init();
 
@@ -350,7 +378,7 @@ class MainIndex {
   //   INTERNAL_ERROR on IO error
   libtextclassifier3::Status TransferIndex(
       const std::vector<DocumentId>& document_id_old_to_new,
-      MainIndex* new_index);
+      MainIndex* new_index) const;
 
   std::string base_dir_;
   const Filesystem* filesystem_;
@@ -358,6 +386,7 @@ class MainIndex {
   std::unique_ptr<PostingListHitSerializer> posting_list_hit_serializer_;
   std::unique_ptr<FlashIndexStorage> flash_index_storage_;
   std::unique_ptr<IcingDynamicTrie> main_lexicon_;
+  const FeatureFlags& feature_flags_;  // Does not own.
 };
 
 }  // namespace lib

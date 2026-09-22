@@ -65,8 +65,19 @@ class QualifiedId {
     return name_space_ == other.name_space_ && uri_ == other.uri_;
   }
 
+  bool operator<(const QualifiedId& other) const {
+    if (name_space_ != other.name_space_) {
+      return name_space_ < other.name_space_;
+    }
+    return uri_ < other.uri_;
+  }
+
   const std::string& name_space() const { return name_space_; }
   const std::string& uri() const { return uri_; }
+
+  // Unparses the QualifiedId to its string representation:
+  // "<escaped(namespace)>#<escaped(uri)>".
+  std::string ToString() const;
 
  private:
   std::string name_space_;

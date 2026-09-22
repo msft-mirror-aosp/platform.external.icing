@@ -17,11 +17,15 @@
 #include <unistd.h>
 
 #include <cinttypes>
+#include <cstdint>
 #include <string>
 
-#include "icing/legacy/core/icing-compat.h"
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/absl_ports/canonical_errors.h"
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/legacy/core/icing-timer.h"
+#include "icing/legacy/index/icing-filesystem.h"
+#include "icing/legacy/index/icing-storage.h"
 #include "icing/util/logging.h"
 
 namespace icing {
@@ -31,22 +35,25 @@ IcingStorageFile::IcingStorageFile(const std::string &filename,
                                    const IcingFilesystem *filesystem)
     : IIcingStorage(), filesystem_(filesystem), filename_(filename) {}
 
-bool IcingStorageFile::Init() {
+libtextclassifier3::Status IcingStorageFile::Init() {
   if (!is_initialized_) {
     // Ensure the storage directory exists
     std::string storage_dir = filesystem_->GetDirname(filename_.c_str());
     if (!filesystem_->CreateDirectoryRecursively(storage_dir.c_str())) {
-      return false;
+      return absl_ports::InternalError("Failed to create storage directory");
     }
 
     is_initialized_ = OnInit();
+    if (!is_initialized_) {
+      return absl_ports::InternalError("Failed to initialize storage file");
+    }
 
-    if (is_initialized_ && fd_.get() < 0) {  // if initalized, fd better be set
-      ICING_LOG(FATAL)
-          << "Storage file descriptor not set after initialization";
+    if (fd_.get() < 0) {  // if initialized, fd better be set
+      return absl_ports::InternalError(
+          "Storage file descriptor not set after initialization");
     }
   }
-  return is_initialized_;
+  return libtextclassifier3::Status::OK;
 }
 
 void IcingStorageFile::Close() {
@@ -62,26 +69,24 @@ bool IcingStorageFile::Remove() {
   return filesystem_->DeleteFile(filename_.c_str());
 }
 
-bool IcingStorageFile::Sync() {
+libtextclassifier3::Status IcingStorageFile::Sync() {
   if (!is_initialized_) {
-    ICING_LOG(FATAL) << "Storage file not initialized";
+    return absl_ports::InternalError("Storage file not initialized");
   }
 
   IcingTimer timer;
   if (!PreSync()) {
-    ICING_LOG(ERROR) << "Pre-sync " << filename_ << " failed";
-    return false;
+    return absl_ports::InternalError("Pre-sync failed");
   }
   if (!filesystem_->DataSync(fd_.get())) {
-    ICING_LOG(ERROR) << "Sync " << filename_ << " failed";
-    return false;
+    return absl_ports::InternalError("Sync failed");
   }
   if (!PostSync()) {
-    ICING_LOG(ERROR) << "Post-sync " << filename_ << " failed";
-    return false;
+    return absl_ports::InternalError("Post-sync failed");
   }
-  ICING_VLOG(1) << "Syncing " << filename_ << " took " << timer.Elapsed() * 1000 << "ms";
-  return true;
+  ICING_VLOG(1) << "Syncing " << filename_ << " took " << timer.Elapsed() * 1000
+                << "ms";
+  return libtextclassifier3::Status::OK;
 }
 
 uint64_t IcingStorageFile::GetDiskUsage() const {
