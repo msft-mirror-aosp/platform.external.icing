@@ -203,8 +203,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -269,8 +270,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -355,8 +357,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -453,8 +456,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -523,8 +527,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -593,8 +598,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -716,8 +722,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -841,8 +848,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -969,8 +977,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1041,8 +1050,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1109,8 +1119,9 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
 
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<ResultRetrieverV2> result_retriever,
@@ -1231,12 +1242,13 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
       std::make_unique<
           PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
           std::move(scored_document_hits), /*is_descending=*/true),
-      /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-      result_spec, *schema_store_, *document_store_);
+      /*parent_adjustment_info_in=*/nullptr,
+      /*child_adjustment_info_in=*/nullptr, result_spec, *schema_store_,
+      *document_store_);
   {
     absl_ports::shared_lock l(&result_state.mutex);
 
-    ASSERT_THAT(result_state.entry_id_group_index_map(),
+    ASSERT_THAT(result_state.entry_id_group_index_map,
                 UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     ASSERT_THAT(result_state.group_result_limits, ElementsAre(3, 1));
   }
@@ -1278,7 +1290,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
     // and should not be counted into num_returned.
     EXPECT_THAT(result_state.num_returned, Eq(2));
     // entry_id_group_index_map should be unchanged.
-    EXPECT_THAT(result_state.entry_id_group_index_map(),
+    EXPECT_THAT(result_state.entry_id_group_index_map,
                 UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     // GroupResultLimiter should decrement the # in group_result_limits.
     EXPECT_THAT(result_state.group_result_limits, ElementsAre(2, 0));
@@ -1303,7 +1315,7 @@ TEST_F(ResultRetrieverV2GroupResultLimiterTest,
     // num_returned.
     EXPECT_THAT(result_state.num_returned, Eq(3));
     // entry_id_group_index_map should be unchanged.
-    EXPECT_THAT(result_state.entry_id_group_index_map(),
+    EXPECT_THAT(result_state.entry_id_group_index_map,
                 UnorderedElementsAre(Pair(entry_id1, 0), Pair(entry_id2, 1)));
     // GroupResultLimiter should decrement the # in group_result_limits.
     EXPECT_THAT(result_state.group_result_limits, ElementsAre(1, 0));

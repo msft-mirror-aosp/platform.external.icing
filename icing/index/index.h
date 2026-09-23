@@ -338,6 +338,25 @@ class Index {
       const std::vector<DocumentId>& document_id_old_to_new,
       DocumentId new_last_added_document_id);
 
+  // Transfers and compacts data into a new index under new_base_dir.
+  // Unlike Optimize(), this method does not modify or swap the current index
+  // directory, and writes directly into new_base_dir.
+  //
+  // - new_base_dir: destination base directory for the optimized index.
+  // - document_id_old_to_new: a map for converting old document id to new
+  //   document id.
+  // - new_last_added_document_id: will be used to update the last added
+  //                               document id in the lite index.
+  //
+  // Returns:
+  //   OK on success
+  //   INVALID_ARGUMENT if new_base_dir is the same as the current base_dir
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::Status OptimizeInto(
+      const std::string& new_base_dir,
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id) const;
+
  private:
   explicit Index(const Options& options,
                  std::unique_ptr<TermIdCodec> term_id_codec,

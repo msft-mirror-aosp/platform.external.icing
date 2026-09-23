@@ -311,6 +311,26 @@ libtextclassifier3::Status Index::Optimize(
                                new_last_added_document_id);
 }
 
+libtextclassifier3::Status Index::OptimizeInto(
+    const std::string& new_base_dir,
+    const std::vector<DocumentId>& document_id_old_to_new,
+    DocumentId new_last_added_document_id) const {
+  if (new_base_dir == options_.base_dir) {
+    return absl_ports::InvalidArgumentError(
+        "New base directory is the same as current");
+  }
+  ICING_ASSIGN_OR_RETURN(
+      LiteIndex::Options new_lite_options,
+      CreateLiteIndexOptions(Options(new_base_dir, options_.index_merge_size,
+                                     options_.lite_index_sort_size)));
+  ICING_RETURN_IF_ERROR(lite_index_->OptimizeInto(
+      new_lite_options, document_id_old_to_new, term_id_codec_.get(),
+      new_last_added_document_id));
+
+  return main_index_->OptimizeInto(MakeMainIndexFilepath(new_base_dir),
+                                   document_id_old_to_new);
+}
+
 libtextclassifier3::Status Index::Editor::BufferTerm(
     std::string_view term, TermMatchType::Code match_type) {
   // Step 1: See if this term is already in the lexicon

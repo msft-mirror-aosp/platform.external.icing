@@ -35,6 +35,7 @@
 #include "icing/index/data-indexing-handler.h"
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/embedding-query-results.h"
+#include "icing/index/index-processor.h"
 #include "icing/index/index.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
@@ -770,6 +771,42 @@ class IcingSearchEngine {
   // Pointer to JNI class references
   const std::unique_ptr<const JniCache> jni_cache_;
 
+  struct ReplayDocumentsResult {
+    libtextclassifier3::Status overall_status;
+    int num_failed_reindexed_documents = 0;
+    int num_deleted_documents = 0;
+  };
+
+  // Prepares documents (tokenization and dependency evaluation) for indexing.
+  static libtextclassifier3::StatusOr<TokenizedDocument>
+  PrepareDocumentsForIndexing(const DocumentStore* document_store,
+                              const SchemaStore* schema_store,
+                              const LanguageSegmenter* language_segmenter,
+                              bool enable_delete_propagation_from,
+                              DocumentProto&& document,
+                              int64_t current_time_ms);
+
+  // Replays documents in [start_document_id, end_document_id] into the
+  // index_processor, deletes failing documents from document_store, and
+  // optionally propagates deletion to child documents.
+  static libtextclassifier3::StatusOr<ReplayDocumentsResult>
+  ReplayDocumentsForIndexRestoration(
+      const IcingSearchEngineOptions& options, DocumentStore* document_store,
+      const SchemaStore* schema_store,
+      const LanguageSegmenter* language_segmenter,
+      const QualifiedIdJoinIndex* qualified_id_join_index,
+      IndexProcessor* index_processor, DocumentId start_document_id,
+      DocumentId end_document_id, int64_t current_time_ms);
+
+  // Deletes documents propagated from the given deleted document ids via
+  // joinable properties with delete propagation enabled.
+  static libtextclassifier3::StatusOr<DocumentGroupInfo> PropagateDelete(
+      const SchemaStore* schema_store,
+      const QualifiedIdJoinIndex* qualified_id_join_index,
+      DocumentStore* document_store,
+      const std::unordered_set<DocumentId>& deleted_document_ids,
+      int64_t current_time_ms, bool enable_delete_propagation_from);
+
   // Resets all members that are created during Initialize.
   //
   // Note: this method DOES NOT reset task_scheduler_. task_scheduler_ should be
@@ -1184,7 +1221,7 @@ class IcingSearchEngine {
   IndexRestorationResult RestoreIndexIfNeeded()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Helper method to discard search (term, integer) indices.
+  // Helper method to discard all search indices (term, integer, embedding).
   //
   // Returns:
   //   OK on success
@@ -1217,6 +1254,12 @@ class IcingSearchEngine {
   // This is used to schedule the task with the task scheduler.
   std::function<void()> CreateMaintainAnnIndexTask(int retry_count = 0)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to run MaintainAnnIndex with shared lock.
+  void MaintainAnnIndexLocked(const MaintainAnnIndexOptions& options,
+                              Timer* maintain_timer, StatusProto* result_status,
+                              MaintainAnnIndexResultProto& result_proto)
+      ICING_SHARED_LOCKS_REQUIRED(mutex_);
 };
 
 }  // namespace lib

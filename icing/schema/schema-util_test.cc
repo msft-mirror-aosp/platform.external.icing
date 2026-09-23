@@ -33,6 +33,7 @@ namespace lib {
 namespace {
 
 using portable_equals_proto::EqualsProto;
+using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::HasSubstr;
 using ::testing::IsEmpty;
@@ -2658,10 +2659,11 @@ TEST_P(SchemaUtilTest, SameNumberOfRequiredFieldsCanBeIncompatible) {
 
   SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, /*new_schema_dependent_map=*/{}, *feature_flags_);
-  EXPECT_THAT(delta.schema_types_incompatible,
-              testing::ElementsAre(kEmailType));
-  EXPECT_THAT(delta.schema_types_index_incompatible, testing::IsEmpty());
-  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_incompatible, ElementsAre(kEmailType));
+  EXPECT_THAT(delta.schema_types_term_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_integer_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_embedding_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_deleted, IsEmpty());
 }
 
 TEST_P(SchemaUtilTest, SameNumberOfIndexedPropertiesCanMakeIndexIncompatible) {
@@ -2693,10 +2695,12 @@ TEST_P(SchemaUtilTest, SameNumberOfIndexedPropertiesCanMakeIndexIncompatible) {
 
   SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, /*new_schema_dependent_map=*/{}, *feature_flags_);
-  EXPECT_THAT(delta.schema_types_incompatible, testing::IsEmpty());
-  EXPECT_THAT(delta.schema_types_index_incompatible,
-              testing::ElementsAre(kEmailType));
-  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
+  EXPECT_THAT(delta.schema_types_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_term_index_incompatible,
+              ElementsAre(kEmailType));
+  EXPECT_THAT(delta.schema_types_integer_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_embedding_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_deleted, IsEmpty());
 }
 
 TEST_P(SchemaUtilTest, SameNumberOfJoinablePropertiesCanMakeJoinIncompatible) {
@@ -2728,11 +2732,12 @@ TEST_P(SchemaUtilTest, SameNumberOfJoinablePropertiesCanMakeJoinIncompatible) {
 
   SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, /*new_schema_dependent_map=*/{}, *feature_flags_);
-  EXPECT_THAT(delta.schema_types_incompatible, testing::IsEmpty());
-  EXPECT_THAT(delta.schema_types_index_incompatible, testing::IsEmpty());
-  EXPECT_THAT(delta.schema_types_deleted, testing::IsEmpty());
-  EXPECT_THAT(delta.schema_types_join_incompatible,
-              testing::ElementsAre(kEmailType));
+  EXPECT_THAT(delta.schema_types_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_term_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_integer_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_embedding_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta.schema_types_deleted, IsEmpty());
+  EXPECT_THAT(delta.schema_types_join_incompatible, ElementsAre(kEmailType));
 }
 
 TEST_P(SchemaUtilTest, ChangingIndexedStringPropertiesMakesIndexIncompatible) {
@@ -2761,7 +2766,7 @@ TEST_P(SchemaUtilTest, ChangingIndexedStringPropertiesMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.insert(kPersonType);
 
   // New schema gained a new indexed string property.
   SchemaUtil::DependentMap no_dependents_map;
@@ -2808,7 +2813,7 @@ TEST_P(SchemaUtilTest, AddingNewIndexedStringPropertyMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.insert(kPersonType);
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   old_schema, new_schema, no_dependents_map, *feature_flags_),
@@ -2849,7 +2854,7 @@ TEST_P(SchemaUtilTest,
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   old_schema, new_schema, no_dependents_map, *feature_flags_)
-                  .schema_types_index_incompatible,
+                  .schema_types_term_index_incompatible,
               IsEmpty());
 }
 
@@ -2877,7 +2882,7 @@ TEST_P(SchemaUtilTest, ChangingIndexedIntegerPropertiesMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_integer_index_incompatible.insert(kPersonType);
 
   // New schema gained a new indexed integer property.
   SchemaUtil::DependentMap no_dependents_map;
@@ -2921,7 +2926,7 @@ TEST_P(SchemaUtilTest, AddingNewIndexedIntegerPropertyMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_integer_index_incompatible.insert(kPersonType);
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   old_schema, new_schema, no_dependents_map, *feature_flags_),
@@ -2959,7 +2964,7 @@ TEST_P(SchemaUtilTest,
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   old_schema, new_schema, no_dependents_map, *feature_flags_)
-                  .schema_types_index_incompatible,
+                  .schema_types_integer_index_incompatible,
               IsEmpty());
 }
 
@@ -3000,7 +3005,7 @@ TEST_P(SchemaUtilTest, ChangingIndexedVectorPropertiesMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_embedding_index_incompatible.insert(kPersonType);
 
   // New schema gained a new indexed vector property.
   SchemaUtil::DependentMap no_dependents_map;
@@ -3022,10 +3027,13 @@ TEST_P(SchemaUtilTest, ChangingIndexedVectorPropertiesMakesIndexIncompatible) {
               Eq(schema_delta));
 
   // Switch from linear search to ANN.
+  SchemaUtil::SchemaDelta schema_delta_only_embedding;
+  schema_delta_only_embedding.schema_types_embedding_index_incompatible.insert(
+      kPersonType);
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   schema_with_indexed_property, schema_with_ann_property,
                   no_dependents_map, *feature_flags_),
-              Eq(schema_delta));
+              Eq(schema_delta_only_embedding));
 }
 
 TEST_P(SchemaUtilTest, ChangingQuantizationTypeMakesIndexIncompatible) {
@@ -3054,7 +3062,7 @@ TEST_P(SchemaUtilTest, ChangingQuantizationTypeMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_embedding_index_incompatible.insert(kPersonType);
 
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(
@@ -3099,7 +3107,8 @@ TEST_P(SchemaUtilTest, AddingNewIndexedVectorPropertyMakesIndexIncompatible) {
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_integer_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_embedding_index_incompatible.insert(kPersonType);
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   old_schema, new_schema, no_dependents_map, *feature_flags_),
@@ -3138,7 +3147,7 @@ TEST_P(SchemaUtilTest,
   SchemaUtil::DependentMap no_dependents_map;
   EXPECT_THAT(SchemaUtil::ComputeCompatibilityDelta(
                   old_schema, new_schema, no_dependents_map, *feature_flags_)
-                  .schema_types_index_incompatible,
+                  .schema_types_term_index_incompatible,
               IsEmpty());
 }
 
@@ -3184,7 +3193,8 @@ TEST_P(SchemaUtilTest,
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_integer_index_incompatible.insert(kPersonType);
   schema_delta.schema_types_join_incompatible.insert(kPersonType);
 
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
@@ -3241,7 +3251,8 @@ TEST_P(
           .Build();
 
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_integer_index_incompatible.insert(kPersonType);
   schema_delta.schema_types_join_incompatible.insert(kPersonType);
 
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
@@ -3357,7 +3368,8 @@ TEST_P(SchemaUtilTest, DeletingIndexedDocumentPropertyIsIncompatible) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.insert(kPersonType);
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_integer_index_incompatible.insert(kPersonType);
   schema_delta.schema_types_join_incompatible.insert(kPersonType);
 
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
@@ -3679,7 +3691,8 @@ TEST_P(SchemaUtilTest, ChangingIndexedDocumentPropertyIsIncompatible) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.insert(kPersonType);
-  schema_delta.schema_types_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.insert(kPersonType);
+  schema_delta.schema_types_integer_index_incompatible.insert(kPersonType);
   schema_delta.schema_types_join_incompatible.insert(kPersonType);
 
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
@@ -4036,7 +4049,7 @@ TEST_P(SchemaUtilTest, DeletingPropertyAndChangingProperty) {
 
   SchemaUtil::SchemaDelta schema_delta;
   schema_delta.schema_types_incompatible.emplace(kEmailType);
-  schema_delta.schema_types_index_incompatible.emplace(kEmailType);
+  schema_delta.schema_types_term_index_incompatible.emplace(kEmailType);
   SchemaUtil::DependentMap no_dependents_map;
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       old_schema, new_schema, no_dependents_map, *feature_flags_);
@@ -4084,7 +4097,7 @@ TEST_P(SchemaUtilTest, IndexNestedDocumentsIndexIncompatible) {
   // should make kPersonType index_incompatible. kEmailType should be
   // unaffected.
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.emplace(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.emplace(kPersonType);
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       no_nested_index_schema, nested_index_schema, dependents_map,
@@ -4149,7 +4162,7 @@ TEST_P(SchemaUtilTest, AddOrDropIndexableNestedProperties_IndexIncompatible) {
   // Dropping some indexable_nested_properties should make kPersonType
   // index_incompatible. kEmailType should be unaffected.
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.emplace(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.emplace(kPersonType);
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       schema_1, schema_2, dependents_map, *feature_flags_);
@@ -4212,7 +4225,7 @@ TEST_P(SchemaUtilTest, ChangingIndexableNestedProperties_IndexIncompatible) {
   // Changing 'subject' to 'body' for indexable_nested_properties_list should
   // make kPersonType index_incompatible. kEmailType should be unaffected.
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.emplace(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.emplace(kPersonType);
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       schema_1, schema_2, dependents_map, *feature_flags_);
@@ -4268,7 +4281,7 @@ TEST_P(SchemaUtilTest, IndexableNestedPropertiesFullSet_IndexIncompatible) {
   // the moment, even though the set of indexable_nested_properties from
   // schema_1 to schema_2 should be the same.
   SchemaUtil::SchemaDelta schema_delta;
-  schema_delta.schema_types_index_incompatible.emplace(kPersonType);
+  schema_delta.schema_types_term_index_incompatible.emplace(kPersonType);
   SchemaUtil::DependentMap dependents_map = {{kEmailType, {{kPersonType, {}}}}};
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       schema_1, schema_2, dependents_map, *feature_flags_);
@@ -4330,7 +4343,9 @@ TEST_P(SchemaUtilTest,
   SchemaUtil::SchemaDelta actual = SchemaUtil::ComputeCompatibilityDelta(
       schema_1, schema_2, dependents_map, *feature_flags_);
   EXPECT_THAT(actual, Eq(schema_delta));
-  EXPECT_THAT(actual.schema_types_index_incompatible, IsEmpty());
+  EXPECT_THAT(actual.schema_types_term_index_incompatible, IsEmpty());
+  EXPECT_THAT(actual.schema_types_integer_index_incompatible, IsEmpty());
+  EXPECT_THAT(actual.schema_types_embedding_index_incompatible, IsEmpty());
 }
 
 TEST_P(SchemaUtilTest, SchemasWithConsistentScorableProperties) {
@@ -6580,6 +6595,232 @@ INSTANTIATE_TEST_SUITE_P(
                                        .SetDataType(TYPE_DOCUMENT)
                                        .Build(),
                                    false)));
+
+TEST_P(SchemaUtilTest, GranularIndexIncompatibleSets) {
+  SchemaProto old_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("age")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  // Case 1: Only change string indexing config -> term_index_incompatible
+  SchemaProto new_schema_term =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_PREFIX,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("age")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::DependentMap no_dependents_map;
+  SchemaUtil::SchemaDelta delta_term = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema_term, no_dependents_map, *feature_flags_);
+  EXPECT_THAT(delta_term.schema_types_term_index_incompatible,
+              UnorderedElementsAre("Person"));
+  EXPECT_THAT(delta_term.schema_types_integer_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta_term.schema_types_embedding_index_incompatible, IsEmpty());
+
+  // Case 2: Only change embedding indexing config ->
+  // embedding_index_incompatible
+  SchemaProto new_schema_embedding =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Person")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("name")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("age")
+                                        .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                            QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta delta_embedding =
+      SchemaUtil::ComputeCompatibilityDelta(old_schema, new_schema_embedding,
+                                            no_dependents_map, *feature_flags_);
+  EXPECT_THAT(delta_embedding.schema_types_term_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta_embedding.schema_types_integer_index_incompatible,
+              IsEmpty());
+  EXPECT_THAT(delta_embedding.schema_types_embedding_index_incompatible,
+              UnorderedElementsAre("Person"));
+
+  // Case 3: Only change integer indexing config -> integer_index_incompatible
+  // Note: Changing numeric_match_type from RANGE to UNKNOWN also changes the
+  // set of indexed properties, triggering section ID remapping. Since the
+  // type has all three index types, section ID remapping marks term, integer,
+  // and embedding as incompatible. To test integer-only, we need a type with
+  // ONLY integer properties.
+  SchemaProto old_schema_int_only =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Counter").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("count")
+                  .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaProto new_schema_int_only =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Counter").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("count")
+                  .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+
+  SchemaUtil::SchemaDelta delta_int = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema_int_only, new_schema_int_only, no_dependents_map,
+      *feature_flags_);
+  EXPECT_THAT(delta_int.schema_types_term_index_incompatible, IsEmpty());
+  EXPECT_THAT(delta_int.schema_types_integer_index_incompatible,
+              UnorderedElementsAre("Counter"));
+  EXPECT_THAT(delta_int.schema_types_embedding_index_incompatible, IsEmpty());
+
+  // Case 4: When fine-grained index rebuild is disabled, section id changes
+  // make all index types incompatible.
+  FeatureFlags flags_without_fine_grained_rebuild =
+      FeatureFlagsBuilder(*feature_flags_)
+          .set_enable_fine_grained_index_rebuild(false)
+          .Build();
+  SchemaUtil::SchemaDelta delta_int_all_indices_incompatible =
+      SchemaUtil::ComputeCompatibilityDelta(
+          old_schema_int_only, new_schema_int_only, no_dependents_map,
+          flags_without_fine_grained_rebuild);
+  EXPECT_THAT(
+      delta_int_all_indices_incompatible.schema_types_term_index_incompatible,
+      UnorderedElementsAre("Counter"));
+  EXPECT_THAT(delta_int_all_indices_incompatible
+                  .schema_types_integer_index_incompatible,
+              UnorderedElementsAre("Counter"));
+  EXPECT_THAT(delta_int_all_indices_incompatible
+                  .schema_types_embedding_index_incompatible,
+              UnorderedElementsAre("Counter"));
+}
+
+TEST_P(
+    SchemaUtilTest,
+    SectionIdReassignmentPropagatesToDependentsAndOnlyAffectsUsedIndexTypes) {
+  SchemaTypeConfigProto employee_type_old =
+      SchemaTypeConfigBuilder()
+          .SetType("Employee")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                              QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaTypeConfigProto department_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Department")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("dep_name")
+                           .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("members")
+                  .SetDataTypeDocument("Employee",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_REPEATED))
+          .Build();
+
+  SchemaTypeConfigProto company_type =
+      SchemaTypeConfigBuilder()
+          .SetType("Company")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("founded_year")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("departments")
+                  .SetDataTypeDocument("Department",
+                                       /*index_nested_properties=*/true)
+                  .SetCardinality(CARDINALITY_REPEATED))
+          .Build();
+
+  SchemaProto old_schema = SchemaBuilder()
+                               .AddType(employee_type_old)
+                               .AddType(department_type)
+                               .AddType(company_type)
+                               .Build();
+
+  // Now, modify Employee by adding a second vector property, altering
+  // Employee's section id assignment.
+  SchemaTypeConfigProto employee_type_new =
+      SchemaTypeConfigBuilder()
+          .SetType("Employee")
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("embedding")
+                           .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                              QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("secondary_embedding")
+                           .SetDataTypeVector(EMBEDDING_INDEXING_LINEAR_SEARCH,
+                                              QUANTIZATION_TYPE_QUANTIZE_8_BIT)
+                           .SetCardinality(CARDINALITY_OPTIONAL))
+          .Build();
+
+  SchemaProto new_schema = SchemaBuilder()
+                               .AddType(employee_type_new)
+                               .AddType(department_type)
+                               .AddType(company_type)
+                               .Build();
+
+  SchemaUtil::DependentMap dependents_map = {{"Employee", {{"Department", {}}}},
+                                             {"Department", {{"Company", {}}}},
+                                             {"Company", {}}};
+
+  SchemaUtil::SchemaDelta delta = SchemaUtil::ComputeCompatibilityDelta(
+      old_schema, new_schema, dependents_map, *feature_flags_);
+
+  // Employee only has VECTOR properties -> only embedding_index_incompatible.
+  // Department has STRING (itself) + VECTOR (via Employee) -> term and
+  // embedding. Company has INT64 (itself) + STRING/VECTOR (via
+  // Department/Employee) -> term, int, embedding.
+  EXPECT_THAT(delta.schema_types_term_index_incompatible,
+              UnorderedElementsAre("Department", "Company"));
+  EXPECT_THAT(delta.schema_types_integer_index_incompatible,
+              UnorderedElementsAre("Company"));
+  EXPECT_THAT(delta.schema_types_embedding_index_incompatible,
+              UnorderedElementsAre("Employee", "Department", "Company"));
+}
 
 }  // namespace
 
