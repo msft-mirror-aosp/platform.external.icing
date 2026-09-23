@@ -30,6 +30,7 @@
 #include "icing/scoring/advanced_scoring/double-list.h"
 #include "icing/store/document-id.h"
 #include "icing/util/embedding-util.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -88,6 +89,7 @@ struct EmbeddingMatchInfos {
       score_start_index = score_end_index = global_scores.size();
     }
     if (score_end_index != global_scores.size()) {
+      ICING_LOG(ERROR) << "Scores for the same document is not contiguous!";
       return absl_ports::FailedPreconditionError(
           "Scores for the same document should be contiguous.");
     }

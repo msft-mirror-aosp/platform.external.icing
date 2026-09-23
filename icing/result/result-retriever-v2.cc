@@ -243,7 +243,7 @@ ResultRetrieverV2::RetrieveResult ResultRetrieverV2::Retrieve(
   // and check if the document should be excluded.
   std::optional<int> idx = group_result_limiter_->GetGroupResultLimitsIndex(
       next_best_document_hit.parent_scored_document_hit(),
-      result_state.entry_id_group_index_map(), doc_store_,
+      result_state.entry_id_group_index_map, doc_store_,
       result_state.result_group_type(), current_time_ms);
   if (!idx.has_value()) {
     // Should exclude the document, so return an invalid result.
@@ -281,12 +281,12 @@ ResultRetrieverV2::RetrieveResult ResultRetrieverV2::Retrieve(
   DocumentProto document = std::move(document_or).ValueOrDie();
 
   // Apply parent projection
-  ApplyProjection(result_state.parent_adjustment_info(), &document);
+  ApplyProjection(result_state.parent_adjustment_info.get(), &document);
 
   SearchResultProto::ResultProto result;
   // Add parent snippet if requested.
   bool has_parent_snippets = ApplySnippet(
-      result_state.parent_adjustment_info(), *snippet_retriever_, document,
+      result_state.parent_adjustment_info.get(), *snippet_retriever_, document,
       doc_id,
       next_best_document_hit.parent_scored_document_hit().hit_section_id_mask(),
       &result);
@@ -320,11 +320,11 @@ ResultRetrieverV2::RetrieveResult ResultRetrieverV2::Retrieve(
     }
 
     DocumentProto child_document = std::move(child_document_or).ValueOrDie();
-    ApplyProjection(result_state.child_adjustment_info(), &child_document);
+    ApplyProjection(result_state.child_adjustment_info.get(), &child_document);
 
     SearchResultProto::ResultProto* child_result = result.add_joined_results();
     // Add child snippet if requested.
-    ApplySnippet(result_state.child_adjustment_info(), *snippet_retriever_,
+    ApplySnippet(result_state.child_adjustment_info.get(), *snippet_retriever_,
                  child_document, child_doc_id,
                  child_scored_document_hit.hit_section_id_mask(), child_result);
 

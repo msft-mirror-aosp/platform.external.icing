@@ -18,6 +18,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <random>
@@ -60,6 +61,7 @@
 #include "icing/store/document-group-info.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
+#include "icing/util/clock.h"
 #include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
@@ -718,7 +720,8 @@ void CompareSearchResultProto(
 
 IcingMonkeyTestRunner::IcingMonkeyTestRunner(
     IcingMonkeyTestRunnerConfiguration config)
-    : config_(std::move(config)),
+    : clock_(std::make_unique<Clock>()),
+      config_(std::move(config)),
       random_(config_.seed),
       in_memory_icing_(std::make_unique<InMemoryIcingSearchEngine>(
           &random_, config_.enable_join_delete_propagation)),
@@ -806,6 +809,12 @@ void IcingMonkeyTestRunner::DoUpdateSchema() {
                                             result.schema_types_incompatible));
   ASSERT_THAT(icing_set_schema_result.deleted_document_count(),
               Eq(num_deleted_documents));
+  int64_t update_ts_ms = clock_->GetSystemTimeMilliseconds();
+  for (const std::string& schema_type :
+       result.schema_types_index_incompatible) {
+    // Insert or update the timestamp of the last index incompatible update.
+    schema_to_last_index_incompatible_update_[schema_type] = update_ts_ms;
+  }
 }
 
 void IcingMonkeyTestRunner::DoGet() {
@@ -1010,9 +1019,9 @@ void IcingMonkeyTestRunner::InternalSearch(bool is_join_search) {
       std::make_unique<SearchSpecProto>(query_pair.search_spec);
   std::unique_ptr<ScoringSpecProto> scoring_spec =
       std::make_unique<ScoringSpecProto>(GenerateRandomScoringSpec(&random_));
-  auto result_spec =
-      std::make_unique<ResultSpecProto>(GenerateRandomResultSpecProto(
-          &random_, in_memory_icing_->GetSchema(), /*is_nested=*/false));
+  auto result_spec = std::make_unique<ResultSpecProto>(
+      GenerateRandomResultSpecProto(&random_, in_memory_icing_->GetSchema(),
+                                    /*is_nested=*/false));
   ResultSpecProto::SnippetSpecProto snippet_spec = result_spec->snippet_spec();
   bool is_projection_enabled = !result_spec->type_property_masks().empty();
 
@@ -1081,11 +1090,10 @@ void IcingMonkeyTestRunner::InternalSearch(bool is_join_search) {
                               ->mutable_nested_spec()
                               ->mutable_search_spec();
   }
-
   ICING_ASSERT_OK_AND_ASSIGN(
-      std::vector<SearchResultProto::ResultProto> exp_results,
+      SearchResultProto exp_search_result,
       in_memory_icing_->Search(query_pair.query_node.get(), nested_queries,
-                               *scoring_spec));
+                               *scoring_spec, result_spec->num_per_page()));
 
   SearchResultProto search_result =
       icing_->Search(*search_spec, *scoring_spec, *result_spec);
@@ -1097,42 +1105,93 @@ void IcingMonkeyTestRunner::InternalSearch(bool is_join_search) {
   scoring_spec.reset();
   result_spec.reset();
 
-  std::vector<SearchResultProto::ResultProto> actual_results;
-  int num_snippeted = 0;
-  while (true) {
-    for (const SearchResultProto::ResultProto& result :
-         search_result.results()) {
-      actual_results.push_back(result);
-      if (!result.snippet().entries().empty()) {
-        ++num_snippeted;
-        for (const SnippetProto::EntryProto& entry :
-             result.snippet().entries()) {
-          ASSERT_THAT(entry.snippet_matches(),
-                      SizeIs(Le(snippet_spec.num_matches_per_property())));
-        }
+  int num_to_snippet = snippet_spec.num_to_snippet();
+  int64_t query_ts_ms = clock_->GetSystemTimeMilliseconds();
+
+  CheckResults(search_result, exp_search_result, query_ts_ms, num_to_snippet,
+               snippet_spec.num_matches_per_property(), is_snippetable_query,
+               is_projection_enabled);
+
+  bool is_interleaved_get_next_page = GetRandomBoolean(&random_);
+
+  if (is_interleaved_get_next_page) {
+    ICING_LOG(INFO) << "Monkey interleaving search";
+    // If there are more results, then add the next page token to the map.
+    if (search_result.next_page_token() != kInvalidNextPageToken) {
+      ICING_LOG(INFO) << "Monkey adding real next page token: "
+                      << search_result.next_page_token()
+                      << " corresponding to in-memory next page token: "
+                      << exp_search_result.next_page_token();
+      auto [itr, inserted] = in_memory_token_to_icing_token_.insert(
+          {exp_search_result.next_page_token(),
+           {
+               search_result.next_page_token(),
+               query_ts_ms,
+               num_to_snippet,
+               snippet_spec.num_matches_per_property(),
+               is_snippetable_query,
+               is_projection_enabled,
+           }});
+      if (!inserted) {
+        FAIL() << "Duplicate in-memory Icing next page token: "
+               << exp_search_result.next_page_token();
       }
     }
-    if (search_result.next_page_token() == kInvalidNextPageToken) {
-      break;
+  } else {
+    ICING_LOG(INFO) << "Monkey getting all results in this search";
+    // Keep getting the next page until there are no more pages.
+    while (search_result.next_page_token() != kInvalidNextPageToken) {
+      search_result = icing_->GetNextPage(search_result.next_page_token());
+      ASSERT_THAT(search_result.status(), ProtoIsOk());
+      ICING_ASSERT_OK_AND_ASSIGN(
+          SearchResultProto exp_search_result,
+          in_memory_icing_->GetNextPage(exp_search_result.next_page_token()));
+      CheckResults(search_result, exp_search_result, query_ts_ms,
+                   num_to_snippet, snippet_spec.num_matches_per_property(),
+                   is_snippetable_query, is_projection_enabled);
     }
-    search_result = icing_->GetNextPage(search_result.next_page_token());
-    ASSERT_THAT(search_result.status(), ProtoIsOk());
+  }
+}
+
+void IcingMonkeyTestRunner::DoGetNextPage() {
+  if (in_memory_token_to_icing_token_.empty()) {
+    ICING_LOG(INFO) << "Monkey has no tokens to get next page";
+    return;
+  }
+  ICING_LOG(INFO) << "Monkey getting next page";
+
+  int random_index =
+      GetRandomInt(&random_, 0, in_memory_token_to_icing_token_.size() - 1);
+  auto itr = std::next(in_memory_token_to_icing_token_.begin(), random_index);
+  uint64_t in_memory_next_page_token = itr->first;
+  QueryState& query_state = itr->second;
+  uint64_t icing_next_page_token = query_state.next_page_token;
+  ICING_LOG(INFO) << "Monkey getting next page using real next page token: "
+                  << icing_next_page_token;
+  SearchResultProto search_result = icing_->GetNextPage(icing_next_page_token);
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  if (search_result.has_page_token_not_found()) {
+    // The page token was not found, so we are done getting results for this
+    // token.
+    ICING_LOG(INFO) << "Real Icing token: " << icing_next_page_token
+                    << " was invalidated";
+    in_memory_token_to_icing_token_.erase(in_memory_next_page_token);
+    return;
   }
 
-  if (is_snippetable_query) {
-    ASSERT_THAT(num_snippeted,
-                Eq(std::min<uint32_t>(exp_results.size(),
-                                      snippet_spec.num_to_snippet())));
-  }
+  ICING_LOG(INFO)
+      << "Monkey getting next page using in-memory next page token: "
+      << in_memory_next_page_token;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SearchResultProto expected_search_result,
+      in_memory_icing_->GetNextPage(in_memory_next_page_token));
 
-  SortResults(exp_results);
-  SortResults(actual_results);
-  ASSERT_THAT(actual_results, SizeIs(exp_results.size()));
-  for (int i = 0; i < actual_results.size(); ++i) {
-    ASSERT_NO_FATAL_FAILURE(CompareSearchResultProto(
-        actual_results[i], exp_results[i], is_projection_enabled));
+  CheckResults(search_result, expected_search_result, query_state);
+
+  // If there are no more results, then remove the next page token from the map.
+  if (search_result.next_page_token() == kInvalidNextPageToken) {
+    in_memory_token_to_icing_token_.erase(in_memory_next_page_token);
   }
-  ICING_LOG(INFO) << exp_results.size() << " documents found by query.";
 }
 
 void IcingMonkeyTestRunner::DoGetDebugInfo() {
@@ -1207,6 +1266,8 @@ void IcingMonkeyTestRunner::CreateIcingSearchEngine() {
   icing_options.set_enable_background_task_scheduler(true);
   icing_options.set_enable_delete_propagation_from(
       config_.enable_join_delete_propagation);
+  icing_options.set_enable_fine_grained_index_rebuild(
+      GetRandomBoolean(&random_));
 
   icing_options.set_enable_schema_definition_deduping(true);
   icing_options.set_build_property_existence_metadata_hits(true);
@@ -1259,6 +1320,78 @@ void IcingMonkeyTestRunner::ReloadInMemoryIcing() {
   // Reload generators
   schema_generator_->ReloadPreviousStatus(*in_memory_icing_->GetSchema());
   document_generator_->ReloadPreviousStatus(max_uri);
+}
+
+void IcingMonkeyTestRunner::CheckResults(
+    const SearchResultProto& actual_search_result,
+    const SearchResultProto& expected_search_result, int64_t query_timestamp_ms,
+    int& num_to_snippet, int num_matches_per_property,
+    bool& is_snippetable_query, bool is_projection_enabled) {
+  std::vector<SearchResultProto::ResultProto> actual_results;
+  actual_results.reserve(actual_search_result.results().size());
+  int num_snippeted = 0;
+  for (const SearchResultProto::ResultProto& result :
+       actual_search_result.results()) {
+    actual_results.push_back(result);
+    auto itr = schema_to_last_index_incompatible_update_.find(
+        result.document().schema());
+    // If the query timestamp is before the last index incompatible update, then
+    // we disable checking snippets for this page and subsequent pages.
+    // TODO(b/542593471): Remove once the incorrect snippet due to pagination
+    // state and icing internal id changes is fixed.
+    if (itr != schema_to_last_index_incompatible_update_.end() &&
+        query_timestamp_ms <= itr->second) {
+      ICING_LOG(INFO)
+          << "Disabling snippet checking for query; query was made at "
+             "timestamp: "
+          << query_timestamp_ms
+          << " and has result with schema: " << result.document().schema()
+          << " which had last index incompatible update at timestamp: "
+          << itr->second;
+      is_snippetable_query = false;
+    }
+    if (!result.snippet().entries().empty()) {
+      ++num_snippeted;
+      for (const SnippetProto::EntryProto& entry : result.snippet().entries()) {
+        ASSERT_THAT(entry.snippet_matches(),
+                    SizeIs(Le(num_matches_per_property)));
+      }
+    }
+  }
+
+  std::vector<SearchResultProto::ResultProto> exp_results(
+      std::make_move_iterator(expected_search_result.results().begin()),
+      std::make_move_iterator(expected_search_result.results().end()));
+
+  if (is_snippetable_query) {
+    ASSERT_THAT(num_snippeted,
+                Eq(std::min<uint32_t>(exp_results.size(), num_to_snippet)));
+  }
+  // Update num_to_snippet for the next call. Only num_to_snippet results need
+  // to be snippeted, so if we have more than num_to_snippet results, we need to
+  // skip checking if the remaining results are snippeted.
+  num_to_snippet = std::max<int>(num_to_snippet - num_snippeted, 0);
+
+  SortResults(exp_results);
+  SortResults(actual_results);
+  ASSERT_THAT(actual_results, SizeIs(exp_results.size()));
+  for (int i = 0; i < actual_results.size(); ++i) {
+    ASSERT_NO_FATAL_FAILURE(CompareSearchResultProto(
+        actual_results[i], exp_results[i], is_projection_enabled));
+  }
+  ICING_LOG(INFO) << exp_results.size() << " documents found by query.";
+}
+
+void IcingMonkeyTestRunner::CheckResults(
+    const SearchResultProto& actual_search_result,
+    const SearchResultProto& expected_search_result, QueryState& query_state) {
+  ICING_LOG(INFO) << "Checking results for query with real icing token: "
+                  << query_state.next_page_token;
+  CheckResults(actual_search_result, expected_search_result,
+               query_state.query_timestamp_ms, query_state.num_to_snippet,
+               query_state.num_matches_per_property,
+               query_state.is_snippetable_query,
+               query_state.is_projection_enabled);
 }
 
 }  // namespace lib
