@@ -122,15 +122,26 @@ libtextclassifier3::Status TermIndexingHandler::Handle(
     libtextclassifier3::Status merge_status = index_.Merge();
 
     if (!merge_status.ok()) {
-      ICING_LOG(ERROR) << "Index merging failed. Clearing index.";
-      if (!index_.Reset().ok()) {
+      ICING_LOG(ERROR) << "Index merging failed. Error code: "
+                       << merge_status.error_code()
+                       << ", error message: " << merge_status.error_message();
+      ICING_LOG(ERROR) << "Attempt to clear the term index.";
+      auto reset_status = index_.Reset();
+      if (!reset_status.ok()) {
+        ICING_LOG(ERROR)
+            << "Failed to clear index after merge failure. Error code: "
+            << reset_status.error_code()
+            << ", error message: " << reset_status.error_message();
         return absl_ports::InternalError(IcingStringUtil::StringPrintf(
             "Unable to reset to clear index after merge failure. Merge "
-            "failure=%d:%s",
-            merge_status.error_code(), merge_status.error_message().c_str()));
+            "failure=%d: %s, reset failure=%d: %s",
+            merge_status.error_code(), merge_status.error_message().c_str(),
+            reset_status.error_code(), reset_status.error_message().c_str()));
       } else {
+        ICING_LOG(INFO)
+            << "Successfully cleared the term index after merge failure.";
         return absl_ports::DataLossError(IcingStringUtil::StringPrintf(
-            "Forced to reset index after merge failure. Merge failure=%d:%s",
+            "Forced to reset index after merge failure. Merge failure=%d: %s",
             merge_status.error_code(), merge_status.error_message().c_str()));
       }
     }

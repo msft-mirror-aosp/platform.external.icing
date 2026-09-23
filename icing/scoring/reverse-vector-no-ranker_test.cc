@@ -35,6 +35,8 @@ using ::testing::DoubleEq;
 using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsEmpty;
+using ::testing::IsFalse;
+using ::testing::IsTrue;
 using ::testing::Pointee;
 using ::testing::SizeIs;
 using ::testing::UnorderedElementsAre;
@@ -595,6 +597,24 @@ TEST(ReverseVectorNoRankerTest, OptimizeAndTransfer_joinedScoredDocumentHit) {
   // Since the original document 3 is deleted, joined_hit2 is deleted after
   // optimization even though there are some child documents that are not
   // deleted.
+}
+
+TEST(ReverseVectorNoRankerTest, Clear) {
+  ScoredDocumentHit scored_hit_0(/*document_id=*/0, kSectionIdMaskNone,
+                                 /*score=*/1);
+  ScoredDocumentHit scored_hit_1(/*document_id=*/1, kSectionIdMaskNone,
+                                 /*score=*/1);
+  ScoredDocumentHit scored_hit_2(/*document_id=*/2, kSectionIdMaskNone,
+                                 /*score=*/1);
+
+  ReverseVectorNoRanker<ScoredDocumentHit> ranker(
+      {scored_hit_1, scored_hit_0, scored_hit_2});
+  ASSERT_THAT(ranker.size(), Eq(3));
+  ASSERT_THAT(ranker.empty(), IsFalse());
+
+  ranker.clear();
+  EXPECT_THAT(ranker.size(), Eq(0));
+  EXPECT_THAT(ranker.empty(), IsTrue());
 }
 
 }  // namespace

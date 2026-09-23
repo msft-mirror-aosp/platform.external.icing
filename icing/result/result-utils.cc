@@ -16,6 +16,7 @@
 
 #include <optional>
 #include <string_view>
+#include <utility>
 
 #include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
@@ -89,6 +90,29 @@ std::optional<ResultGroupingEntryId> EncodeResultGroupingEntryId(
       return (static_cast<ResultGroupingEntryId>(namespace_id) << 16) |
              schema_type_id;
     }
+  }
+}
+
+std::pair<NamespaceId, SchemaTypeId> DecodeResultGroupingEntryId(
+    ResultGroupingEntryId result_grouping_entry_id,
+    ResultSpecProto::ResultGroupingType result_group_type) {
+  switch (result_group_type) {
+    case ResultSpecProto::ResultGroupingType::
+        ResultSpecProto_ResultGroupingType_NONE:
+      return std::make_pair(kInvalidNamespaceId, kInvalidSchemaTypeId);
+    case ResultSpecProto::ResultGroupingType::
+        ResultSpecProto_ResultGroupingType_SCHEMA_TYPE:
+      return std::make_pair(kInvalidNamespaceId, static_cast<SchemaTypeId>(
+                                                     result_grouping_entry_id));
+    case ResultSpecProto::ResultGroupingType::
+        ResultSpecProto_ResultGroupingType_NAMESPACE:
+      return std::make_pair(static_cast<NamespaceId>(result_grouping_entry_id),
+                            kInvalidSchemaTypeId);
+    case ResultSpecProto::ResultGroupingType::
+        ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE:
+      return std::make_pair(
+          static_cast<NamespaceId>(result_grouping_entry_id >> 16),
+          static_cast<SchemaTypeId>(result_grouping_entry_id & 0xFFFF));
   }
 }
 

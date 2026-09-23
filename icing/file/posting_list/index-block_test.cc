@@ -454,6 +454,23 @@ TEST_F(IndexBlockTest, IndexBlockNextBlockIndex) {
   }
 }
 
+TEST_F(IndexBlockTest, FreePostingListInvalidIndex) {
+  constexpr int kPostingListBytes = 2004;
+  ICING_ASSERT_OK_AND_ASSIGN(IndexBlock block,
+                             IndexBlock::CreateFromUninitializedRegion(
+                                 &filesystem_, serializer_.get(), sfd_->get(),
+                                 /*offset=*/0, kBlockSize, kPostingListBytes));
+
+  EXPECT_THAT(block.max_num_posting_lists(), Eq(2));
+
+  EXPECT_THAT(block.FreePostingList(-1),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(block.FreePostingList(2),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+  EXPECT_THAT(block.FreePostingList(3),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
 }  // namespace
 
 }  // namespace lib
