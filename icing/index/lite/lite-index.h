@@ -341,6 +341,28 @@ class LiteIndex {
       const TermIdCodec* term_id_codec, DocumentId new_last_added_document_id)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Transfers and compacts data into a new lite index under new_options.
+  //
+  // This is the first stage of two-stage optimization and requires only a
+  // shared_lock (read lock) on `this`. The live index is never modified or
+  // sorted during this call, so concurrent search queries are not blocked.
+  // Hits and terms from surviving documents are transferred directly into the
+  // newly created index, which is sorted and persisted in the background before
+  // returning.
+  //
+  // This method also sets the last_added_docid of the new index to
+  // new_last_added_document_id.
+  //
+  // Returns:
+  //   OK on success
+  //   INVALID_ARGUMENT if new_options has the same filename_base as the current
+  //   INTERNAL_ERROR on IO error
+  libtextclassifier3::Status OptimizeInto(
+      const Options& new_options,
+      const std::vector<DocumentId>& document_id_old_to_new,
+      const TermIdCodec* term_id_codec,
+      DocumentId new_last_added_document_id) const ICING_LOCKS_EXCLUDED(mutex_);
+
   // Updates the checksums of all index components, updates the combined
   // checksum and returns it.
   libtextclassifier3::StatusOr<Crc32> UpdateChecksum()

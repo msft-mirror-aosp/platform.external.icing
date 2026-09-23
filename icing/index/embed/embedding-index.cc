@@ -982,13 +982,6 @@ libtextclassifier3::Status EmbeddingIndex::Optimize(
   ICING_RETURN_IF_ERROR(CommitBufferToIndexLocked());
 
   std::string temporary_index_working_path = working_path_ + "_temp";
-  if (!filesystem_.DeleteDirectoryRecursively(
-          temporary_index_working_path.c_str())) {
-    ICING_LOG(ERROR) << "Recursively deleting " << temporary_index_working_path;
-    return absl_ports::InternalError(
-        "Unable to delete temp directory to prepare to build new index.");
-  }
-
   DestructibleDirectory temporary_index_dir(
       &filesystem_, std::move(temporary_index_working_path));
   if (!temporary_index_dir.is_valid()) {
@@ -996,21 +989,9 @@ libtextclassifier3::Status EmbeddingIndex::Optimize(
         "Unable to create temp directory to build new index.");
   }
 
-  {
-    ICING_ASSIGN_OR_RETURN(
-        std::unique_ptr<EmbeddingIndex> new_index,
-        EmbeddingIndex::Create(&filesystem_, temporary_index_dir.dir(), &clock_,
-                               feature_flags_, num_shards_));
-    {
-      absl_ports::unique_lock new_index_lock(&new_index->mutex_);
-
-      ICING_RETURN_IF_ERROR(TransferIndex(*document_store, *schema_store,
-                                          document_id_old_to_new,
-                                          new_index.get()));
-    }
-    new_index->set_last_added_document_id(new_last_added_document_id);
-    ICING_RETURN_IF_ERROR(new_index->PersistToDisk());
-  }
+  ICING_RETURN_IF_ERROR(OptimizeIntoLocked(
+      document_store, schema_store, temporary_index_dir.dir(),
+      document_id_old_to_new, new_last_added_document_id));
 
   // Destruct current storage instances to safely swap directories.
   metadata_mmapped_file_.reset();
@@ -1031,6 +1012,52 @@ libtextclassifier3::Status EmbeddingIndex::Optimize(
   // Reinitialize the index.
   is_initialized_ = false;
   return Initialize();
+}
+
+libtextclassifier3::Status EmbeddingIndex::OptimizeInto(
+    const DocumentStore* document_store, const SchemaStore* schema_store,
+    const std::string& new_working_path,
+    const std::vector<DocumentId>& document_id_old_to_new,
+    DocumentId new_last_added_document_id) const {
+  absl_ports::shared_lock l(&mutex_);
+  return OptimizeIntoLocked(document_store, schema_store, new_working_path,
+                            document_id_old_to_new, new_last_added_document_id);
+}
+
+libtextclassifier3::Status EmbeddingIndex::OptimizeIntoLocked(
+    const DocumentStore* document_store, const SchemaStore* schema_store,
+    const std::string& new_working_path,
+    const std::vector<DocumentId>& document_id_old_to_new,
+    DocumentId new_last_added_document_id) const {
+  ICING_RETURN_ERROR_IF_NULL(document_store);
+  ICING_RETURN_ERROR_IF_NULL(schema_store);
+  if (!pending_embedding_hits_.empty()) {
+    return absl_ports::FailedPreconditionError(
+        "Cannot optimize embedding index with pending uncommitted hits.");
+  }
+  if (new_working_path == working_path_) {
+    return absl_ports::InvalidArgumentError(
+        "New working path is the same as the current one.");
+  }
+  if (!filesystem_.DeleteDirectoryRecursively(new_working_path.c_str())) {
+    ICING_LOG(ERROR) << "Recursively deleting " << new_working_path;
+    return absl_ports::InternalError(
+        "Unable to delete temp directory to prepare to build new index.");
+  }
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<EmbeddingIndex> new_index,
+      EmbeddingIndex::Create(&filesystem_, new_working_path, &clock_,
+                             feature_flags_, num_shards_));
+  {
+    absl_ports::unique_lock new_index_lock(&new_index->mutex_);
+    if (!is_empty()) {
+      ICING_RETURN_IF_ERROR(TransferIndex(*document_store, *schema_store,
+                                          document_id_old_to_new,
+                                          new_index.get()));
+    }
+  }
+  new_index->set_last_added_document_id(new_last_added_document_id);
+  return new_index->PersistToDisk();
 }
 
 libtextclassifier3::StatusOr<

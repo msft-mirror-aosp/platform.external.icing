@@ -1267,6 +1267,74 @@ TEST_F(EmbeddingIndexTest, OptimizeSingleEmbeddingSingleDocument) {
   EXPECT_EQ(embedding_index_->last_added_document_id(), 0);
 }
 
+TEST_F(EmbeddingIndexTest, OptimizeInto) {
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(/*section_id=*/0, /*document_id=*/2), test_vector1_,
+      QUANTIZATION_TYPE_NONE, kDefaultSchemaName));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+  embedding_index_->set_last_added_document_id(2);
+
+  std::string new_working_path = test_dir_ + "/embedding_index_optimized";
+
+  // Invalid argument if new_working_path == working_path_
+  EXPECT_THAT(
+      embedding_index_->OptimizeInto(
+          document_store_.get(), schema_store_.get(), embedding_index_dir_,
+          /*document_id_old_to_new=*/{0, kInvalidDocumentId, 1},
+          /*new_last_added_document_id=*/1),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // Successfully optimize into new working path
+  ICING_ASSERT_OK(embedding_index_->OptimizeInto(
+      document_store_.get(), schema_store_.get(), new_working_path,
+      /*document_id_old_to_new=*/{0, kInvalidDocumentId, 1},
+      /*new_last_added_document_id=*/1));
+
+  // Original index remains unchanged
+  EXPECT_EQ(embedding_index_->last_added_document_id(), 2);
+  EXPECT_THAT(
+      GetEmbeddingHitsFromIndex(embedding_index_.get(), /*dimension=*/3,
+                                kDefaultModelSignature),
+      IsOkAndHolds(ElementsAre(EmbeddingHit(
+          BasicHit(/*section_id=*/0, /*document_id=*/2), /*location=*/0))));
+
+  // Create new index from new_working_path and verify
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<EmbeddingIndex> new_embedding_index,
+      EmbeddingIndex::Create(&filesystem_, new_working_path, &clock_,
+                             feature_flags_.get(),
+                             /*num_shards=*/32));
+  EXPECT_EQ(new_embedding_index->last_added_document_id(), 1);
+  EXPECT_THAT(
+      GetEmbeddingHitsFromIndex(new_embedding_index.get(), /*dimension=*/3,
+                                kDefaultModelSignature),
+      IsOkAndHolds(ElementsAre(EmbeddingHit(
+          BasicHit(/*section_id=*/0, /*document_id=*/1), /*location=*/0))));
+  EXPECT_THAT(GetRawEmbeddingDataFromIndex(new_embedding_index.get(),
+                                           default_shard_id_),
+              ElementsAre(0.1, 0.2, 0.3));
+
+  // Clean up
+  new_embedding_index.reset();
+  filesystem_.DeleteDirectoryRecursively(new_working_path.c_str());
+}
+
+TEST_F(EmbeddingIndexTest,
+       OptimizeIntoWithPendingHitsShouldReturnFailedPreconditionError) {
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(/*section_id=*/0, /*document_id=*/2), test_vector1_,
+      QUANTIZATION_TYPE_NONE, kDefaultSchemaName));
+  // Notice CommitBufferToIndex() is NOT called, so there are pending hits.
+
+  std::string new_working_path = test_dir_ + "/embedding_index_optimized";
+  EXPECT_THAT(
+      embedding_index_->OptimizeInto(
+          document_store_.get(), schema_store_.get(), new_working_path,
+          /*document_id_old_to_new=*/{0, kInvalidDocumentId, 1},
+          /*new_last_added_document_id=*/1),
+      StatusIs(libtextclassifier3::StatusCode::FAILED_PRECONDITION));
+}
+
 TEST_F(EmbeddingIndexTest, OptimizeSingleQuantizedEmbeddingSingleDocument) {
   ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
       BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/2), test_vector1_,
