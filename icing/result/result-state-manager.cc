@@ -14,12 +14,16 @@
 
 #include "icing/result/result-state-manager.h"
 
+#include <atomic>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <queue>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/mutex.h"
@@ -28,6 +32,7 @@
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-store.h"
 #include "icing/util/clock.h"
@@ -36,10 +41,8 @@
 namespace icing {
 namespace lib {
 
-ResultStateManager::ResultStateManager(int max_total_hits,
-                                       const DocumentStore& document_store)
-    : document_store_(document_store),
-      max_total_hits_(max_total_hits),
+ResultStateManager::ResultStateManager(int max_total_hits)
+    : max_total_hits_(max_total_hits),
       num_total_hits_(0),
       random_generator_(GetSteadyTimeNanoseconds()) {}
 
@@ -48,7 +51,8 @@ ResultStateManager::CacheAndRetrieveFirstPage(
     std::unique_ptr<ScoredDocumentHitsRanker> ranker,
     std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
     std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
-    const ResultSpecProto& result_spec, const DocumentStore& document_store,
+    const ResultSpecProto& result_spec, const SchemaStore& schema_store,
+    const DocumentStore& document_store,
     const ResultRetrieverV2& result_retriever, int64_t current_time_ms,
     QueryStatsProto* query_stats) {
   if (ranker == nullptr) {
@@ -59,7 +63,8 @@ ResultStateManager::CacheAndRetrieveFirstPage(
   // ResultState should be created by ResultStateManager only.
   std::shared_ptr<ResultStateV2> result_state = std::make_shared<ResultStateV2>(
       std::move(ranker), std::move(parent_adjustment_info),
-      std::move(child_adjustment_info), result_spec, document_store);
+      std::move(child_adjustment_info), result_spec, schema_store,
+      document_store);
 
   // Retrieve docs outside of ResultStateManager critical section.
   // Will enter ResultState critical section inside ResultRetriever.
@@ -148,6 +153,44 @@ ResultStateManager::GetNextPage(uint64_t next_page_token, int32_t max_results,
     next_page_token = kInvalidNextPageToken;
   }
   return std::make_pair(next_page_token, std::move(page_result));
+}
+
+ResultStateManager::OptimizeResult ResultStateManager::Optimize(
+    const DocumentStore::OptimizeResult& doc_store_optimize_result) {
+  absl_ports::unique_lock l(&mutex_);
+
+  int num_result_states_optimized = 0;
+  std::vector<uint64_t> failed_tokens;
+  for (auto& [next_page_token, result_state] : result_state_map_) {
+    absl_ports::unique_lock result_state_l(&result_state->mutex);
+
+    auto status = result_state->Optimize(doc_store_optimize_result);
+    if (!status.ok()) {
+      // If we fail to convert optimized ids for a result state:
+      // - Skip this result state and invalidate it later.
+      // - Clear the result state to release the memory. Since result_state is a
+      //   shared_ptr and (although unlikely) it might be used by another thread
+      //   after releasing the lock here, we should clear the result state if
+      //   failing to convert optimized ids "atomically", in order to avoid
+      //   ResultState being at a "partially optimized" (corrupted) state.
+      ICING_LOG(WARNING)
+          << "Failed to convert optimized ids for result state due to: "
+          << status.error_message() << ". Invalidate this result state.";
+      result_state->Clear();
+      failed_tokens.push_back(next_page_token);
+    } else {
+      ++num_result_states_optimized;
+    }
+  }
+
+  // Finally, invalidate all failed result state tokens.
+  for (uint64_t failed_token : failed_tokens) {
+    InternalInvalidateResultState(failed_token);
+  }
+
+  return OptimizeResult{
+      .num_result_states_optimized = num_result_states_optimized,
+      .num_result_states_invalidated = static_cast<int>(failed_tokens.size())};
 }
 
 int ResultStateManager::GetNumActiveResultStates(int64_t current_time_ms) {

@@ -18,6 +18,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <queue>
@@ -45,6 +47,7 @@
 #include "icing/store/document-group-info.h"
 #include "icing/store/document-id.h"
 #include "icing/tokenization/language-segmenter-factory.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 #include "unicode/uloc.h"
 
@@ -54,6 +57,35 @@ namespace lib {
 static constexpr float kEps = 1e-6;
 
 namespace {
+
+template <typename T>
+void SortResults(std::vector<T>& results,
+                 ScoringSpecProto::Order::Code order_by) {
+  struct ScoreExtractor {
+    int operator()(const T& r) const { return r.scored_document_id.score; }
+    int operator()(const T* r) const { return r->scored_document_id.score; }
+  } get_score;
+
+  if (order_by == ScoringSpecProto::Order::ASC) {
+    std::sort(results.begin(), results.end(),
+              [&get_score](const T& a, const T& b) {
+                if (get_score(a) == get_score(b)) {
+                  return a.scored_document_id.document_id <
+                         b.scored_document_id.document_id;
+                }
+                return get_score(a) < get_score(b);
+              });
+  } else {
+    std::sort(results.begin(), results.end(),
+              [&get_score](const T& a, const T& b) {
+                if (get_score(a) == get_score(b)) {
+                  return a.scored_document_id.document_id >
+                         b.scored_document_id.document_id;
+                }
+                return get_score(a) > get_score(b);
+              });
+  }
+}
 
 // Helper function to (BFS) traverse from doc_ids to all children by the given
 // graph.
@@ -359,14 +391,19 @@ InMemoryIcingSearchEngine::DeleteBySchemaType(const std::string& schema_type) {
 
 libtextclassifier3::StatusOr<std::vector<DocumentMetadata>>
 InMemoryIcingSearchEngine::DeleteByQuery(const MonkeyAbstractQueryNode* node) {
+  ScoringSpecProto scoring_spec;
+  // We don't need to delete the results in any particular order, so we can
+  // skip the scoring and sorting step.
+  scoring_spec.set_rank_by(ScoringSpecProto::RankingStrategy::NONE);
   ICING_ASSIGN_OR_RETURN(
-      std::vector<NestedResultDocumentId> nested_results_to_delete,
-      InternalSearch(node, /*nested_queries=*/{}));
+      std::vector<NestedScoredDocumentId> nested_scored_doc_ids_to_delete,
+      InternalSearch(node, /*nested_queries=*/{}, scoring_spec));
 
   // Unzip the nested structure and collect all document ids to delete. This
   // will dedupe doc ids and count # of deletions correctly.
   std::unordered_set<DocumentId> doc_ids_to_delete;
-  UnzipNestedResultDocumentIds(nested_results_to_delete, doc_ids_to_delete);
+  UnzipNestedScoredDocumentIds(nested_scored_doc_ids_to_delete,
+                               doc_ids_to_delete);
 
   ICING_ASSIGN_OR_RETURN(doc_ids_to_delete, GetDocIdsForDeletePropagation(
                                                 std::move(doc_ids_to_delete)));
@@ -376,11 +413,56 @@ InMemoryIcingSearchEngine::DeleteByQuery(const MonkeyAbstractQueryNode* node) {
 libtextclassifier3::StatusOr<std::vector<SearchResultProto::ResultProto>>
 InMemoryIcingSearchEngine::Search(
     const MonkeyAbstractQueryNode* base_query_node,
-    const std::vector<JoinQuerySpec>& nested_queries) const {
-  ICING_ASSIGN_OR_RETURN(std::vector<NestedResultDocumentId> matched_results,
-                         InternalSearch(base_query_node, nested_queries));
+    const std::vector<JoinQuerySpec>& nested_queries,
+    const ScoringSpecProto& scoring_spec) const {
+  ICING_ASSIGN_OR_RETURN(
+      std::vector<NestedScoredDocumentId> matched_results,
+      InternalSearch(base_query_node, nested_queries, scoring_spec));
 
   return FetchNestedResultDocuments(matched_results);
+}
+
+libtextclassifier3::StatusOr<SearchResultProto>
+InMemoryIcingSearchEngine::Search(
+    const MonkeyAbstractQueryNode* base_query_node,
+    const std::vector<JoinQuerySpec>& nested_queries,
+    const ScoringSpecProto& scoring_spec, int page_size) const {
+  ICING_ASSIGN_OR_RETURN(
+      std::vector<NestedScoredDocumentId> matched_results,
+      InternalSearch(base_query_node, nested_queries, scoring_spec));
+
+  std::uniform_int_distribution<int> dist(0, std::numeric_limits<int>::max());
+  int next_page_token = dist((*random_));
+
+  // Reverse the matched results, so that the first result is at the end of the
+  // list for more efficient access.
+  std::reverse(matched_results.begin(), matched_results.end());
+  auto [itr, is_inserted] = paginated_results_map_.insert(
+      {next_page_token,
+       PaginationState(std::move(matched_results), page_size)});
+  if (!is_inserted) {
+    ICING_LOG(FATAL) << "Token collision: " << next_page_token;  // Crash OK.
+  }
+  return Paginate(itr);
+}
+
+libtextclassifier3::StatusOr<SearchResultProto>
+InMemoryIcingSearchEngine::GetNextPage(int next_page_token) const {
+  SearchResultProto result;
+  if (next_page_token == 0) {
+    return result;
+  }
+  auto itr = paginated_results_map_.find(next_page_token);
+  // If the next page token is not found, then return a search result with
+  // page_token_not_found set to true. This will happen if we never issued a
+  // query corresponding to that token.
+  // Tokens with no more results do not return page_token_not_found and return
+  // an empty result instead (with set_page_token_not_found to false).
+  if (itr == paginated_results_map_.end()) {
+    result.set_page_token_not_found(true);
+    return result;
+  }
+  return Paginate(itr);
 }
 
 libtextclassifier3::StatusOr<int>
@@ -436,14 +518,16 @@ libtextclassifier3::StatusOr<DocumentId> InMemoryIcingSearchEngine::InternalGet(
 }
 
 libtextclassifier3::StatusOr<
-    std::vector<InMemoryIcingSearchEngine::NestedResultDocumentId>>
+    std::vector<InMemoryIcingSearchEngine::NestedScoredDocumentId>>
 InMemoryIcingSearchEngine::InternalSearch(
     const MonkeyAbstractQueryNode* base_query_node,
-    const std::vector<JoinQuerySpec>& nested_queries) const {
+    const std::vector<JoinQuerySpec>& nested_queries,
+    const ScoringSpecProto& scoring_spec) const {
   // Step 1: evaluate join search by all levels of queries in reverse order.
-  JoinedNestedResultDocumentIdMap curr_map;
+  JoinedNestedScoredDocumentIdMap curr_map;
   for (auto itr = nested_queries.rbegin(); itr != nested_queries.rend();
        ++itr) {
+    // TODO: b/537846099 - Support scoring for nested levels.
     ICING_ASSIGN_OR_RETURN(
         curr_map, InternalSingleLevelJoinSearch(*itr, std::move(curr_map)));
   }
@@ -452,23 +536,33 @@ InMemoryIcingSearchEngine::InternalSearch(
   //   the results from the lower levels (if any).
   ICING_ASSIGN_OR_RETURN(std::vector<DocumentId> base_query_matched_doc_ids,
                          base_query_node->EvaluateQuery(this));
-  std::vector<NestedResultDocumentId> matched_results;
-  for (DocumentId doc_id : base_query_matched_doc_ids) {
-    auto itr = curr_map.find(doc_id);
-    matched_results.push_back(NestedResultDocumentId{
-        .document_id = doc_id,
-        .nested_document_ids = itr == curr_map.end()
-                                   ? std::vector<NestedResultDocumentId>()
-                                   : std::move(itr->second)});
+  // TODO: b/537846888 - Support RANKING_STRATEGY_JOIN_AGGREGATE_SCORE.
+  ICING_ASSIGN_OR_RETURN(
+      std::vector<ScoredDocumentId> scored_base_query_matched_doc_ids,
+      Score(base_query_matched_doc_ids, scoring_spec.rank_by()));
+  std::vector<NestedScoredDocumentId> matched_results;
+  matched_results.reserve(scored_base_query_matched_doc_ids.size());
+  for (ScoredDocumentId scored_document_id :
+       scored_base_query_matched_doc_ids) {
+    auto itr = curr_map.find(scored_document_id.document_id);
+    matched_results.push_back(NestedScoredDocumentId{
+        .scored_document_id = scored_document_id,
+        .nested_scored_document_ids =
+            itr == curr_map.end() ? std::vector<NestedScoredDocumentId>()
+                                  : std::move(itr->second)});
   }
+  if (scoring_spec.rank_by() == ScoringSpecProto::RankingStrategy::NONE) {
+    return matched_results;
+  }
+  SortResults(matched_results, scoring_spec.order_by());
   return matched_results;
 }
 
 libtextclassifier3::StatusOr<
-    InMemoryIcingSearchEngine::JoinedNestedResultDocumentIdMap>
+    InMemoryIcingSearchEngine::JoinedNestedScoredDocumentIdMap>
 InMemoryIcingSearchEngine::InternalSingleLevelJoinSearch(
     const JoinQuerySpec& join_query_spec,
-    JoinedNestedResultDocumentIdMap&& child_map) const {
+    JoinedNestedScoredDocumentIdMap&& child_map) const {
   // Evaluate the query and get all matched doc ids at the current level.
   ICING_ASSIGN_OR_RETURN(std::vector<DocumentId> matched_doc_ids,
                          join_query_spec.curr_query_node->EvaluateQuery(this));
@@ -486,7 +580,7 @@ InMemoryIcingSearchEngine::InternalSingleLevelJoinSearch(
   // - Finally, read out the join property values from the current level's
   //   document and group the results by the values. This will be used for the
   //   next iteration (upper level).
-  JoinedNestedResultDocumentIdMap curr_map;
+  JoinedNestedScoredDocumentIdMap curr_map;
   for (DocumentId matched_doc_id : matched_doc_ids) {
     // Check if the target joinable property (specified by
     // curr_join_prop_expr) of this document is joinable or not.
@@ -504,10 +598,12 @@ InMemoryIcingSearchEngine::InternalSingleLevelJoinSearch(
     }
 
     auto itr = child_map.find(matched_doc_id);
-    NestedResultDocumentId nested_result_doc_id = {
-        .document_id = matched_doc_id,
-        .nested_document_ids = itr == child_map.end()
-                                   ? std::vector<NestedResultDocumentId>()
+    // TODO: b/537846099 - Support scoring for nested levels.
+    NestedScoredDocumentId nested_scored_doc_id = {
+        .scored_document_id =
+            ScoredDocumentId{.document_id = matched_doc_id, .score = 0},
+        .nested_scored_document_ids =
+            itr == child_map.end() ? std::vector<NestedScoredDocumentId>()
                                    : std::move(itr->second)};
 
     // Get all referenced (parent) doc qualified ids. This is the join
@@ -534,8 +630,8 @@ InMemoryIcingSearchEngine::InternalSingleLevelJoinSearch(
           seen_ref_doc_ids.find(ref_doc_id_or.ValueOrDie()) ==
               seen_ref_doc_ids.end()) {
         curr_map[ref_doc_id_or.ValueOrDie()].push_back(
-            nested_result_doc_id);  // Copy instead of move, given that now we
-                                    // support N-N join and nested_result_doc_id
+            nested_scored_doc_id);  // Copy instead of move, given that now we
+                                    // support N-N join and nested_scored_doc_id
                                     // might be added to multiple parents.
         seen_ref_doc_ids.insert(ref_doc_id_or.ValueOrDie());
       }
@@ -573,25 +669,41 @@ InMemoryIcingSearchEngine::InternalBatchDelete(
     }
   }
   existing_doc_ids_.resize(head_idx);
+
+  // Remove deleted document ids from the paginated results map.
+  for (auto itr = paginated_results_map_.begin();
+       itr != paginated_results_map_.end(); ++itr) {
+    itr->second.remaining_results.erase(
+        std::remove_if(
+            itr->second.remaining_results.begin(),
+            itr->second.remaining_results.end(),
+            [&doc_ids_to_delete](const NestedScoredDocumentId& doc_id) {
+              return doc_ids_to_delete.contains(
+                  doc_id.scored_document_id.document_id);
+            }),
+        itr->second.remaining_results.end());
+  }
   return deleted_documents;
 }
 
 std::vector<SearchResultProto::ResultProto>
 InMemoryIcingSearchEngine::FetchNestedResultDocuments(
-    const std::vector<NestedResultDocumentId>& nested_result_doc_ids) const {
+    const std::vector<NestedScoredDocumentId>& nested_scored_doc_ids) const {
   std::vector<SearchResultProto::ResultProto> results;
-  results.reserve(nested_result_doc_ids.size());
-  for (const NestedResultDocumentId& nested_result_doc_id :
-       nested_result_doc_ids) {
+  results.reserve(nested_scored_doc_ids.size());
+  for (const NestedScoredDocumentId& nested_scored_doc_id :
+       nested_scored_doc_ids) {
     SearchResultProto::ResultProto result;
 
     // Parent document.
     *result.mutable_document() =
-        documents_[nested_result_doc_id.document_id].document;
+        documents_[nested_scored_doc_id.scored_document_id.document_id]
+            .document;
 
     // Child documents.
     std::vector<SearchResultProto::ResultProto> nested_results =
-        FetchNestedResultDocuments(nested_result_doc_id.nested_document_ids);
+        FetchNestedResultDocuments(
+            nested_scored_doc_id.nested_scored_document_ids);
     if (!nested_results.empty()) {
       result.mutable_joined_results()->Add(nested_results.begin(),
                                            nested_results.end());
@@ -602,14 +714,14 @@ InMemoryIcingSearchEngine::FetchNestedResultDocuments(
   return results;
 }
 
-void InMemoryIcingSearchEngine::UnzipNestedResultDocumentIds(
-    const std::vector<NestedResultDocumentId>& nested_result_doc_ids,
+void InMemoryIcingSearchEngine::UnzipNestedScoredDocumentIds(
+    const std::vector<NestedScoredDocumentId>& nested_scored_doc_ids,
     std::unordered_set<DocumentId>& doc_ids_out) const {
-  for (const NestedResultDocumentId& nested_result_doc_id :
-       nested_result_doc_ids) {
-    doc_ids_out.insert(nested_result_doc_id.document_id);
-    UnzipNestedResultDocumentIds(nested_result_doc_id.nested_document_ids,
-                                 doc_ids_out);
+  for (const NestedScoredDocumentId& nested_scored_doc_id :
+       nested_scored_doc_ids) {
+    doc_ids_out.insert(nested_scored_doc_id.scored_document_id.document_id);
+    UnzipNestedScoredDocumentIds(
+        nested_scored_doc_id.nested_scored_document_ids, doc_ids_out);
   }
 }
 
@@ -724,6 +836,74 @@ InMemoryIcingSearchEngine::GetDocIdsForDeletePropagation(
   // 2. Propagate to children.
   return TraverseToAllChildren(dependency_graph_result.graph,
                                std::move(doc_ids_to_delete));
+}
+
+libtextclassifier3::StatusOr<
+    std::vector<InMemoryIcingSearchEngine::ScoredDocumentId>>
+InMemoryIcingSearchEngine::Score(
+    const std::vector<DocumentId>& doc_ids,
+    ScoringSpecProto::RankingStrategy::Code rank_by) const {
+  std::vector<ScoredDocumentId> scored_document_ids;
+  scored_document_ids.reserve(doc_ids.size());
+  for (DocumentId doc_id : doc_ids) {
+    int score;
+    if (rank_by == ScoringSpecProto::RankingStrategy::NONE) {
+      // If the ranking strategy is NONE, then just return the document id
+      // without any score, which means the score will be 0.
+      score = 0;
+    } else if (rank_by == ScoringSpecProto::RankingStrategy::DOCUMENT_SCORE) {
+      score = documents_[doc_id].document.score();
+    } else if (rank_by ==
+               ScoringSpecProto::RankingStrategy::CREATION_TIMESTAMP) {
+      score = (int)documents_[doc_id].document.creation_timestamp_ms();
+    } else {
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "Unsupported ranking strategy: ",
+          ScoringSpecProto::RankingStrategy::Code_Name(rank_by)));
+    }
+    scored_document_ids.push_back(
+        ScoredDocumentId{.document_id = doc_id, .score = score});
+  }
+  return scored_document_ids;
+}
+
+SearchResultProto InMemoryIcingSearchEngine::Paginate(
+    std::unordered_map<int, PaginationState>::iterator& paginated_state_itr)
+    const {
+  int next_page_token = paginated_state_itr->first;
+  std::vector<NestedScoredDocumentId>& doc_ids =
+      paginated_state_itr->second.remaining_results;
+  int remaining_results_size = static_cast<int>(doc_ids.size());
+  int page_size = paginated_state_itr->second.page_size;
+
+  SearchResultProto search_result_proto;
+  std::vector<NestedScoredDocumentId> doc_ids_for_page;
+  // If all of the results can fit in one page, then don't add to the map of
+  // tokens to results, and erase the entry in the map if it exists.
+  if (remaining_results_size <= page_size) {
+    search_result_proto.set_next_page_token(0);
+    doc_ids_for_page = std::move(doc_ids);
+    // The ids are inserted in reverse order, so we need to reverse them
+    // back before retrieving the documents.
+    std::reverse(doc_ids_for_page.begin(), doc_ids_for_page.end());
+    paginated_results_map_.erase(next_page_token);
+  } else {
+    search_result_proto.set_next_page_token(next_page_token);
+    // The ids are inserted in reverse order, so we need to traverse and
+    // add in reverse order.
+    doc_ids_for_page.reserve(page_size);
+    std::move(doc_ids.rbegin(), doc_ids.rbegin() + page_size,
+              std::back_inserter(doc_ids_for_page));
+    // Resize to remove the ids that we are going to return documents for in
+    // this page.
+    doc_ids.resize(remaining_results_size - page_size);
+  }
+
+  std::vector<SearchResultProto::ResultProto> results =
+      FetchNestedResultDocuments(std::move(doc_ids_for_page));
+  search_result_proto.mutable_results()->Add(results.begin(), results.end());
+
+  return search_result_proto;
 }
 
 }  // namespace lib

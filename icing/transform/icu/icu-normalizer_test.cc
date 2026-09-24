@@ -474,6 +474,26 @@ TEST_F(IcuNormalizerTest, SharedPrefixMatchLength) {
   EXPECT_THAT(term.substr(0, match_end.utf8_index()), Eq("ἈἉἊἋ"));
 }
 
+TEST_F(IcuNormalizerTest, HanziToPinyinTransliteration) {
+  NormalizerRulesConfig rules_config;
+  rules_config.enable_pinyin_normalization = true;
+  NormalizerOptions options(/*max_term_byte_size=*/1024,
+                            /*enable_icu_normalizer=*/true, rules_config);
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Normalizer> normalizer,
+                             normalizer_factory::Create(options));
+
+  EXPECT_THAT(normalizer->NormalizeTerm("每天"),
+              EqualsNormalizedTerm("mei tian"));
+  EXPECT_THAT(normalizer->NormalizeTerm("学习"),
+              EqualsNormalizedTerm("xue xi"));
+}
+
+TEST_F(IcuNormalizerTest, HanziToPinyinTransliterationDisabledByDefault) {
+  // By default, Hanzi characters are not transliterated to pinyin.
+  EXPECT_THAT(normalizer_->NormalizeTerm("每天"), EqualsNormalizedTerm("每天"));
+  EXPECT_THAT(normalizer_->NormalizeTerm("学习"), EqualsNormalizedTerm("学习"));
+}
+
 }  // namespace
 }  // namespace lib
 }  // namespace icing

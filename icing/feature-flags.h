@@ -33,7 +33,10 @@ class FeatureFlags {
                         bool enable_schema_definition_deduping,
                         bool enable_delete_propagation_from,
                         bool enable_account_property_incompatibility_check,
-                        bool schema_store_release_cached_proto_after_use)
+                        bool schema_store_release_cached_proto_after_use,
+                        bool remove_schema_store_move_assignment,
+                        bool enable_fine_grained_index_rebuild,
+                        bool enable_read_during_ann_maintenance)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_repeated_field_joins_(enable_repeated_field_joins),
         enable_embedding_backup_generation_(enable_embedding_backup_generation),
@@ -49,7 +52,12 @@ class FeatureFlags {
         enable_account_property_incompatibility_check_(
             enable_account_property_incompatibility_check),
         schema_store_release_cached_proto_after_use_(
-            schema_store_release_cached_proto_after_use) {}
+            schema_store_release_cached_proto_after_use),
+        remove_schema_store_move_assignment_(
+            remove_schema_store_move_assignment),
+        enable_fine_grained_index_rebuild_(enable_fine_grained_index_rebuild),
+        enable_read_during_ann_maintenance_(
+            enable_read_during_ann_maintenance) {}
 
   bool allow_circular_schema_definitions() const {
     return allow_circular_schema_definitions_;
@@ -93,6 +101,18 @@ class FeatureFlags {
 
   bool schema_store_release_cached_proto_after_use() const {
     return schema_store_release_cached_proto_after_use_;
+  }
+
+  bool remove_schema_store_move_assignment() const {
+    return remove_schema_store_move_assignment_;
+  }
+
+  bool enable_fine_grained_index_rebuild() const {
+    return enable_fine_grained_index_rebuild_;
+  }
+
+  bool enable_read_during_ann_maintenance() const {
+    return enable_read_during_ann_maintenance_;
   }
 
  private:
@@ -158,6 +178,17 @@ class FeatureFlags {
 
   // Whether to release schema-store's cached proto instances after use.
   bool schema_store_release_cached_proto_after_use_ = false;
+
+  // Whether to remove schema store's move assignment and instead use in-place
+  // re-initialization during SetSchema().
+  bool remove_schema_store_move_assignment_ = false;
+
+  // Whether to enable fine-grained index rebuilding when schema changes occur.
+  bool enable_fine_grained_index_rebuild_ = false;
+
+  // Whether to unblock read requests during ANN index maintenance (k-means
+  // calculation).
+  bool enable_read_during_ann_maintenance_ = false;
 };
 
 class FeatureFlagsBuilder {
@@ -239,6 +270,27 @@ class FeatureFlagsBuilder {
       bool schema_store_release_cached_proto_after_use) {
     feature_flags_.schema_store_release_cached_proto_after_use_ =
         schema_store_release_cached_proto_after_use;
+    return *this;
+  }
+
+  FeatureFlagsBuilder& set_remove_schema_store_move_assignment(
+      bool remove_schema_store_move_assignment) {
+    feature_flags_.remove_schema_store_move_assignment_ =
+        remove_schema_store_move_assignment;
+    return *this;
+  }
+
+  FeatureFlagsBuilder& set_enable_fine_grained_index_rebuild(
+      bool enable_fine_grained_index_rebuild) {
+    feature_flags_.enable_fine_grained_index_rebuild_ =
+        enable_fine_grained_index_rebuild;
+    return *this;
+  }
+
+  FeatureFlagsBuilder& set_enable_read_during_ann_maintenance(
+      bool enable_read_during_ann_maintenance) {
+    feature_flags_.enable_read_during_ann_maintenance_ =
+        enable_read_during_ann_maintenance;
     return *this;
   }
 

@@ -31,6 +31,7 @@
 #include "icing/schema/section.h"
 #include "icing/scoring/advanced_scoring/double-list.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/util/embedding-util.h"
 #include "icing/util/logging.h"
 
@@ -168,6 +169,13 @@ ResultAdjustmentInfo::ResultAdjustmentInfo(
     projection_tree_map.insert(
         {type_field_mask.schema_type, ProjectionTree(type_field_mask)});
   }
+}
+
+void ResultAdjustmentInfo::Optimize(
+    const DocumentStore::OptimizeResult& optimize_result) {
+  // Only snippet context needs optimization. Projection tree only contains
+  // schema type name -> ProjectionTree (which contains property names).
+  snippet_context.Optimize(optimize_result);
 }
 
 }  // namespace lib

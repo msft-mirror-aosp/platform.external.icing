@@ -1717,68 +1717,6 @@ libtextclassifier3::StatusOr<CorpusId> DocumentStore::GetCorpusId(
   return corpus_mapper_->Get(corpus_nsid_schema_fp.EncodeToCString());
 }
 
-std::optional<int32_t> DocumentStore::GetResultGroupingEntryId(
-    ResultSpecProto::ResultGroupingType result_group_type,
-    std::string_view name_space, std::string_view schema) const {
-  auto namespace_id_or = GetNamespaceId(name_space);
-  auto schema_type_id_or = schema_store_->GetSchemaTypeId(schema);
-
-  NamespaceId namespace_id =
-      namespace_id_or.ok() ? namespace_id_or.ValueOrDie() : kInvalidNamespaceId;
-  SchemaTypeId schema_type_id = schema_type_id_or.ok()
-                                    ? schema_type_id_or.ValueOrDie()
-                                    : kInvalidSchemaTypeId;
-  return GetResultGroupingEntryId(result_group_type, namespace_id,
-                                  schema_type_id);
-}
-
-std::optional<int32_t> DocumentStore::GetResultGroupingEntryId(
-    ResultSpecProto::ResultGroupingType result_group_type,
-    NamespaceId namespace_id, SchemaTypeId schema_type_id) const {
-  static_assert(sizeof(NamespaceId) * 8 <= 16,
-                "Current ResultGroupingEntryId encoding only supports "
-                "namespace id up to 16 bits.");
-  static_assert(sizeof(SchemaTypeId) * 8 <= 16,
-                "Current ResultGroupingEntryId encoding only supports schema "
-                "type id up to 16 bits.");
-
-  // Note: this encoding method only works for a single
-  // ResultSpecProto::ResultGroupingType in a single search request. If multiple
-  // types can be used in the same search request, this encoding method needs to
-  // be updated since there will be encoded id collisions for NAMESPACE and
-  // SCHEMA_TYPE.
-
-  switch (result_group_type) {
-    case ResultSpecProto::ResultGroupingType::
-        ResultSpecProto_ResultGroupingType_NONE:
-      return std::nullopt;
-    case ResultSpecProto::ResultGroupingType::
-        ResultSpecProto_ResultGroupingType_SCHEMA_TYPE: {
-      if (schema_type_id == kInvalidSchemaTypeId) {
-        return std::nullopt;
-      }
-      return schema_type_id;
-    }
-    case ResultSpecProto::ResultGroupingType::
-        ResultSpecProto_ResultGroupingType_NAMESPACE: {
-      if (namespace_id == kInvalidNamespaceId) {
-        return std::nullopt;
-      }
-      return namespace_id;
-    }
-    case ResultSpecProto::ResultGroupingType::
-        ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE: {
-      if (namespace_id == kInvalidNamespaceId ||
-          schema_type_id == kInvalidSchemaTypeId) {
-        return std::nullopt;
-      }
-      // TODO(b/258715421): Temporary workaround to get a ResultGroupingEntryId
-      //                    given the Namespace Id and SchemaType Id.
-      return (static_cast<int32_t>(namespace_id) << 16) | schema_type_id;
-    }
-  }
-}
-
 libtextclassifier3::StatusOr<DocumentAssociatedScoreData>
 DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
   auto score_data_or = score_cache_->GetCopy(document_id);

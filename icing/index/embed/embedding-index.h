@@ -15,6 +15,7 @@
 #ifndef ICING_INDEX_EMBED_EMBEDDING_INDEX_H_
 #define ICING_INDEX_EMBED_EMBEDDING_INDEX_H_
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -25,7 +26,8 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
-#include "icing/absl_ports/str_cat.h"
+#include "icing/absl_ports/mutex.h"
+#include "icing/absl_ports/thread_annotations.h"
 #include "icing/feature-flags.h"
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
@@ -87,6 +89,315 @@ class EmbeddingIndex : public PersistentStorage {
   static constexpr WorkingPathType kWorkingPathType =
       WorkingPathType::kDirectory;
 
+  // Finds and returns up to k cluster IDs whose cluster centroids are closest
+  // to the given query_vector.
+  //
+  // Note: The order of the cluster IDs in the returned list is arbitrary and
+  // is not guaranteed to be sorted by distance.
+  //
+  // Returns:
+  //   - A list of closest cluster IDs on success. The size of the list will
+  //     be min(k, total number of clusters).
+  //   - An empty list if the IVF index has not been built yet.
+  //   - INVALID_ARGUMENT if the dimension of `query_vector` does not
+  //     match the index dimension.
+  //   - INTERNAL error if the IVF index is corrupted.
+  libtextclassifier3::StatusOr<std::vector<uint32_t>>
+  GetClosestClusterIdsByDistance(const PropertyProto::VectorProto& query_vector,
+                                 uint32_t k) const
+      ICING_LOCKS_EXCLUDED(mutex_) {
+    absl_ports::shared_lock l(&mutex_);
+
+    ICING_ASSIGN_OR_RETURN(IvfContextManager ivf_context,
+                           IvfContextManager::Create(query_vector));
+    return ivf_context.GetClosestClusterIdsByDistance(this, query_vector, k);
+  }
+
+  EmbeddingIndex(const EmbeddingIndex&) = delete;
+  EmbeddingIndex& operator=(const EmbeddingIndex&) = delete;
+
+  // Creates a new EmbeddingIndex instance to index embeddings.
+  //
+  // Returns:
+  //   - FAILED_PRECONDITION_ERROR if the file checksum doesn't match the stored
+  //                               checksum.
+  //   - INTERNAL_ERROR on I/O errors.
+  //   - Any error from MemoryMappedFile, FlashIndexStorage,
+  //     DynamicTrieKeyMapper, or FileBackedVector.
+  static libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingIndex>> Create(
+      const Filesystem* filesystem, std::string working_path,
+      const Clock* clock, const FeatureFlags* feature_flags,
+      uint32_t num_shards);
+
+  static libtextclassifier3::Status Discard(const Filesystem& filesystem,
+                                            const std::string& working_path) {
+    return PersistentStorage::Discard(filesystem, working_path,
+                                      kWorkingPathType);
+  }
+
+  libtextclassifier3::Status Clear() ICING_LOCKS_EXCLUDED(mutex_);
+
+  ~EmbeddingIndex() override {
+    if (!PersistToDisk().ok()) {
+      ICING_LOG(WARNING)
+          << "Failed to persist embedding index to disk while destructing "
+          << working_path_;
+    }
+  }
+
+  // Buffer an embedding pending to be added to the index. This is required
+  // since EmbeddingHits added in posting lists must be decreasing, which means
+  // that section ids and location indexes for a single document must be added
+  // decreasingly.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INVALID_ARGUMENT error if the dimension is 0.
+  //   - INTERNAL_ERROR on I/O error
+  libtextclassifier3::Status BufferEmbedding(
+      const BasicHit& basic_hit, const PropertyProto::VectorProto& vector,
+      EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
+      std::string_view schema_name) ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Buffers the given embedding vector mapped to a cluster based on the IVF
+  // index. If IVF hasn't been built yet, the vector is mapped to a delta
+  // store posting list.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INVALID_ARGUMENT error if the dimension is 0.
+  //   - RESOURCE_EXHAUSTED error if the allocated FileBackedVector has no more
+  //       storage left.
+  //   - INTERNAL error if no storage is found.
+  libtextclassifier3::Status BufferEmbeddingIvf(
+      const BasicHit& basic_hit, const PropertyProto::VectorProto& vector,
+      EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
+      std::string_view schema_name) ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Commit the embedding hits in the buffer to the index.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on I/O error
+  //   - Any error from posting lists
+  libtextclassifier3::Status CommitBufferToIndex() ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Accessor class to retrieve embedding hits.
+  //
+  // This class aggregates hits from multiple posting lists (e.g., from
+  // different IVF clusters and the linear search index). It holds multiple
+  // PostingListEmbeddingHitAccessor instances and merges their hits to yield
+  // them in descending order of document ID.
+  class ICING_SCOPED_LOCKABLE EmbeddingHitAccessor {
+   public:
+    explicit EmbeddingHitAccessor(const EmbeddingIndex* embedding_index)
+        ICING_SHARED_LOCK_FUNCTION(embedding_index->mutex_)
+        : shared_lock_(&embedding_index->mutex_),
+          embedding_index_(*embedding_index) {}
+
+    ~EmbeddingHitAccessor() ICING_UNLOCK_FUNCTION() = default;
+
+    libtextclassifier3::Status AssertSharedLockHeld() const
+        ICING_ASSERT_SHARED_LOCK(embedding_index_.mutex_) {
+      if (!shared_lock_.owns_lock()) {
+        return absl_ports::InternalError(
+            "Shared lock is not held by EmbeddingHitAccessor.");
+      }
+      return libtextclassifier3::Status::OK;
+    }
+
+    struct HitInfo {
+      EmbeddingHit hit;
+      uint32_t posting_list_key_hash;
+    };
+
+    libtextclassifier3::StatusOr<std::vector<HitInfo>> GetNextHitsBatch()
+        ICING_SHARED_LOCKS_REQUIRED(embedding_index_.mutex_);
+
+    // Calculates the score for the given embedding hit with the given query.
+    //
+    // Returns:
+    //   - The score on success.
+    //   - OUT_OF_RANGE_ERROR if the referred vector is out of range based on
+    //     the location and dimension.
+    //   - Any error from schema store when getting the quantization type.
+    libtextclassifier3::StatusOr<float> ScoreEmbeddingHit(
+        const EmbeddingScorer& scorer, const std::vector<float>& query_floats,
+        const HitInfo& hit_info,
+        EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
+        uint32_t schema_name_hash, bool is_ann)
+        ICING_SHARED_LOCKS_REQUIRED(embedding_index_.mutex_);
+
+    const DocHitInfoIterator::CallStats::EmbeddingStats& GetEmbeddingStats()
+        const {
+      return embedding_stats_;
+    }
+
+    // Adds a new posting list accessor to the priority queue for merging.
+    // Fetches the first batch of hits from the accessor and adds it to the
+    // priority queue if it is non-empty.
+    libtextclassifier3::Status AddAccessor(
+        std::unique_ptr<PostingListEmbeddingHitAccessor> pl_accessor,
+        uint32_t posting_list_key_hash)
+        ICING_SHARED_LOCKS_REQUIRED(embedding_index_.mutex_);
+
+   private:
+    struct AccessorData {
+      std::unique_ptr<PostingListEmbeddingHitAccessor> pl_accessor;
+      uint32_t posting_list_key_hash;
+      std::vector<EmbeddingHit> current_batch;
+      uint32_t current_index = 0;
+
+      // Used in heap operations. Must make sure current_batch is not empty
+      // before putting it in the heap.
+      //
+      // We define operator> with normal semantics and use std::greater in heap
+      // operations to create a min-heap. We need a min-heap because DocumentIds
+      // are inverted in Hit values; popping the smallest Hit value correctly
+      // yields the largest DocumentId first.
+      bool operator>(const AccessorData& other) const {
+        return other.current_batch[other.current_index] <
+               current_batch[current_index];
+      }
+    };
+
+    libtextclassifier3::Status AddAccessor(AccessorData accessor_data)
+        ICING_SHARED_LOCKS_REQUIRED(embedding_index_.mutex_);
+
+    absl_ports::shared_lock shared_lock_;
+    const EmbeddingIndex& embedding_index_;
+    DocHitInfoIterator::CallStats::EmbeddingStats embedding_stats_;
+    std::vector<AccessorData> accessors_;
+  };
+
+  // Returns a EmbeddingHitAccessor for all embedding hits that match
+  // with the provided dimension and signature.
+  //
+  // The returned hit accessor aggregates hits from multiple posting lists based
+  // on the provided cluster_ids. For each element in cluster_ids:
+  // - If the element is kLinearSearchClusterId, the hit accessor includes hits
+  //   from the base linear search index.
+  // - Otherwise, the hit accessor includes hits from the IVF cluster
+  //   corresponding to that provided ID.
+  //
+  // Returns:
+  //   - a EmbeddingHitAccessor instance on success.
+  //   - INVALID_ARGUMENT error if the dimension is 0.
+  //   - NOT_FOUND error if there is no matching embedding hit for any of the
+  //     specified clusters.
+  //   - Any error from posting lists.
+  libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingHitAccessor>>
+  GetAccessor(uint32_t dimension, std::string_view model_signature,
+              const std::vector<uint32_t>& cluster_ids) const
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Returns a EmbeddingHitAccessor for all embedding hits that match
+  // with the provided vector's dimension and signature.
+  //
+  // The returned hit accessor aggregates hits from multiple posting lists based
+  // on the provided cluster_ids. For each element in cluster_ids:
+  // - If the element is kLinearSearchClusterId, the hit accessor includes hits
+  //   from the base linear search index.
+  // - Otherwise, the hit accessor includes hits from the IVF cluster
+  //   corresponding to that provided ID.
+  //
+  // Returns:
+  //   - a EmbeddingHitAccessor instance on success.
+  //   - INVALID_ARGUMENT error if the dimension is 0.
+  //   - NOT_FOUND error if there is no matching embedding hit for any of the
+  //     specified clusters.
+  //   - Any error from posting lists.
+  libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingHitAccessor>>
+  GetAccessorForVector(const PropertyProto::VectorProto& vector,
+                       const std::vector<uint32_t>& cluster_ids) const
+      ICING_LOCKS_EXCLUDED(mutex_) {
+    ICING_ASSIGN_OR_RETURN(uint32_t dimension,
+                           embedding_util::GetDimension(vector));
+    return GetAccessor(dimension, vector.model_signature(), cluster_ids);
+  }
+
+  // Reduces internal file sizes by reclaiming space of deleted documents.
+  // new_last_added_document_id will be used to update the last added document
+  // id in the lite index.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INTERNAL_ERROR on IO error, this indicates that the index may be in an
+  //     invalid state and should be cleared.
+  libtextclassifier3::Status Optimize(
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id) ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Transfers and compacts data into a new embedding index under
+  // new_working_path. Unlike Optimize(), this method does not modify or swap
+  // the current index directory, and writes directly into new_working_path.
+  //
+  // - document_store: used to retrieve document info during transfer.
+  // - schema_store: used to retrieve schema info during transfer.
+  // - new_working_path: destination working path for the optimized index.
+  // - document_id_old_to_new: a map for converting old document id to new
+  //   document id.
+  // - new_last_added_document_id: will be used to update the last added
+  //                               document id in the embedding index.
+  //
+  // Returns:
+  //   - OK on success
+  //   - FAILED_PRECONDITION_ERROR if there are pending uncommitted hits
+  //   - INVALID_ARGUMENT_ERROR if new_working_path is the same as the current
+  //   - INTERNAL_ERROR on IO error
+  libtextclassifier3::Status OptimizeInto(
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      const std::string& new_working_path,
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id) const ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Runs or re-runs K-Means and redistributes embeddings into clusters for all
+  // existing IVF metadata base keys.
+  //
+  // Returns:
+  //   - The total number of K-Means iterations performed across all IVF
+  //     maintenance operations on success.
+  //   - Any error from the KeyMapper or MiniBatchKMeans.
+  libtextclassifier3::StatusOr<int> MaintainAllIvf(
+      const DocumentStore& document_store, const SchemaStore& schema_store,
+      const MaintainAnnIndexOptions& maintain_ann_index_options)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  DocumentId last_added_document_id() const ICING_LOCKS_EXCLUDED(mutex_) {
+    absl_ports::shared_lock l(&mutex_);
+
+    return info().last_added_document_id;
+  }
+
+  void set_last_added_document_id(DocumentId document_id)
+      ICING_LOCKS_EXCLUDED(mutex_) {
+    absl_ports::unique_lock l(&mutex_);
+
+    Info& info_ref = info();
+    if (info_ref.last_added_document_id == kInvalidDocumentId ||
+        document_id > info_ref.last_added_document_id) {
+      info_ref.last_added_document_id = document_id;
+    }
+  }
+
+  libtextclassifier3::Status PersistToDisk() override
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  libtextclassifier3::StatusOr<Crc32> UpdateChecksums() override
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const override
+      ICING_LOCKS_EXCLUDED(mutex_);
+
+  uint32_t GetShardId(uint32_t posting_list_key_hash,
+                      uint32_t schema_name_hash) const {
+    return (posting_list_key_hash * 31 + schema_name_hash) % num_shards_;
+  }
+
+  uint32_t num_shards() const { return num_shards_; }
+
+ private:
   struct IvfMetadata {
     // Total number of embeddings that were used for the last IVF index
     // construction (k-means) for this IVF corpus.
@@ -127,10 +438,12 @@ class EmbeddingIndex : public PersistentStorage {
     std::string GetPostingListKey(uint32_t cluster_id) const;
 
     libtextclassifier3::StatusOr<IvfMetadata> GetMetadata(
-        const EmbeddingIndex* embedding_index) const;
+        const EmbeddingIndex* embedding_index) const
+        ICING_SHARED_LOCKS_REQUIRED(embedding_index->mutex_);
 
     libtextclassifier3::Status SetMetadata(EmbeddingIndex* embedding_index,
-                                           IvfMetadata metadata) const;
+                                           IvfMetadata metadata) const
+        ICING_EXCLUSIVE_LOCKS_REQUIRED(embedding_index->mutex_);
 
     // Finds and returns up to k cluster IDs whose cluster centroids are closest
     // to the given query_vector.
@@ -148,7 +461,8 @@ class EmbeddingIndex : public PersistentStorage {
     libtextclassifier3::StatusOr<std::vector<uint32_t>>
     GetClosestClusterIdsByDistance(
         const EmbeddingIndex* embedding_index,
-        const PropertyProto::VectorProto& query_vector, uint32_t k) const;
+        const PropertyProto::VectorProto& query_vector, uint32_t k) const
+        ICING_SHARED_LOCKS_REQUIRED(embedding_index->mutex_);
 
     uint32_t dimension() const { return dimension_; }
 
@@ -159,200 +473,23 @@ class EmbeddingIndex : public PersistentStorage {
     std::string base_key_;
   };
 
-  EmbeddingIndex(const EmbeddingIndex&) = delete;
-  EmbeddingIndex& operator=(const EmbeddingIndex&) = delete;
+  explicit EmbeddingIndex(const Filesystem& filesystem,
+                          std::string working_path, const Clock* clock,
+                          const FeatureFlags* feature_flags,
+                          uint32_t num_shards)
+      : PersistentStorage(filesystem, std::move(working_path),
+                          kWorkingPathType),
+        clock_(*clock),
+        feature_flags_(feature_flags),
+        num_shards_(num_shards),
+        mutex_(
+            /*is_noop=*/!feature_flags->enable_read_during_ann_maintenance()),
+        embedding_vectors_(num_shards),
+        quantized_embedding_vectors_(num_shards) {}
 
-  // Creates a new EmbeddingIndex instance to index embeddings.
-  //
-  // Returns:
-  //   - FAILED_PRECONDITION_ERROR if the file checksum doesn't match the stored
-  //                               checksum.
-  //   - INTERNAL_ERROR on I/O errors.
-  //   - Any error from MemoryMappedFile, FlashIndexStorage,
-  //     DynamicTrieKeyMapper, or FileBackedVector.
-  static libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingIndex>> Create(
-      const Filesystem* filesystem, std::string working_path,
-      const Clock* clock, const FeatureFlags* feature_flags,
-      uint32_t num_shards);
-
-  static libtextclassifier3::Status Discard(const Filesystem& filesystem,
-                                            const std::string& working_path) {
-    return PersistentStorage::Discard(filesystem, working_path,
-                                      kWorkingPathType);
-  }
-
-  libtextclassifier3::Status Clear();
-
-  ~EmbeddingIndex() override {
-    if (!PersistToDisk().ok()) {
-      ICING_LOG(WARNING)
-          << "Failed to persist embedding index to disk while destructing "
-          << working_path_;
-    }
-  }
-
-  // Buffer an embedding pending to be added to the index. This is required
-  // since EmbeddingHits added in posting lists must be decreasing, which means
-  // that section ids and location indexes for a single document must be added
-  // decreasingly.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INVALID_ARGUMENT error if the dimension is 0.
-  //   - INTERNAL_ERROR on I/O error
-  libtextclassifier3::Status BufferEmbedding(
-      const BasicHit& basic_hit, const PropertyProto::VectorProto& vector,
-      EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
-      std::string_view schema_name);
-
-  // Buffers the given embedding vector mapped to a cluster based on the IVF
-  // index. If IVF hasn't been built yet, the vector is mapped to a delta
-  // store posting list.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INVALID_ARGUMENT error if the dimension is 0.
-  //   - RESOURCE_EXHAUSTED error if the allocated FileBackedVector has no more
-  //       storage left.
-  //   - INTERNAL error if no storage is found.
-  libtextclassifier3::Status BufferEmbeddingIvf(
-      const BasicHit& basic_hit, const PropertyProto::VectorProto& vector,
-      EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
-      std::string_view schema_name);
-
-  // Commit the embedding hits in the buffer to the index.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on I/O error
-  //   - Any error from posting lists
-  libtextclassifier3::Status CommitBufferToIndex();
-
-  // Accessor class to retrieve embedding hits.
-  //
-  // This class aggregates hits from multiple posting lists (e.g., from
-  // different IVF clusters and the linear search index). It holds multiple
-  // PostingListEmbeddingHitAccessor instances and merges their hits to yield
-  // them in descending order of document ID.
-  class EmbeddingHitAccessor {
-   public:
-    explicit EmbeddingHitAccessor(const EmbeddingIndex* embedding_index)
-        : embedding_index_(*embedding_index) {}
-    struct HitInfo {
-      EmbeddingHit hit;
-      uint32_t posting_list_key_hash;
-    };
-
-    libtextclassifier3::StatusOr<std::vector<HitInfo>> GetNextHitsBatch();
-
-    // Calculates the score for the given embedding hit with the given query.
-    //
-    // Returns:
-    //   - The score on success.
-    //   - OUT_OF_RANGE_ERROR if the referred vector is out of range based on
-    //     the location and dimension.
-    //   - Any error from schema store when getting the quantization type.
-    libtextclassifier3::StatusOr<float> ScoreEmbeddingHit(
-        const EmbeddingScorer& scorer, const std::vector<float>& query_floats,
-        const HitInfo& hit_info,
-        EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
-        uint32_t schema_name_hash, bool is_ann);
-
-    const DocHitInfoIterator::CallStats::EmbeddingStats& GetEmbeddingStats()
-        const {
-      return embedding_stats_;
-    }
-
-    // Adds a new posting list accessor to the priority queue for merging.
-    // Fetches the first batch of hits from the accessor and adds it to the
-    // priority queue if it is non-empty.
-    libtextclassifier3::Status AddAccessor(
-        std::unique_ptr<PostingListEmbeddingHitAccessor> pl_accessor,
-        uint32_t posting_list_key_hash);
-
-   private:
-    struct AccessorData {
-      std::unique_ptr<PostingListEmbeddingHitAccessor> pl_accessor;
-      uint32_t posting_list_key_hash;
-      std::vector<EmbeddingHit> current_batch;
-      uint32_t current_index = 0;
-
-      // Used in heap operations. Must make sure current_batch is not empty
-      // before putting it in the heap.
-      //
-      // We define operator> with normal semantics and use std::greater in heap
-      // operations to create a min-heap. We need a min-heap because DocumentIds
-      // are inverted in Hit values; popping the smallest Hit value correctly
-      // yields the largest DocumentId first.
-      bool operator>(const AccessorData& other) const {
-        return other.current_batch[other.current_index] <
-               current_batch[current_index];
-      }
-    };
-
-    libtextclassifier3::Status AddAccessor(AccessorData accessor_data);
-
-    const EmbeddingIndex& embedding_index_;
-    DocHitInfoIterator::CallStats::EmbeddingStats embedding_stats_;
-    std::vector<AccessorData> accessors_;
-  };
-
-  // Returns a EmbeddingHitAccessor for all embedding hits that match
-  // with the provided dimension and signature.
-  //
-  // The returned hit accessor aggregates hits from multiple posting lists based
-  // on the provided cluster_ids. For each element in cluster_ids:
-  // - If the element is kLinearSearchClusterId, the hit accessor includes hits
-  //   from the base linear search index.
-  // - Otherwise, the hit accessor includes hits from the IVF cluster
-  //   corresponding to that provided ID.
-  //
-  // Returns:
-  //   - a EmbeddingHitAccessor instance on success.
-  //   - INVALID_ARGUMENT error if the dimension is 0.
-  //   - NOT_FOUND error if there is no matching embedding hit for any of the
-  //     specified clusters.
-  //   - Any error from posting lists.
-  libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingHitAccessor>>
-  GetAccessor(uint32_t dimension, std::string_view model_signature,
-              const std::vector<uint32_t>& cluster_ids) const;
-
-  // Returns a EmbeddingHitAccessor for all embedding hits that match
-  // with the provided vector's dimension and signature.
-  //
-  // The returned hit accessor aggregates hits from multiple posting lists based
-  // on the provided cluster_ids. For each element in cluster_ids:
-  // - If the element is kLinearSearchClusterId, the hit accessor includes hits
-  //   from the base linear search index.
-  // - Otherwise, the hit accessor includes hits from the IVF cluster
-  //   corresponding to that provided ID.
-  //
-  // Returns:
-  //   - a EmbeddingHitAccessor instance on success.
-  //   - INVALID_ARGUMENT error if the dimension is 0.
-  //   - NOT_FOUND error if there is no matching embedding hit for any of the
-  //     specified clusters.
-  //   - Any error from posting lists.
-  libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingHitAccessor>>
-  GetAccessorForVector(const PropertyProto::VectorProto& vector,
-                       const std::vector<uint32_t>& cluster_ids) const {
-    ICING_ASSIGN_OR_RETURN(uint32_t dimension,
-                           embedding_util::GetDimension(vector));
-    return GetAccessor(dimension, vector.model_signature(), cluster_ids);
-  }
-
-  // Reduces internal file sizes by reclaiming space of deleted documents.
-  // new_last_added_document_id will be used to update the last added document
-  // id in the lite index.
-  //
-  // Returns:
-  //   - OK on success
-  //   - INTERNAL_ERROR on IO error, this indicates that the index may be in an
-  //     invalid state and should be cleared.
-  libtextclassifier3::Status Optimize(
-      const DocumentStore* document_store, const SchemaStore* schema_store,
-      const std::vector<DocumentId>& document_id_old_to_new,
-      DocumentId new_last_added_document_id);
+  friend class EmbeddingHitAccessor;
+  friend class EmbeddingIndexTest;
+  friend class EmbeddingIndexTestPeer;
 
   // Returns a pointer to the embedding vector for the given hit.
   //
@@ -362,7 +499,8 @@ class EmbeddingIndex : public PersistentStorage {
   //   - OUT_OF_RANGE error if the referred vector is out of range based on the
   //     location and dimension.
   libtextclassifier3::StatusOr<const float*> GetEmbeddingVector(
-      const EmbeddingHit& hit, uint32_t dimension, uint32_t shard_id) const {
+      const EmbeddingHit& hit, uint32_t dimension, uint32_t shard_id) const
+      ICING_SHARED_LOCKS_REQUIRED(mutex_) {
     if (shard_id >= num_shards_ || embedding_vectors_[shard_id] == nullptr) {
       return absl_ports::InvalidArgumentError(
           "Attempting to query a non-existent storage shard.");
@@ -376,7 +514,8 @@ class EmbeddingIndex : public PersistentStorage {
     return fbv->array() + hit.location();
   }
   libtextclassifier3::StatusOr<const char*> GetQuantizedEmbeddingVector(
-      const EmbeddingHit& hit, uint32_t dimension, uint32_t shard_id) const {
+      const EmbeddingHit& hit, uint32_t dimension, uint32_t shard_id) const
+      ICING_SHARED_LOCKS_REQUIRED(mutex_) {
     if (shard_id >= num_shards_ ||
         quantized_embedding_vectors_[shard_id] == nullptr) {
       return absl_ports::InvalidArgumentError(
@@ -395,91 +534,22 @@ class EmbeddingIndex : public PersistentStorage {
     return fbv->array() + hit.location();
   }
 
-  libtextclassifier3::StatusOr<const float*> GetRawEmbeddingData(
-      uint32_t shard_id) const {
-    if (is_empty()) {
-      return absl_ports::NotFoundError("EmbeddingIndex is empty");
-    }
-    if (shard_id >= num_shards_ || embedding_vectors_[shard_id] == nullptr) {
-      return absl_ports::NotFoundError(absl_ports::StrCat(
-          "Embedding storage shard ", std::to_string(shard_id), " not found"));
-    }
-    return embedding_vectors_[shard_id]->array();
+  bool is_empty() const ICING_SHARED_LOCKS_REQUIRED(mutex_) {
+    return info().is_empty;
   }
 
-  int32_t GetTotalVectorSize(uint32_t shard_id) const {
-    if (is_empty() || shard_id >= num_shards_ ||
-        embedding_vectors_[shard_id] == nullptr) {
-      return 0;
-    }
-    return embedding_vectors_[shard_id]->num_elements();
-  }
-
-  int32_t GetTotalQuantizedVectorSize(uint32_t shard_id) const {
-    if (is_empty() || shard_id >= num_shards_ ||
-        quantized_embedding_vectors_[shard_id] == nullptr) {
-      return 0;
-    }
-    return quantized_embedding_vectors_[shard_id]->num_elements();
-  }
-
-  // Runs or re-runs K-Means and redistributes embeddings into clusters for all
-  // existing IVF metadata base keys.
-  //
-  // Returns:
-  //   - The total number of K-Means iterations performed across all IVF
-  //     maintenance operations on success.
-  //   - Any error from the KeyMapper or MiniBatchKMeans.
-  libtextclassifier3::StatusOr<int> MaintainAllIvf(
-      const DocumentStore& document_store, const SchemaStore& schema_store,
-      const MaintainAnnIndexOptions& maintain_ann_index_options);
-
-  DocumentId last_added_document_id() const {
-    return info().last_added_document_id;
-  }
-
-  void set_last_added_document_id(DocumentId document_id) {
-    Info& info_ref = info();
-    if (info_ref.last_added_document_id == kInvalidDocumentId ||
-        document_id > info_ref.last_added_document_id) {
-      info_ref.last_added_document_id = document_id;
-    }
-  }
-
-  bool is_empty() const { return info().is_empty; }
-
-  uint32_t GetShardId(uint32_t posting_list_key_hash,
-                      uint32_t schema_name_hash) const {
-    return (posting_list_key_hash * 31 + schema_name_hash) % num_shards_;
-  }
-
-  uint32_t num_shards() const { return num_shards_; }
-
-  Info& info() {
+  Info& info() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_) {
     return *reinterpret_cast<Info*>(metadata_mmapped_file_->mutable_region() +
                                     kInfoMetadataBufferOffset);
   }
 
-  const Info& info() const {
+  const Info& info() const ICING_SHARED_LOCKS_REQUIRED(mutex_) {
     return *reinterpret_cast<const Info*>(metadata_mmapped_file_->region() +
                                           kInfoMetadataBufferOffset);
   }
 
- private:
-  explicit EmbeddingIndex(const Filesystem& filesystem,
-                          std::string working_path, const Clock* clock,
-                          const FeatureFlags* feature_flags,
-                          uint32_t num_shards)
-      : PersistentStorage(filesystem, std::move(working_path),
-                          kWorkingPathType),
-        clock_(*clock),
-        feature_flags_(feature_flags),
-        num_shards_(num_shards),
-        embedding_vectors_(num_shards),
-        quantized_embedding_vectors_(num_shards) {}
-
-  friend class EmbeddingHitAccessor;
-  friend class EmbeddingIndexTest;
+  libtextclassifier3::Status CommitBufferToIndexLocked()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Creates the storage data. This will initialize flash_index_storage_,
   // embedding_posting_list_mapper_, and scan and initialize for existing vector
@@ -489,7 +559,8 @@ class EmbeddingIndex : public PersistentStorage {
   //   - OK on success
   //   - Any error from FlashIndexStorage, DynamicTrieKeyMapper, or
   //     FileBackedVector.
-  libtextclassifier3::Status CreateStorageData();
+  libtextclassifier3::Status CreateStorageData()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Marks the index's header to indicate that the index is non-empty.
   //
@@ -499,9 +570,11 @@ class EmbeddingIndex : public PersistentStorage {
   // Returns:
   //   - OK on success
   //   - Any error when calling CreateStorageData.
-  libtextclassifier3::Status MarkIndexNonEmpty();
+  libtextclassifier3::Status MarkIndexNonEmpty()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  libtextclassifier3::Status Initialize();
+  libtextclassifier3::Status Initialize()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Transfers the embedding vector of the given hit from the current index to
   // the new index.
@@ -512,7 +585,9 @@ class EmbeddingIndex : public PersistentStorage {
   libtextclassifier3::StatusOr<uint32_t> TransferEmbeddingVector(
       const EmbeddingHit& old_hit, uint32_t dimension,
       EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
-      uint32_t shard_id, EmbeddingIndex* new_index) const;
+      uint32_t shard_id, EmbeddingIndex* new_index) const
+      ICING_SHARED_LOCKS_REQUIRED(mutex_)
+          ICING_EXCLUSIVE_LOCKS_REQUIRED(new_index->mutex_);
 
   // Returns an EmbeddingReference for the given hit, handling quantization.
   //
@@ -522,7 +597,7 @@ class EmbeddingIndex : public PersistentStorage {
   libtextclassifier3::StatusOr<EmbeddingReference> GetEmbeddingReference(
       const EmbeddingHit& hit, uint32_t dimension,
       EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
-      uint32_t shard_id) const;
+      uint32_t shard_id) const ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
   struct ExtractedEmbeddings {
     std::vector<EmbeddingHit> hits;
@@ -535,20 +610,22 @@ class EmbeddingIndex : public PersistentStorage {
   libtextclassifier3::StatusOr<ExtractedEmbeddings> RetrieveAllEmbeddings(
       const DocumentStore& document_store, const SchemaStore& schema_store,
       const std::vector<std::string>& cluster_keys_to_read, uint32_t dimension,
-      uint32_t reserve_size);
+      uint32_t reserve_size) ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
   // Helper inside MaintainIvf connecting K-Means clustering algorithm return
   // centroids into standard centroid hits.
   libtextclassifier3::Status WriteCentroids(
       IvfContextManager& ivf_context,
-      const std::vector<std::vector<float>>& centroids);
+      const std::vector<std::vector<float>>& centroids)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Transfers embeddings from all_hits to the new clusters based on the
   // partition_assignments in the result.
   libtextclassifier3::Status TransferEmbeddingsToNewClusters(
       const IvfContextManager& ivf_context,
       const MiniBatchKMeans::ClusteringResult& result,
-      const ExtractedEmbeddings& extracted_embeddings);
+      const ExtractedEmbeddings& extracted_embeddings)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Runs or re-runs K-Means and redistributes embeddings into clusters for a
   // given corpus (base_key).
@@ -561,7 +638,8 @@ class EmbeddingIndex : public PersistentStorage {
   libtextclassifier3::StatusOr<int> MaintainIvf(
       IvfContextManager ivf_context, const DocumentStore& document_store,
       const SchemaStore& schema_store,
-      const MaintainAnnIndexOptions& maintain_ann_index_options);
+      const MaintainAnnIndexOptions& maintain_ann_index_options)
+      ICING_LOCKS_EXCLUDED(mutex_);
 
   // Transfers embedding data and hits from the current index to new_index.
   //
@@ -574,11 +652,23 @@ class EmbeddingIndex : public PersistentStorage {
   libtextclassifier3::Status TransferIndex(
       const DocumentStore& document_store, const SchemaStore& schema_store,
       const std::vector<DocumentId>& document_id_old_to_new,
-      EmbeddingIndex* new_index) const;
+      EmbeddingIndex* new_index) const ICING_SHARED_LOCKS_REQUIRED(mutex_)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(new_index->mutex_);
 
-  libtextclassifier3::Status PersistMetadataToDisk() override;
+  // Helper method for Optimize and OptimizeInto that builds the optimized
+  // index into new_working_path while holding mutex_.
+  libtextclassifier3::Status OptimizeIntoLocked(
+      const DocumentStore* document_store, const SchemaStore* schema_store,
+      const std::string& new_working_path,
+      const std::vector<DocumentId>& document_id_old_to_new,
+      DocumentId new_last_added_document_id) const
+      ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
-  libtextclassifier3::Status PersistStoragesToDisk() override;
+  libtextclassifier3::Status PersistMetadataToDisk() override
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  libtextclassifier3::Status PersistStoragesToDisk() override
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   libtextclassifier3::Status WriteMetadata() override {
     // EmbeddingIndex::Header is mmapped. Therefore, writes occur when the
@@ -586,13 +676,16 @@ class EmbeddingIndex : public PersistentStorage {
     return libtextclassifier3::Status::OK;
   }
 
-  libtextclassifier3::StatusOr<Crc32> UpdateStoragesChecksum() override;
+  libtextclassifier3::StatusOr<Crc32> UpdateStoragesChecksum() override
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  libtextclassifier3::StatusOr<Crc32> GetInfoChecksum() const override {
+  libtextclassifier3::StatusOr<Crc32> GetInfoChecksum() const override
+      ICING_SHARED_LOCKS_REQUIRED(mutex_) {
     return info().GetChecksum();
   }
 
-  libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum() const override;
+  libtextclassifier3::StatusOr<Crc32> GetStoragesChecksum() const override
+      ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
   // Appends the given embedding vector to the appropriate vector storage
   // shard based on the quantization type and shard_id. If the storage shard
@@ -604,7 +697,7 @@ class EmbeddingIndex : public PersistentStorage {
   //   - Any error when allocating the vector storage.
   libtextclassifier3::StatusOr<uint32_t> AppendEmbeddingVector(
       const EmbeddingReference& embedding, uint32_t dimension,
-      uint32_t shard_id);
+      uint32_t shard_id) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Appends the given embedding vector to the appropriate vector storage
   // shard based on the quantization type and shard_id. If the storage shard
@@ -617,35 +710,46 @@ class EmbeddingIndex : public PersistentStorage {
   libtextclassifier3::StatusOr<uint32_t> AppendEmbeddingVector(
       const PropertyProto::VectorProto& vector,
       EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
-      uint32_t shard_id);
+      uint32_t shard_id) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  Crcs& crcs() override {
+  Crcs& crcs() override ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_) {
     return *reinterpret_cast<Crcs*>(metadata_mmapped_file_->mutable_region() +
                                     kCrcsMetadataBufferOffset);
   }
 
-  const Crcs& crcs() const override {
+  const Crcs& crcs() const override ICING_SHARED_LOCKS_REQUIRED(mutex_) {
     return *reinterpret_cast<const Crcs*>(metadata_mmapped_file_->region() +
                                           kCrcsMetadataBufferOffset);
   }
 
   libtextclassifier3::StatusOr<FileBackedVector<float>*>
-  GetOrCreateEmbeddingVector(uint32_t shard_id);
+  GetOrCreateEmbeddingVector(uint32_t shard_id)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   libtextclassifier3::StatusOr<FileBackedVector<char>*>
-  GetOrCreateQuantizedEmbeddingVector(uint32_t shard_id);
+  GetOrCreateQuantizedEmbeddingVector(uint32_t shard_id)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   const Clock& clock_;
   const FeatureFlags* feature_flags_;  // Does not own.
   const uint32_t num_shards_;
 
+  // Mutex used to protect internal reads and writes.
+  mutable absl_ports::shared_mutex mutex_;
+
+  // Atomic boolean used to serialize ANN maintenance tasks (MaintainAllIvf).
+  // If a maintenance task is already running, new requests will return early.
+  std::atomic<bool> is_maintenance_running_{false};
+
   // In memory data:
   // Pending embedding hits with their embedding keys used for
   // embedding_posting_list_mapper_.
-  std::vector<std::pair<std::string, EmbeddingHit>> pending_embedding_hits_;
+  std::vector<std::pair<std::string, EmbeddingHit>> pending_embedding_hits_
+      ICING_GUARDED_BY(mutex_);
 
   // Metadata
-  std::unique_ptr<MemoryMappedFile> metadata_mmapped_file_;
+  std::unique_ptr<MemoryMappedFile> metadata_mmapped_file_
+      ICING_GUARDED_BY(mutex_);
 
   // Posting list storage
   std::unique_ptr<PostingListEmbeddingHitSerializer>
@@ -653,7 +757,8 @@ class EmbeddingIndex : public PersistentStorage {
           std::make_unique<PostingListEmbeddingHitSerializer>();
 
   // null if the index is empty.
-  std::unique_ptr<FlashIndexStorage> flash_index_storage_;
+  std::unique_ptr<FlashIndexStorage> flash_index_storage_
+      ICING_GUARDED_BY(mutex_);
 
   // The mapper from embedding keys to the corresponding posting list identifier
   // that stores all embedding hits with the same key.
@@ -663,21 +768,23 @@ class EmbeddingIndex : public PersistentStorage {
   //
   // null if the index is empty.
   std::unique_ptr<KeyMapper<PostingListIdentifier>>
-      embedding_posting_list_mapper_;
+      embedding_posting_list_mapper_ ICING_GUARDED_BY(mutex_);
 
   // The mapper from the base embedding keys (dimension, model_signature) to
   // the corresponding IVF metadata.
   //
   // null if the index is empty.
-  std::unique_ptr<KeyMapper<IvfMetadata>> ivf_metadata_mapper_;
+  std::unique_ptr<KeyMapper<IvfMetadata>> ivf_metadata_mapper_
+      ICING_GUARDED_BY(mutex_);
 
   // An array of FileBackedVectors that hold all embedding vectors, sharded by
   // a hash.
   //
   // An element is null if its corresponding file does not exist.
-  std::vector<std::unique_ptr<FileBackedVector<float>>> embedding_vectors_;
+  std::vector<std::unique_ptr<FileBackedVector<float>>> embedding_vectors_
+      ICING_GUARDED_BY(mutex_);
   std::vector<std::unique_ptr<FileBackedVector<char>>>
-      quantized_embedding_vectors_;
+      quantized_embedding_vectors_ ICING_GUARDED_BY(mutex_);
 };
 
 }  // namespace lib

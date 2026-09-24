@@ -340,7 +340,7 @@ message GetAllNamespacesResultProto {
 }
 
 // Result of a call to IcingSearchEngine.Delete
-// Next tag: 6
+// Next tag: 7
 message DeleteResultProto {
   // Status code can be one of:
   //   OK
@@ -368,10 +368,12 @@ message DeleteResultProto {
   // This field is not populated by libicing and is populated by the
   // IcingSearchEngine java class.
   optional int32 response_bytes = 6;
+
+  optional PersistToDiskResultProto persist_to_disk_result_proto = 5;
 }
 
 // Result of a call to IcingSearchEngine.DeleteByNamespace
-// Next tag: 6
+// Next tag: 7
 message DeleteByNamespaceResultProto {
   // Status code can be one of:
   //   OK
@@ -399,10 +401,12 @@ message DeleteByNamespaceResultProto {
   // This field is not populated by libicing and is populated by the
   // IcingSearchEngine java class.
   optional int32 response_bytes = 6;
+
+  optional PersistToDiskResultProto persist_to_disk_result_proto = 5;
 }
 
 // Result of a call to IcingSearchEngine.DeleteBySchemaType
-// Next tag: 6
+// Next tag: 7
 message DeleteBySchemaTypeResultProto {
   // Status code can be one of:
   //   OK
@@ -430,10 +434,12 @@ message DeleteBySchemaTypeResultProto {
   // This field is not populated by libicing and is populated by the
   // IcingSearchEngine java class.
   optional int32 response_bytes = 6;
+
+  optional PersistToDiskResultProto persist_to_disk_result_proto = 5;
 }
 
 // Result of a call to IcingSearchEngine.DeleteByQuery
-// Next tag: 9
+// Next tag: 10
 message DeleteByQueryResultProto {
   // Status code can be one of:
   //   OK
@@ -485,6 +491,8 @@ message DeleteByQueryResultProto {
   // This field is not populated by libicing and is populated by the
   // IcingSearchEngine java class.
   optional int32 response_bytes = 8;
+
+  optional PersistToDiskResultProto persist_to_disk_result_proto = 9;
 }
 
 // Next tag: 8
