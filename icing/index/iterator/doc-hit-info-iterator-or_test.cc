@@ -41,6 +41,30 @@ using ::testing::IsEmpty;
 using ::testing::Pointee;
 using ::testing::Pointer;
 
+class FailingTrimDocHitInfoIterator : public DocHitInfoIterator {
+ public:
+  libtextclassifier3::Status Advance() override {
+    return libtextclassifier3::Status::OK;
+  }
+
+  libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override {
+    return absl_ports::InvalidArgumentError("Forced trim failure");
+  }
+
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {};
+  }
+
+  void PopulateMatchedTermsStats(
+      std::vector<TermMatchInfo>* matched_terms_stats,
+      SectionIdMask filtering_section_mask = kSectionIdMaskAll) const override {
+  }
+
+  CallStats GetCallStats() const override { return CallStats(); }
+
+  std::string ToString() const override { return "FailingTrim"; }
+};
+
 TEST(CreateAndIteratorTest, Or) {
   // Basic test that we can create a working Or iterator. Further testing of
   // the Or iterator should be done separately below.
@@ -57,6 +81,34 @@ TEST(CreateAndIteratorTest, Or) {
       CreateOrIterator(std::move(iterators));
 
   EXPECT_THAT(GetDocumentIds(or_iter.get()), ElementsAre(10));
+}
+
+TEST(CreateOrIteratorTest, SizeOneHandOffReturnsDirectIterator) {
+  std::vector<DocHitInfo> doc_hit_infos = {DocHitInfo(10)};
+  std::unique_ptr<DocHitInfoIterator> dummy_iter =
+      std::make_unique<DocHitInfoIteratorDummy>(doc_hit_infos);
+
+  // Keep a raw pointer to verify that the returned iterator is exactly the same
+  // one.
+  DocHitInfoIterator* raw_dummy = dummy_iter.get();
+
+  std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
+  iterators.push_back(std::move(dummy_iter));
+
+  std::unique_ptr<DocHitInfoIterator> or_iter =
+      CreateOrIterator(std::move(iterators));
+
+  EXPECT_THAT(or_iter.get(), Eq(raw_dummy));
+}
+
+TEST(CreateOrIteratorTest,
+     EmptyVectorReturnsOrNaryWithInvalidArgumentOnAdvance) {
+  std::vector<std::unique_ptr<DocHitInfoIterator>> empty_vector;
+  std::unique_ptr<DocHitInfoIterator> or_iter =
+      CreateOrIterator(std::move(empty_vector));
+  ASSERT_THAT(or_iter, ::testing::NotNull());
+  EXPECT_THAT(or_iter->Advance(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST(CreateOrIteratorTest, OrNary) {
@@ -82,6 +134,53 @@ TEST(DocHitInfoIteratorOrTest, Initialize) {
   // We start out with invalid values
   EXPECT_THAT(or_iter.doc_hit_info(),
               EqualsDocHitInfo(kInvalidDocumentId, std::vector<SectionId>{}));
+}
+
+TEST(DocHitInfoIteratorOrTest, ToString_ReturnsFormattedStringWithParentheses) {
+  std::vector<DocHitInfo> first_vector = {DocHitInfo(10)};
+  std::vector<DocHitInfo> second_vector = {DocHitInfo(20)};
+
+  std::unique_ptr<DocHitInfoIterator> first_iter =
+      std::make_unique<DocHitInfoIteratorDummy>(first_vector);
+  std::unique_ptr<DocHitInfoIterator> second_iter =
+      std::make_unique<DocHitInfoIteratorDummy>(second_vector);
+
+  DocHitInfoIteratorOr or_iter(std::move(first_iter), std::move(second_iter));
+  EXPECT_THAT(or_iter.ToString(), Eq("(<[10,0]> OR <[20,0]>)"));
+}
+
+TEST(DocHitInfoIteratorOrTest, TrimRightMostNode_Failure_PropagatesError) {
+  std::unique_ptr<DocHitInfoIterator> left_iter =
+      std::make_unique<DocHitInfoIteratorDummy>();
+  std::unique_ptr<DocHitInfoIterator> right_iter =
+      std::make_unique<FailingTrimDocHitInfoIterator>();
+
+  DocHitInfoIteratorOr or_iter(std::move(left_iter), std::move(right_iter));
+
+  EXPECT_THAT(std::move(or_iter).TrimRightMostNode(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       "Forced trim failure"));
+}
+
+TEST(DocHitInfoIteratorOrTest, AdvanceToEndReturnsResourceExhausted) {
+  // Arrange
+  std::vector<DocHitInfo> first_vector = {DocHitInfo(10)};
+  std::vector<DocHitInfo> second_vector = {DocHitInfo(9)};
+
+  std::unique_ptr<DocHitInfoIterator> first_iter =
+      std::make_unique<DocHitInfoIteratorDummy>(first_vector);
+  std::unique_ptr<DocHitInfoIterator> second_iter =
+      std::make_unique<DocHitInfoIteratorDummy>(second_vector);
+  DocHitInfoIteratorOr or_iter(std::move(first_iter), std::move(second_iter));
+
+  // Act
+  or_iter.Advance();
+  or_iter.Advance();
+  libtextclassifier3::Status final_status = or_iter.Advance();
+
+  // Assert
+  EXPECT_THAT(final_status,
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 }
 
 TEST(DocHitInfoIteratorOrTest, GetCallStats) {
@@ -374,6 +473,64 @@ TEST(DocHitInfoIteratorOrNaryTest, Initialize) {
   // We start out with invalid values
   EXPECT_THAT(or_iter.doc_hit_info(),
               EqualsDocHitInfo(kInvalidDocumentId, std::vector<SectionId>{}));
+}
+
+TEST(DocHitInfoIteratorOrNaryTest,
+     ToString_ReturnsFormattedStringWithClosingParenthesis) {
+  std::vector<DocHitInfo> first_vector = {DocHitInfo(10)};
+  std::vector<DocHitInfo> second_vector = {DocHitInfo(20)};
+  std::vector<DocHitInfo> third_vector = {DocHitInfo(30)};
+
+  std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
+  iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>(first_vector));
+  iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>(second_vector));
+  iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>(third_vector));
+
+  DocHitInfoIteratorOrNary or_iter(std::move(iterators));
+  EXPECT_THAT(or_iter.ToString(), Eq("(<[10,0]> OR <[20,0]> OR <[30,0]>)"));
+}
+
+TEST(DocHitInfoIteratorOrNaryTest,
+     ToString_WithEmptyVector_ReturnsEmptyParentheses) {
+  std::vector<std::unique_ptr<DocHitInfoIterator>> empty_vector;
+  DocHitInfoIteratorOrNary empty_iter(std::move(empty_vector));
+  EXPECT_THAT(empty_iter.ToString(), Eq("()"));
+}
+
+TEST(DocHitInfoIteratorOrNaryTest, TrimRightMostNode_Failure_PropagatesError) {
+  std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
+  iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>());
+  iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>());
+  iterators.push_back(std::make_unique<FailingTrimDocHitInfoIterator>());
+
+  DocHitInfoIteratorOrNary or_iter(std::move(iterators));
+
+  EXPECT_THAT(std::move(or_iter).TrimRightMostNode(),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
+                       "Forced trim failure"));
+}
+
+TEST(DocHitInfoIteratorOrNaryTest, AdvanceToEndReturnsResourceExhausted) {
+  // Arrange
+  std::vector<DocHitInfo> first_vector = {DocHitInfo(10)};
+  std::vector<DocHitInfo> second_vector = {DocHitInfo(9)};
+  std::vector<DocHitInfo> third_vector = {DocHitInfo(8)};
+
+  std::vector<std::unique_ptr<DocHitInfoIterator>> iterators;
+  iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>(first_vector));
+  iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>(second_vector));
+  iterators.push_back(std::make_unique<DocHitInfoIteratorDummy>(third_vector));
+  DocHitInfoIteratorOrNary or_iter(std::move(iterators));
+
+  // Act
+  or_iter.Advance();
+  or_iter.Advance();
+  or_iter.Advance();
+  libtextclassifier3::Status final_status = or_iter.Advance();
+
+  // Assert
+  EXPECT_THAT(final_status,
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
 }
 
 TEST(DocHitInfoIteratorOrNaryTest, InitializeEmpty) {
