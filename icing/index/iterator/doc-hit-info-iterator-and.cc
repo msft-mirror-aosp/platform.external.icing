@@ -83,8 +83,7 @@ libtextclassifier3::Status DocHitInfoIteratorAnd::Advance() {
     // Didn't find anything for the first iterator, reset to invalid values and
     // return.
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
   DocumentId short_doc_id = short_->doc_hit_info().document_id();
 
@@ -141,8 +140,7 @@ libtextclassifier3::Status DocHitInfoIteratorAndNary::Advance() {
     // Didn't find anything for the first iterator, reset to invalid values and
     // return
     doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
   DocumentId potential_document_id =
       iterators_.at(0)->doc_hit_info().document_id();

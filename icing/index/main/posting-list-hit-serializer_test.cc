@@ -1034,6 +1034,36 @@ TEST(PostingListHitSerializerTest, PopHitsWithTermFrequenciesAndFlags) {
   EXPECT_THAT(serializer.GetBytesUsed(&pl_used), Eq(bytes_used));
 }
 
+TEST(PostingListHitSerializerTest, GetHitsCorruptedFlagsTruncated) {
+  PostingListHitSerializer serializer;
+
+  // Arrange: Create a posting list of size 18 (3 * sizeof(Hit)) and prepend a
+  // hit without flags/term-frequency.
+  int pl_size = 3 * sizeof(Hit);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      PostingListUsed pl_used,
+      PostingListUsed::CreateFromUnitializedRegion(&serializer, pl_size));
+
+  Hit hit0(/*section_id=*/1, /*document_id=*/0, Hit::kDefaultTermFrequency,
+           /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+           /*is_stemmed_hit=*/false);
+  ICING_ASSERT_OK(serializer.PrependHit(&pl_used, hit0));
+
+  // Mutate the hit value in the posting list buffer to claim it has flags.
+  // The uncompressed hit is stored at the end of the posting list (offset 14).
+  uint8_t* buffer = pl_used.posting_list_buffer();
+  uint32_t offset = pl_used.size_in_bytes() - serializer.GetBytesUsed(&pl_used);
+  ASSERT_THAT(offset, Eq(14));
+
+  // Bit 0 of the hit value is the kHasFlags bit. Set it to 1.
+  buffer[offset] |= 1;
+
+  // Act & Assert: GetHits should now fail because it tries to read flags at
+  // offset 18, which is past the end of the posting list (size 18).
+  EXPECT_THAT(serializer.GetHits(&pl_used),
+              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+}
+
 }  // namespace
 
 }  // namespace lib

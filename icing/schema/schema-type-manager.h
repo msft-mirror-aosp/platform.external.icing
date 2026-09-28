@@ -18,6 +18,7 @@
 #include <memory>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
@@ -52,7 +53,7 @@ class SchemaTypeManager {
   //   - NOT_FOUND_ERROR if any nested schema name is not found in
   //     type_config_map
   static libtextclassifier3::StatusOr<std::unique_ptr<SchemaTypeManager>>
-  Create(const SchemaUtil::TypeConfigMap& type_config_map,
+  Create(const SchemaUtil::TypeConfigInfoCache& type_config_info_cache,
          const KeyMapper<SchemaTypeId>* schema_type_mapper);
 
   const SectionManager& section_manager() const { return *section_manager_; }

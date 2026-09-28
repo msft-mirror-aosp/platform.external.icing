@@ -21,7 +21,9 @@ add_definitions(
         "-DICING_DISABLE_EIGEN"
 )
 set(VERSION_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/icing/jni.lds")
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-pragma")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-deprecated-pragma")
 set(CMAKE_SHARED_LINKER_FLAGS
     "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--gc-sections -Wl,--version-script=${VERSION_SCRIPT}")
 

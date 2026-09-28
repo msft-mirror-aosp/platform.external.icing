@@ -146,8 +146,7 @@ libtextclassifier3::StatusOr<QueryResults> QueryProcessor::ParseSearch(
   results.root_iterator = CreateAndIterator(std::move(iterators));
 
   results.root_iterator = DocHitInfoIteratorFilter::ApplyFilter(
-      std::move(results.root_iterator), filter_predicate.get(),
-      feature_flags_.enable_passing_filter_to_children());
+      std::move(results.root_iterator), filter_predicate.get());
   results.root_iterator =
       std::make_unique<DocHitInfoIteratorDataHolder<DocumentFilterPredicate>>(
           std::move(results.root_iterator), std::move(filter_predicate));

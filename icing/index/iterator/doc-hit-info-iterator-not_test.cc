@@ -108,7 +108,12 @@ TEST(DocHitInfoIteratorNotTest, GetCallStats) {
       /*num_leaf_advance_calls_main_index_in=*/5,
       /*num_leaf_advance_calls_integer_index_in=*/3,
       /*num_leaf_advance_calls_no_index_in=*/1,
-      /*num_blocks_inspected_in=*/4);  // arbitrary value
+      /*num_blocks_inspected_in=*/4,
+      /*embedding_stats_in=*/
+      {.num_unquantized_embeddings_scored = 2,
+       .num_quantized_embeddings_scored = 3,
+       .unquantized_shards_read = {1, 2},
+       .quantized_shards_read{3, 4}});  // arbitrary value
   auto to_be_excluded_iterator = std::make_unique<DocHitInfoIteratorDummy>();
   to_be_excluded_iterator->SetCallStats(to_be_excluded_iterator_call_stats);
 
@@ -134,7 +139,8 @@ TEST(DocHitInfoIteratorNotTest, GetCallStats) {
               .num_leaf_advance_calls_integer_index,
           to_be_excluded_iterator_call_stats.num_leaf_advance_calls_no_index +
               all_leaf_advance_calls,
-          to_be_excluded_iterator_call_stats.num_blocks_inspected));
+          to_be_excluded_iterator_call_stats.num_blocks_inspected,
+          to_be_excluded_iterator_call_stats.embedding_stats));
 }
 
 TEST(DocHitInfoIteratorNotTest, SectionIdsAlwaysNone) {

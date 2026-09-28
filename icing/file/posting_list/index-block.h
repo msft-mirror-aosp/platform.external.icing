@@ -24,6 +24,7 @@
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/posting_list/posting-list-common.h"
+#include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/file/posting_list/posting-list-used.h"
 #include "icing/legacy/index/icing-bit-util.h"
 
@@ -238,7 +239,9 @@ class IndexBlock {
 
   // Retrieves maximum number of posting lists in the block.
   uint32_t max_num_posting_lists() const {
-    return total_posting_lists_bytes() / posting_list_bytes_;
+    return std::min(total_posting_lists_bytes() / posting_list_bytes_,
+                    static_cast<uint32_t>(
+                        PostingListIdentifier::kMaxNumPostingLists));
   }
 
   // Retrieves number of bits required to store the largest PostingListIndex in

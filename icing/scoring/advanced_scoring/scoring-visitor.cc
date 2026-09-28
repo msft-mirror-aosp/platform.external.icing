@@ -162,12 +162,10 @@ void ScoringVisitor::VisitFunctionHelper(const FunctionNode* node,
     }
   } else if (function_name ==
              GetScorablePropertyFunctionScoreExpression::kFunctionName) {
-    if (!feature_flags_.enable_scorable_properties()) {
-      expression = absl_ports::InvalidArgumentError(
-          "getScorableProperty function is not enabled.");
-    } else if (scoring_feature_types_enabled_.find(
-                   ScoringFeatureType::SCORABLE_PROPERTY_RANKING) ==
-               scoring_feature_types_enabled_.end()) {
+    // The scorable properties feature has been fully rolled out.
+    if (scoring_feature_types_enabled_.find(
+            ScoringFeatureType::SCORABLE_PROPERTY_RANKING) ==
+        scoring_feature_types_enabled_.end()) {
       expression = absl_ports::InvalidArgumentError(
           "SCORABLE_PROPERTY_RANKING feature is not enabled.");
     } else if (schema_type_alias_map_ == nullptr) {

@@ -28,7 +28,11 @@ namespace {
 constexpr std::string_view kLocaleAmericanEnglishComputer = "en_US_POSIX";
 }  // namespace
 
-// Creates a language segmenter with the given locale.
+// Creates a language segmenter based on the provided options.
+//
+// @param options: The options for creating the language segmenter.
+// @param icu_segmenter_creation_status: Optional output parameter that will be
+//        ignored.
 //
 // Returns:
 //   A LanguageSegmenter on success
@@ -38,7 +42,7 @@ constexpr std::string_view kLocaleAmericanEnglishComputer = "en_US_POSIX";
 // users. Right now illegal locale strings will be ignored by ICU. ICU
 // components will be created with its default locale.
 libtextclassifier3::StatusOr<std::unique_ptr<LanguageSegmenter>> Create(
-    SegmenterOptions options) {
+    SegmenterOptions options, StatusProto* /*icu_segmenter_creation_status*/) {
   if (options.jni_cache == nullptr) {
     return absl_ports::InvalidArgumentError(
         "Cannot create Reverse Jni Language Segmenter without a valid JniCache "

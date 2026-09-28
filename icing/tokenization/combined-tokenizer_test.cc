@@ -116,10 +116,10 @@ class CombinedTokenizerTest : public ::testing::Test {
 
     Index::Options options(index_dir_,
                            /*index_merge_size=*/1024 * 1024,
-                           /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
-        index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+        index_, Index::Create(options, &filesystem_, &icing_filesystem_,
+                              feature_flags_.get()));
     // TODO(b/249829533): switch to use persistent numeric index.
     ICING_ASSERT_OK_AND_ASSIGN(
         numeric_index_,
@@ -127,7 +127,8 @@ class CombinedTokenizerTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
         EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &fake_clock_,
-                               feature_flags_.get()));
+                               feature_flags_.get(),
+                               /*num_shards=*/32));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(
         ULOC_US, jni_cache_.get());

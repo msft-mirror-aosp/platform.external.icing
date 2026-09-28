@@ -193,7 +193,7 @@ class PersistentStorage {
   //   - FAILED_PRECONDITION_ERROR if PersistentStorage is uninitialized
   //   - Any errors from PersistStoragesToDisk, UpdateChecksums,
   //     PersistMetadataToDisk, depending on actual implementation
-  libtextclassifier3::Status PersistToDisk() {
+  virtual libtextclassifier3::Status PersistToDisk() {
     if (!is_initialized_) {
       return absl_ports::FailedPreconditionError(absl_ports::StrCat(
           "PersistentStorage ", working_path_, " not initialized"));
@@ -213,7 +213,7 @@ class PersistentStorage {
   //   - FAILED_PRECONDITION_ERROR if PersistentStorage is uninitialized
   //   - Any errors from UpdateInfoChecksum, UpdateStoragesChecksum, depending
   //     on actual implementation
-  libtextclassifier3::StatusOr<Crc32> UpdateChecksums() {
+  virtual libtextclassifier3::StatusOr<Crc32> UpdateChecksums() {
     if (!is_initialized_) {
       return absl_ports::FailedPreconditionError(absl_ports::StrCat(
           "PersistentStorage ", working_path_, " not initialized"));
@@ -231,7 +231,7 @@ class PersistentStorage {
   //   - FAILED_PRECONDITION_ERROR if PersistentStorage is uninitialized
   //   - Any errors from GetInfoChecksum, GetStoragesChecksum, depending on
   //     actual implementation
-  libtextclassifier3::StatusOr<Crc32> GetChecksum() const {
+  virtual libtextclassifier3::StatusOr<Crc32> GetChecksum() const {
     if (!is_initialized_) {
       return absl_ports::FailedPreconditionError(absl_ports::StrCat(
           "PersistentStorage ", working_path_, " not initialized"));

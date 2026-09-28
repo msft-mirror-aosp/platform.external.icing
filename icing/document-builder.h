@@ -72,6 +72,18 @@ class DocumentBuilder {
     return *this;
   }
 
+  // Takes a property name and iterator of string values.
+  DocumentBuilder& AddStringProperty(
+      std::string property_name, std::vector<std::string>::const_iterator first,
+      std::vector<std::string>::const_iterator last) {
+    auto property = document_.add_properties();
+    property->set_name(std::move(property_name));
+    for (auto it = first; it != last; ++it) {
+      property->mutable_string_values()->Add(std::string(*it));
+    }
+    return *this;
+  }
+
   // Takes a property name and any number of string values.
   template <typename... V>
   DocumentBuilder& AddStringProperty(std::string property_name,

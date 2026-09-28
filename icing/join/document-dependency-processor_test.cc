@@ -35,7 +35,6 @@
 #include "icing/proto/search.pb.h"
 #include "icing/schema-builder.h"
 #include "icing/schema/schema-store.h"
-#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/fake-clock.h"
@@ -54,11 +53,8 @@ namespace lib {
 
 namespace {
 
-using ::testing::ElementsAre;
 using ::testing::HasSubstr;
-using ::testing::IsEmpty;
 using ::testing::IsTrue;
-using ::testing::UnorderedElementsAre;
 
 class DocumentDependencyProcessorTest : public ::testing::Test {
  protected:
@@ -309,35 +305,21 @@ TEST_F(DocumentDependencyProcessorTest, Evaluate) {
       DocumentDependencyProcessor::Create(
           doc_store_.get(), batch_documents_to_add1,
           /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDependencyProcessor::EvaluateResult result1,
-      processor1.Evaluate());
-  // No dependency documents out of the batch.
-  EXPECT_THAT(result1.outer_dependency_document_ids,
-              ElementsAre(IsEmpty(), IsEmpty(), IsEmpty(), IsEmpty(), IsEmpty(),
-                          IsEmpty()));
-  // No replaced expired documents.
-  EXPECT_THAT(result1.existing_expired_doc_ids_to_replace, IsEmpty());
+  EXPECT_THAT(processor1.Evaluate(), IsOk());
 
   // Put them into the document store.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result_person1,
-      doc_store_->Put(
-          batch_documents_to_add1[0].document_wrapper()));  // person1
+  ICING_ASSERT_OK(doc_store_->Put(
+      batch_documents_to_add1[0].document_wrapper()));  // person1
   ICING_ASSERT_OK(doc_store_->Put(
       batch_documents_to_add1[1].document_wrapper()));  // person2
   ICING_ASSERT_OK(doc_store_->Put(
       batch_documents_to_add1[2].document_wrapper()));  // email1
   ICING_ASSERT_OK(doc_store_->Put(
       batch_documents_to_add1[3].document_wrapper()));  // label1
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result_label2,
-      doc_store_->Put(
-          batch_documents_to_add1[4].document_wrapper()));  // label2
+  ICING_ASSERT_OK(doc_store_->Put(
+      batch_documents_to_add1[4].document_wrapper()));  // label2
   ICING_ASSERT_OK(doc_store_->Put(
       batch_documents_to_add1[5].document_wrapper()));  // label3
-  DocumentId doc_id_person1 = put_result_person1.new_document_id;
-  DocumentId doc_id_label2 = put_result_label2.new_document_id;
 
   // Replace existing person2, email1, label1 and add new label4, label5 to make
   // the following relation:
@@ -425,22 +407,7 @@ TEST_F(DocumentDependencyProcessorTest, Evaluate) {
       DocumentDependencyProcessor::Create(
           doc_store_.get(), batch_documents_to_add2,
           /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDependencyProcessor::EvaluateResult result2,
-      processor2.Evaluate());
-  EXPECT_THAT(
-      result2.outer_dependency_document_ids,
-      ElementsAre(
-          IsEmpty(),  // person2 has no outer dependency.
-          UnorderedElementsAre(
-              doc_id_person1),  // email1 has an outer dependency on person1.
-          IsEmpty(),            // label1 has no outer dependency.
-          UnorderedElementsAre(
-              doc_id_label2),  // label4 has an outer dependency on label2.
-          IsEmpty()            // label5 has no outer dependency.
-          ));
-  // No replaced expired documents.
-  EXPECT_THAT(result2.existing_expired_doc_ids_to_replace, IsEmpty());
+  EXPECT_THAT(processor2.Evaluate(), IsOk());
 }
 
 TEST_F(DocumentDependencyProcessorTest,
@@ -467,103 +434,11 @@ TEST_F(DocumentDependencyProcessorTest,
 
   // Evaluate person should succeed.
   ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDependencyProcessor processor1,
+      DocumentDependencyProcessor processor,
       DocumentDependencyProcessor::Create(
           doc_store_.get(), batch_documents_to_add1,
           /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDependencyProcessor::EvaluateResult result1,
-      processor1.Evaluate());
-  // No dependency documents out of the batch.
-  EXPECT_THAT(result1.outer_dependency_document_ids, ElementsAre(IsEmpty()));
-  // No replaced expired documents.
-  EXPECT_THAT(result1.existing_expired_doc_ids_to_replace, IsEmpty());
-
-  // Put person into the document store.
-  ICING_ASSERT_OK(doc_store_->Put(
-      batch_documents_to_add1[0].document_wrapper()));  // person
-
-  // Set the current time to 1000.
-  fake_clock_.SetSystemTimeMilliseconds(1000);
-
-  // Replace person with expiration timestamp 1300.
-  DocumentProto person_to_replace1 = DocumentBuilder()
-                                         .SetCreationTimestampMs(1000)
-                                         .SetTtlMs(300)
-                                         .SetKey("namespace", "person")
-                                         .SetSchema("Person")
-                                         .AddStringProperty("Name", "Bob")
-                                         .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_doc_person_to_replace1,
-      TokenizedDocument::Create(
-          schema_store_.get(), lang_segmenter_.get(),
-          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
-          person_to_replace1));
-
-  std::vector<TokenizedDocument> batch_documents_to_add2;
-  batch_documents_to_add2.push_back(
-      std::move(tokenized_doc_person_to_replace1));
-
-  // Evaluate person (replaced 1) should succeed.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDependencyProcessor processor2,
-      DocumentDependencyProcessor::Create(
-          doc_store_.get(), batch_documents_to_add2,
-          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDependencyProcessor::EvaluateResult result2,
-      processor2.Evaluate());
-  // No dependency documents out of the batch.
-  EXPECT_THAT(result2.outer_dependency_document_ids, ElementsAre(IsEmpty()));
-  // No replaced expired documents.
-  EXPECT_THAT(result2.existing_expired_doc_ids_to_replace, IsEmpty());
-
-  // Put person (replaced 1) into the document store.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result_person_to_replace1,
-      doc_store_->Put(batch_documents_to_add2[0]
-                          .document_wrapper()));  // person_to_replace1
-  DocumentId doc_id_person_to_replace1 =
-      put_result_person_to_replace1.new_document_id;
-
-  // Set the current time to 2000.
-  fake_clock_.SetSystemTimeMilliseconds(2000);
-
-  // Replace person with expiration timestamp 3000.
-  DocumentProto person_to_replace2 = DocumentBuilder()
-                                         .SetCreationTimestampMs(2000)
-                                         .SetTtlMs(1000)
-                                         .SetKey("namespace", "person")
-                                         .SetSchema("Person")
-                                         .AddStringProperty("Name", "Bob")
-                                         .Build();
-  ICING_ASSERT_OK_AND_ASSIGN(
-      TokenizedDocument tokenized_doc_person_to_replace2,
-      TokenizedDocument::Create(
-          schema_store_.get(), lang_segmenter_.get(),
-          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(),
-          person_to_replace2));
-
-  std::vector<TokenizedDocument> batch_documents_to_add3;
-  batch_documents_to_add3.push_back(
-      std::move(tokenized_doc_person_to_replace2));
-
-  // Evaluate person (replaced 2) should succeed.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDependencyProcessor processor3,
-      DocumentDependencyProcessor::Create(
-          doc_store_.get(), batch_documents_to_add3,
-          /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDependencyProcessor::EvaluateResult result3,
-      processor3.Evaluate());
-  // No dependency documents out of the batch.
-  EXPECT_THAT(result3.outer_dependency_document_ids, ElementsAre(IsEmpty()));
-  // Since at t = 2000 the original person document (doc_id_person_to_replace1)
-  // is expired, it should be detected.
-  EXPECT_THAT(result3.existing_expired_doc_ids_to_replace,
-              UnorderedElementsAre(doc_id_person_to_replace1));
+  EXPECT_THAT(processor.Evaluate(), IsOk());
 }
 
 TEST_F(DocumentDependencyProcessorTest,
@@ -591,7 +466,7 @@ TEST_F(DocumentDependencyProcessorTest,
           /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
   EXPECT_THAT(processor.Evaluate(),
               StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT,
-                       HasSubstr("A dependency document is not found")));
+                       HasSubstr("A dependency document is not alive")));
 }
 
 TEST_F(DocumentDependencyProcessorTest,
@@ -645,10 +520,7 @@ TEST_F(DocumentDependencyProcessorTest,
       DocumentDependencyProcessor::Create(
           doc_store_.get(), batch_documents_to_add,
           /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDependencyProcessor::EvaluateResult result,
-                             processor.Evaluate());
-  EXPECT_THAT(result.outer_dependency_document_ids, ElementsAre(IsEmpty()));
-  EXPECT_THAT(result.existing_expired_doc_ids_to_replace, IsEmpty());
+  EXPECT_THAT(processor.Evaluate(), IsOk());
 }
 
 TEST_F(DocumentDependencyProcessorTest,
@@ -709,12 +581,7 @@ TEST_F(DocumentDependencyProcessorTest,
       DocumentDependencyProcessor::Create(
           doc_store_.get(), batch_documents_to_add,
           /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDependencyProcessor::EvaluateResult result,
-                             processor.Evaluate());
-  // No dependency documents out of the batch.
-  EXPECT_THAT(result.outer_dependency_document_ids,
-              ElementsAre(IsEmpty(), IsEmpty(), IsEmpty()));
-  EXPECT_THAT(result.existing_expired_doc_ids_to_replace, IsEmpty());
+  EXPECT_THAT(processor.Evaluate(), IsOk());
 }
 
 TEST_F(DocumentDependencyProcessorTest,
@@ -742,11 +609,7 @@ TEST_F(DocumentDependencyProcessorTest,
       DocumentDependencyProcessor::Create(
           doc_store_.get(), batch_documents_to_add,
           /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDependencyProcessor::EvaluateResult result,
-                             processor.Evaluate());
-  // No dependency documents out of the batch.
-  EXPECT_THAT(result.outer_dependency_document_ids, ElementsAre(IsEmpty()));
-  EXPECT_THAT(result.existing_expired_doc_ids_to_replace, IsEmpty());
+  EXPECT_THAT(processor.Evaluate(), IsOk());
 }
 
 TEST_F(DocumentDependencyProcessorTest,
@@ -800,12 +663,7 @@ TEST_F(DocumentDependencyProcessorTest,
       DocumentDependencyProcessor::Create(
           doc_store_.get(), batch_documents_to_add,
           /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDependencyProcessor::EvaluateResult result,
-                             processor.Evaluate());
-  // No dependency documents out of the batch.
-  EXPECT_THAT(result.outer_dependency_document_ids,
-              ElementsAre(IsEmpty(), IsEmpty(), IsEmpty()));
-  EXPECT_THAT(result.existing_expired_doc_ids_to_replace, IsEmpty());
+  EXPECT_THAT(processor.Evaluate(), IsOk());
 }
 
 TEST_F(DocumentDependencyProcessorTest,
@@ -844,14 +702,10 @@ TEST_F(DocumentDependencyProcessorTest,
           /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds(), email));
 
   // Put person1, person2 into the document store.
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result_person1,
+  ICING_ASSERT_OK(
       doc_store_->Put(document_util::CreateDocumentWrapper(person1)));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentStore::PutResult put_result_person2,
+  ICING_ASSERT_OK(
       doc_store_->Put(document_util::CreateDocumentWrapper(person2)));
-  DocumentId doc_id_person1 = put_result_person1.new_document_id;
-  DocumentId doc_id_person2 = put_result_person2.new_document_id;
 
   std::vector<TokenizedDocument> batch_documents_to_add;
   batch_documents_to_add.push_back(std::move(tokenized_doc_email));
@@ -862,12 +716,7 @@ TEST_F(DocumentDependencyProcessorTest,
       DocumentDependencyProcessor::Create(
           doc_store_.get(), batch_documents_to_add,
           /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(DocumentDependencyProcessor::EvaluateResult result,
-                             processor.Evaluate());
-  EXPECT_THAT(
-      result.outer_dependency_document_ids,
-      ElementsAre(UnorderedElementsAre(doc_id_person1, doc_id_person2)));
-  EXPECT_THAT(result.existing_expired_doc_ids_to_replace, IsEmpty());
+  EXPECT_THAT(processor.Evaluate(), IsOk());
 }
 
 TEST_F(DocumentDependencyProcessorTest,
@@ -1021,12 +870,7 @@ TEST_F(DocumentDependencyProcessorTest,
       DocumentDependencyProcessor::Create(
           doc_store_.get(), batch_documents_to_add1,
           /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDependencyProcessor::EvaluateResult result1,
-      processor1.Evaluate());
-  // No dependency documents out of the batch.
-  EXPECT_THAT(result1.outer_dependency_document_ids, ElementsAre(IsEmpty()));
-  EXPECT_THAT(result1.existing_expired_doc_ids_to_replace, IsEmpty());
+  EXPECT_THAT(processor1.Evaluate(), IsOk());
 
   // Create email document having a valid qualified id string on "sender"
   // property with delete propagation disabled, but the referenced document
@@ -1049,12 +893,7 @@ TEST_F(DocumentDependencyProcessorTest,
       DocumentDependencyProcessor::Create(
           doc_store_.get(), batch_documents_to_add2_1,
           /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDependencyProcessor::EvaluateResult result2_1,
-      processor2_1.Evaluate());
-  // No dependency documents out of the batch.
-  EXPECT_THAT(result2_1.outer_dependency_document_ids, ElementsAre(IsEmpty()));
-  EXPECT_THAT(result2_1.existing_expired_doc_ids_to_replace, IsEmpty());
+  EXPECT_THAT(processor2_1.Evaluate(), IsOk());
 
   // Add person document into the document store to make email2's referenced
   // document exist.
@@ -1081,12 +920,7 @@ TEST_F(DocumentDependencyProcessorTest,
       DocumentDependencyProcessor::Create(
           doc_store_.get(), batch_documents_to_add2_2,
           /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDependencyProcessor::EvaluateResult result2_2,
-      processor2_2.Evaluate());
-  // No dependency documents out of the batch.
-  EXPECT_THAT(result2_2.outer_dependency_document_ids, ElementsAre(IsEmpty()));
-  EXPECT_THAT(result2_2.existing_expired_doc_ids_to_replace, IsEmpty());
+  EXPECT_THAT(processor2_2.Evaluate(), IsOk());
 
   // Evaluate email2 again with a different current time which makes person
   // document expired. Since delete propagation is disabled, Evaluate should
@@ -1105,12 +939,7 @@ TEST_F(DocumentDependencyProcessorTest,
       DocumentDependencyProcessor::Create(
           doc_store_.get(), batch_documents_to_add2_3,
           /*current_time_ms=*/fake_clock_.GetSystemTimeMilliseconds()));
-  ICING_ASSERT_OK_AND_ASSIGN(
-      DocumentDependencyProcessor::EvaluateResult result2_3,
-      processor2_3.Evaluate());
-  // No dependency documents out of the batch.
-  EXPECT_THAT(result2_3.outer_dependency_document_ids, ElementsAre(IsEmpty()));
-  EXPECT_THAT(result2_3.existing_expired_doc_ids_to_replace, IsEmpty());
+  EXPECT_THAT(processor2_3.Evaluate(), IsOk());
 }
 
 }  // namespace

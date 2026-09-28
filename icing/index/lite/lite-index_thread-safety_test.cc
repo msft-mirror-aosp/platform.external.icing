@@ -60,7 +60,6 @@ class LiteIndexThreadSafetyTest : public testing::Test {
         index_dir_ + "/test_file.lite-idx-thread-safety.index";
     LiteIndex::Options options(lite_index_file_name,
                                /*hit_buffer_want_merge_bytes=*/1024 * 1024,
-                               /*hit_buffer_sort_at_indexing=*/true,
                                /*hit_buffer_sort_threshold_bytes=*/64);
     ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                                LiteIndex::Create(options, &icing_filesystem_));

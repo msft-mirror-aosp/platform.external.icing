@@ -21,6 +21,7 @@
 #include "gtest/gtest.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/icu-i18n-test-utils.h"
+#include "icing/util/i18n-utils.h"
 
 namespace icing {
 namespace lib {
@@ -249,12 +250,13 @@ TEST(CharacterIteratorTest, InvalidUtf) {
   CharacterIterator iterator(kText);
   EXPECT_THAT(iterator.is_valid(), IsTrue());
 
-  // Try to advance to the 'b' in 'bar'. This will fail. Also the iterator will
-  // be in an undefined state, so no need to verify the state or
-  // GetCurrentChar().
-  EXPECT_THAT(iterator.AdvanceToUtf8(6), IsFalse());
-  EXPECT_THAT(iterator.AdvanceToUtf16(6), IsFalse());
-  EXPECT_THAT(iterator.AdvanceToUtf32(6), IsFalse());
+  // Advancing to the invalid byte returns kInvalidUChar32.
+  EXPECT_THAT(iterator.AdvanceToUtf8(4), IsTrue());
+  EXPECT_THAT(iterator.GetCurrentChar(), Eq(i18n_utils::kInvalidUChar32));
+
+  // Advancing past the invalid sequence continues cleanly to 'b' at index 6.
+  EXPECT_THAT(iterator.AdvanceToUtf8(6), IsTrue());
+  EXPECT_THAT(UCharToString(iterator.GetCurrentChar()), Eq("b"));
 }
 
 TEST(CharacterIteratorTest, AdvanceToUtf8_emptyText) {

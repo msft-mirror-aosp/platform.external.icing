@@ -60,15 +60,16 @@ class TrigramTokenizerIterator : public Tokenizer::Iterator {
     return true;
   }
 
-  std::vector<Token> GetTokens() const override {
+  void GetTokens(std::vector<Token>* out_tokens) const override {
     int start_byte_idx = utf8_char_itrs_.front().utf8_index();
     int end_byte_idx =
         utf8_char_itrs_.back().utf8_index() +
         i18n_utils::GetUtf8Length(utf8_char_itrs_.back().GetCurrentChar());
 
-    return {Token(/*type_in=*/Token::Type::TRIGRAM,
-                  /*text_in=*/text_.substr(start_byte_idx,
-                                           end_byte_idx - start_byte_idx))};
+    out_tokens->assign(
+        {Token(/*type_in=*/Token::Type::TRIGRAM,
+               /*text_in=*/text_.substr(start_byte_idx,
+                                        end_byte_idx - start_byte_idx))});
   };
 
   // Returns a character iterator to the start of the current trigram token.
@@ -279,8 +280,9 @@ libtextclassifier3::StatusOr<std::vector<Token>> TrigramTokenizer::TokenizeAll(
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iterator,
                          Tokenize(text));
   std::vector<Token> tokens;
+  std::vector<Token> batch_tokens;
   while (iterator->Advance()) {
-    std::vector<Token> batch_tokens = iterator->GetTokens();
+    iterator->GetTokens(&batch_tokens);
     tokens.insert(tokens.end(), batch_tokens.begin(), batch_tokens.end());
   }
   return tokens;
