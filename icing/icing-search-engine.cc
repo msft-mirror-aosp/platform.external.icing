@@ -786,6 +786,12 @@ InitializeResultProto IcingSearchEngine::InitializeLocked() {
   WriteDatabaseStablenessLog(IcingApiCallType::INITIALIZE);
 
   TransformStatus(status, result_status);
+  if (initialize_stats->document_store_data_status() ==
+          InitializeStatsProto::COMPLETE_LOSS ||
+      initialize_stats->num_previous_init_failures() >
+          kMaxUnsuccessfulInitAttempts) {
+    result_proto.set_has_reset(true);
+  }
   initialize_stats->set_latency_ms(initialize_timer->GetElapsedMilliseconds());
   return result_proto;
 }

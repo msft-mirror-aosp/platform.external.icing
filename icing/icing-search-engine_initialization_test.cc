@@ -742,6 +742,7 @@ TEST_F(IcingSearchEngineInitializationTest,
     InitializeResultProto init_result = icing.Initialize();
     ASSERT_THAT(init_result.status(),
                 ProtoStatusIs(StatusProto::WARNING_DATA_LOSS));
+    EXPECT_TRUE(init_result.has_reset());
     ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
                 Eq(6));
     EXPECT_THAT(
@@ -834,6 +835,7 @@ TEST_F(IcingSearchEngineInitializationTest,
     InitializeResultProto init_result = icing.Initialize();
     ASSERT_THAT(init_result.status(),
                 ProtoStatusIs(StatusProto::WARNING_DATA_LOSS));
+    EXPECT_TRUE(init_result.has_reset());
     ASSERT_THAT(init_result.initialize_stats().num_previous_init_failures(),
                 Eq(6));
 
@@ -924,6 +926,8 @@ TEST_F(IcingSearchEngineInitializationTest,
   InitializeResultProto initialize_result = icing.Initialize();
   EXPECT_THAT(initialize_result.status(),
               ProtoStatusIs(StatusProto::WARNING_DATA_LOSS));
+  // Index restoration does not reset the engine.
+  EXPECT_FALSE(initialize_result.has_reset());
 
   EXPECT_THAT(
       initialize_result.initialize_stats().document_store_recovery_cause(),
@@ -5357,6 +5361,7 @@ TEST_F(
   EXPECT_THAT(
       initialize_result.initialize_stats().document_store_recovery_cause(),
       Eq(InitializeStatsProto::NONE));
+  EXPECT_FALSE(initialize_result.has_reset());
   // Term and qualified id join index should be restored.
   EXPECT_THAT(
       initialize_result.initialize_stats().index_restoration_latency_ms(),
@@ -5648,6 +5653,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                               std::move(fake_clock), GetTestJniCache());
   InitializeResultProto initialize_result_proto = icing.Initialize();
   EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+  EXPECT_FALSE(initialize_result_proto.has_reset());
   EXPECT_THAT(
       initialize_result_proto.initialize_stats().schema_store_recovery_cause(),
       Eq(InitializeStatsProto::NONE));
@@ -5692,6 +5698,7 @@ TEST_F(IcingSearchEngineInitializationTest,
       GetTestJniCache());
   InitializeResultProto initialize_result_google::protobuf = another_icing.Initialize();
   EXPECT_THAT(initialize_result_google::protobuf.status(), ProtoIsOk());
+  EXPECT_FALSE(initialize_result_google::protobuf.has_reset());
   EXPECT_THAT(
       initialize_result_google::protobuf.initialize_stats().schema_store_recovery_cause(),
       Eq(InitializeStatsProto::NONE));
@@ -5777,6 +5784,7 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(
         initialize_result_proto.initialize_stats().document_store_data_status(),
         Eq(InitializeStatsProto::PARTIAL_LOSS));
+    EXPECT_FALSE(initialize_result_proto.has_reset());
     // Document store rewinds to previous checkpoint and all derived files were
     // regenerated.
     // - Last stored doc id will be consistent with last added document ids in
@@ -5871,6 +5879,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                                 std::move(fake_clock), GetTestJniCache());
     InitializeResultProto initialize_result_proto = icing.Initialize();
     EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_TRUE(initialize_result_proto.has_reset());
     EXPECT_THAT(initialize_result_proto.initialize_stats()
                     .document_store_recovery_cause(),
                 Eq(InitializeStatsProto::DATA_LOSS));
@@ -5951,6 +5960,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                                 std::move(fake_clock), GetTestJniCache());
     InitializeResultProto initialize_result_proto = icing.Initialize();
     EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_FALSE(initialize_result_proto.has_reset());
     EXPECT_THAT(
         initialize_result_proto.initialize_stats().index_restoration_cause(),
         Eq(InitializeStatsProto::INCONSISTENT_WITH_GROUND_TRUTH));
@@ -6022,6 +6032,7 @@ TEST_F(
                                 std::move(fake_clock), GetTestJniCache());
     InitializeResultProto initialize_result_proto = icing.Initialize();
     EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_FALSE(initialize_result_proto.has_reset());
     EXPECT_THAT(
         initialize_result_proto.initialize_stats().index_restoration_cause(),
         Eq(InitializeStatsProto::NONE));
@@ -6131,6 +6142,7 @@ TEST_F(
                                 std::move(fake_clock), GetTestJniCache());
     InitializeResultProto initialize_result_proto = icing.Initialize();
     EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_FALSE(initialize_result_proto.has_reset());
     EXPECT_THAT(
         initialize_result_proto.initialize_stats().index_restoration_cause(),
         Eq(InitializeStatsProto::NONE));
@@ -6227,6 +6239,7 @@ TEST_F(IcingSearchEngineInitializationTest,
                                 std::move(fake_clock), GetTestJniCache());
     InitializeResultProto initialize_result_proto = icing.Initialize();
     EXPECT_THAT(initialize_result_proto.status(), ProtoIsOk());
+    EXPECT_FALSE(initialize_result_proto.has_reset());
 
     // Schema store recovery stats.
     EXPECT_THAT(initialize_result_proto.initialize_stats()
@@ -6440,6 +6453,7 @@ TEST_F(IcingSearchEngineInitializationTest,
     EXPECT_THAT(
         initialize_result_proto.initialize_stats().document_store_data_status(),
         Eq(InitializeStatsProto::NO_DATA_LOSS));
+    EXPECT_FALSE(initialize_result_proto.has_reset());
 
     // Term index recovery stats.
     EXPECT_THAT(

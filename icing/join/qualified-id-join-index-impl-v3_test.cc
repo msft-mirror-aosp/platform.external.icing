@@ -1749,6 +1749,135 @@ TEST_P(QualifiedIdJoinIndexImplV3Test, Optimize) {
               IsOkAndHolds(ElementsAre(another_child_join_id_pair)));
 }
 
+TEST_P(QualifiedIdJoinIndexImplV3Test, OptimizeInto) {
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<QualifiedIdJoinIndexImplV3> index,
+                             QualifiedIdJoinIndexImplV3::Create(
+                                 filesystem_, working_path_, *feature_flags_));
+
+  ASSERT_NO_FATAL_FAILURE(FillDocumentStore(/*num_documents=*/5));
+
+  DocumentJoinIdPair child_join_id_pair1(
+      /*document_id=*/101, /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair2(
+      /*document_id=*/102, /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair3(
+      /*document_id=*/103, /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair4(
+      /*document_id=*/104, /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair5(
+      /*document_id=*/105, /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair6(
+      /*document_id=*/106, /*joinable_property_id=*/0);
+  DocumentJoinIdPair child_join_id_pair7(
+      /*document_id=*/107, /*joinable_property_id=*/0);
+
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair1,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1, 3}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair2,
+                   /*parent_document_ids=*/std::vector<DocumentId>{2}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair3,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1, 2, 4}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair4,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair5,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1, 2}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair6,
+                   /*parent_document_ids=*/std::vector<DocumentId>{3}));
+    ICING_ASSERT_OK(
+        index->Put(child_join_id_pair7,
+                   /*parent_document_ids=*/std::vector<DocumentId>{1}));
+  } else {
+    QualifiedId parent_qid1("ns", "uri1");
+    QualifiedId parent_qid2("ns", "uri2");
+    QualifiedId parent_qid3("ns", "uri3");
+    QualifiedId parent_qid4("ns", "uri4");
+    ICING_ASSERT_OK(
+        index->Put(document_store_.get(), child_join_id_pair1,
+                   /*parent_qualified_ids=*/
+                   std::vector<QualifiedId>{parent_qid1, parent_qid3}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair2,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid2}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair3,
+        /*parent_qualified_ids=*/
+        std::vector<QualifiedId>{parent_qid1, parent_qid2, parent_qid4}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair4,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid1}));
+    ICING_ASSERT_OK(
+        index->Put(document_store_.get(), child_join_id_pair5,
+                   /*parent_qualified_ids=*/
+                   std::vector<QualifiedId>{parent_qid1, parent_qid2}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair6,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid3}));
+    ICING_ASSERT_OK(index->Put(
+        document_store_.get(), child_join_id_pair7,
+        /*parent_qualified_ids=*/std::vector<QualifiedId>{parent_qid1}));
+  }
+
+  ASSERT_THAT(index, Pointee(SizeIs(11)));
+  index->set_last_added_document_id(107);
+
+  std::vector<DocumentId> document_id_old_to_new(108, kInvalidDocumentId);
+  document_id_old_to_new[1] = 0;
+  document_id_old_to_new[2] = 1;
+  document_id_old_to_new[4] = 2;
+  document_id_old_to_new[101] = 11;
+  document_id_old_to_new[102] = 12;
+  document_id_old_to_new[104] = 13;
+  document_id_old_to_new[105] = 14;
+  document_id_old_to_new[106] = 15;
+
+  ICING_ASSERT_OK(document_store_->Delete("ns", "uri0", /*current_time_ms=*/0));
+  ICING_ASSERT_OK(document_store_->Delete("ns", "uri3", /*current_time_ms=*/0));
+  ASSERT_NO_FATAL_FAILURE(OptimizeDocumentStore());
+
+  std::string new_working_path = working_path_ + "_optimized";
+  DocumentId new_last_added_document_id = 15;
+
+  // Invalid argument if new_working_path == working_path_
+  EXPECT_THAT(index->OptimizeInto(
+                  document_store_.get(), working_path_, document_id_old_to_new,
+                  /*namespace_id_old_to_new=*/{}, new_last_added_document_id),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // Successfully optimize into new working path
+  EXPECT_THAT(index->OptimizeInto(document_store_.get(), new_working_path,
+                                  document_id_old_to_new,
+                                  /*namespace_id_old_to_new=*/{},
+                                  new_last_added_document_id),
+              IsOk());
+
+  // Original index remains unchanged
+  EXPECT_THAT(index, Pointee(SizeIs(11)));
+
+  // New index can be created and loaded from new_working_path
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinIndexImplV3> new_index,
+      QualifiedIdJoinIndexImplV3::Create(filesystem_, new_working_path,
+                                         *feature_flags_));
+  if (!feature_flags_->enable_non_existent_qualified_id_join()) {
+    EXPECT_THAT(new_index, Pointee(SizeIs(5)));
+  } else {
+    EXPECT_THAT(new_index, Pointee(SizeIs(7)));
+  }
+  EXPECT_THAT(new_index->last_added_document_id(),
+              Eq(new_last_added_document_id));
+
+  // Clean up
+  new_index.reset();
+  filesystem_.DeleteDirectoryRecursively(new_working_path.c_str());
+}
+
 TEST_P(QualifiedIdJoinIndexImplV3Test, OptimizeOutOfRangeParentDocumentId) {
   if (feature_flags_->enable_non_existent_qualified_id_join()) {
     // Not applicable for the dual-tracking implementation. Optimize() will use

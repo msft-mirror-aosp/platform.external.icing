@@ -21,7 +21,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "APSC";
 
 // Defines proto contains visibility overlay settings.
-// Next tag: 3
+// Next tag: 4
 message AndroidVOverlayProto {
   // OPTIONAL: the standard visibility settings. Caller could have access if
   // they match ANY of the requirements in this VisibilityConfig.
@@ -30,6 +30,10 @@ message AndroidVOverlayProto {
   // OPTIONAL: The set of VisibilityConfig that have access. Caller could have
   // access only if they match ALL of the requirements in a VisibilityConfig.
   repeated VisibilityConfigProto visible_to_configs = 2;
+
+  // OPTIONAL: the operating system UID of the package that owns/wrote this
+  // schema.
+  optional int32 writer_uid = 3;
 }
 
 // Defines proto contains all required requirements of a nested
