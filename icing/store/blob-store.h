@@ -184,6 +184,31 @@ class BlobStore {
       const std::unordered_set<std::string>& dead_blob_handles,
       const FeatureFlags* feature_flags);
 
+  // Result of optimizing the blob info metadata log file.
+  // Note: Physical blob files are stored in a separate directory and are not
+  // copied or modified during OptimizeBlobInfoInto.
+  struct OptimizeBlobInfoResult {
+    // The list of dead blob file names to be removed on disk.
+    std::vector<std::string> blob_file_names_to_remove;
+
+    // The map of blob handle string to its offset in the optimized proto log file.
+    std::unordered_map<std::string, int32_t> blob_handle_to_offset;
+  };
+
+  // Optimizes only the blob info metadata into the given file without copying
+  // physical blob files.
+  //
+  // Alive blobs' metadata will be written into new_blob_info_proto_file_name.
+  //
+  // A blob is considered dead if its blob handle is in dead_blob_handles.
+  //
+  // Returns:
+  //   An OptimizeBlobInfoResult on success.
+  //   INTERNAL_ERROR on I/O error
+  libtextclassifier3::StatusOr<OptimizeBlobInfoResult> OptimizeBlobInfoInto(
+      const std::string& new_blob_info_proto_file_name,
+      const std::unordered_set<std::string>& dead_blob_handles) const;
+
   // Calculates the StorageInfo for the Blob Store.
   //
   // Returns:

@@ -46,8 +46,10 @@
 #include "icing/proto/schema.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema-builder.h"
+#include "icing/schema/joinable-property.h"
 #include "icing/schema/schema-store.h"
 #include "icing/schema/section.h"
+#include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
@@ -60,6 +62,7 @@
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer-options.h"
 #include "icing/transform/normalizer.h"
+#include "icing/util/document-util.h"
 #include "icing/util/icu-data-file-helper.h"
 #include "icing/util/tokenized-document.h"
 #include "unicode/uloc.h"
@@ -74,6 +77,7 @@ using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
+using ::testing::NotNull;
 using ::testing::Test;
 
 // Schema type with indexable properties and section Id.
@@ -694,6 +698,145 @@ TEST_F(TermIndexingHandlerTest, HandleIntoLiteIndex_enableSortInIndexing) {
   itr->PopulateMatchedTermsStats(&matched_terms_stats);
   EXPECT_THAT(matched_terms_stats, ElementsAre(EqualsTermMatchInfo(
                                        "foo", expected_section_ids_tf_map0)));
+}
+
+TEST_F(TermIndexingHandlerTest,
+       ShouldSkipInvalidTokensAndContinueIndexingTheRest) {
+  class TestTokenizedDocument : public TokenizedDocument {
+   public:
+    explicit TestTokenizedDocument(
+        std::unique_ptr<DocumentWrapper> document_wrapper,
+        std::vector<TokenizedSection>&& tokenized_string_sections,
+        std::vector<Section<int64_t>>&& integer_sections,
+        std::vector<Section<PropertyProto::VectorProto>>&& vector_sections,
+        JoinablePropertyGroup&& joinable_property_group)
+        : TokenizedDocument(
+              std::move(document_wrapper), std::move(tokenized_string_sections),
+              std::move(integer_sections), std::move(vector_sections),
+              std::move(joinable_property_group)) {}
+  };
+
+  Index::Options options(index_dir_, /*index_merge_size=*/1024 * 1024,
+                         /*lite_index_sort_size=*/1024 * 8);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<Index> index,
+      Index::Create(options, &filesystem_, &icing_filesystem_,
+                    feature_flags_.get()));
+
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .AddStringProperty(std::string(kPropertyTitle),
+                             std::string("foo bar\0test baz", 16))
+          .Build();
+
+  ICING_ASSERT_OK_AND_ASSIGN(SchemaTypeId schema_type_id,
+                             schema_store_->GetSchemaTypeId(kFakeType));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      const SectionMetadata* section_metadata,
+      schema_store_->GetSectionMetadata(schema_type_id, kSectionIdTitle));
+  ASSERT_THAT(section_metadata, NotNull());
+
+  // Create a fake TokenizedDocument for test, which contains a null character
+  // in the tokenized string section.
+  //
+  // Theoretically, the null character should be eliminated by the tokenizer,
+  // but in order to test the handling of the invalid tokens, we manually create
+  // the TokenizedSection with a null character in it.
+  auto document_wrapper = std::make_unique<DocumentWrapper>(
+      document_util::CreateDocumentWrapper(std::move(document)));
+  std::vector<TokenizedSection> tokenized_string_sections = {
+      TokenizedSection(SectionMetadata(*section_metadata),
+                       std::vector<std::string_view>{
+                           // "foo"
+                           std::string_view(document_wrapper->document()
+                                                .properties(0)
+                                                .string_values(0)
+                                                .data(),
+                                            /*count=*/3),
+                           // "bar\0test"
+                           std::string_view(document_wrapper->document()
+                                                    .properties(0)
+                                                    .string_values(0)
+                                                    .data() +
+                                                4,
+                                            /*count=*/8),
+                           // "baz"
+                           std::string_view(document_wrapper->document()
+                                                    .properties(0)
+                                                    .string_values(0)
+                                                    .data() +
+                                                13,
+                                            /*count=*/3)})};
+  TestTokenizedDocument tokenized_document(
+      std::move(document_wrapper), std::move(tokenized_string_sections),
+      /*integer_sections=*/{}, /*vector_sections=*/{},
+      /*joinable_property_group=*/{});
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result,
+      document_store_->Put(tokenized_document.document_wrapper()));
+  DocumentId document_id = put_result.new_document_id;
+
+  EXPECT_THAT(index->last_added_document_id(), Eq(kInvalidDocumentId));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<TermIndexingHandler> handler,
+      TermIndexingHandler::Create(
+          &fake_clock_, normalizer_.get(), index.get(),
+          /*build_property_existence_metadata_hits=*/true));
+  EXPECT_THAT(handler->Handle(
+                  tokenized_document, document_id, put_result.old_document_id,
+                  /*recovery_mode=*/false, /*put_document_stats=*/nullptr),
+              IsOk());
+
+  EXPECT_THAT(index->last_added_document_id(), Eq(document_id));
+
+  std::unordered_map<SectionId, Hit::TermFrequency> expected_map = {
+      {kSectionIdTitle, 1}};
+
+  // Query 'foo'
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr1,
+      index->GetIterator("foo", /*term_start_index=*/0,
+                         /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                         TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHitsWithTermFrequency(std::move(itr1)),
+              ElementsAre(EqualsDocHitInfoWithTermFrequency(document_id,
+                                                            expected_map)));
+
+  // Query 'bar'
+  // This should not return any hits because the null character is not allowed
+  // in a term, and 'bar' should be skipped.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr2,
+      index->GetIterator("bar", /*term_start_index=*/0,
+                         /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                         TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHitsWithTermFrequency(std::move(itr2)), IsEmpty());
+
+  // Query 'bar\0test'
+  // This should not return any hits.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr3,
+      index->GetIterator("bar\0test", /*term_start_index=*/0,
+                         /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                         TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHitsWithTermFrequency(std::move(itr3)), IsEmpty());
+
+  // Query 'baz'
+  // We should still be able to query for 'baz' and get the expected hit. This
+  // verifies that "bar\0test" was skipped and the rest terms were still indexed
+  // correctly.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIterator> itr4,
+      index->GetIterator("baz", /*term_start_index=*/0,
+                         /*unnormalized_term_length=*/0, kSectionIdMaskAll,
+                         TermMatchType::EXACT_ONLY));
+  EXPECT_THAT(GetHitsWithTermFrequency(std::move(itr4)),
+              ElementsAre(EqualsDocHitInfoWithTermFrequency(document_id,
+                                                            expected_map)));
 }
 
 }  // namespace

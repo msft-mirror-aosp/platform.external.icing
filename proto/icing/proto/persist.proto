@@ -71,7 +71,7 @@ message PersistType {
 }
 
 // Result of a call to IcingSearchEngine.Persist
-// Next tag: 5
+// Next tag: 6
 message PersistToDiskResultProto {
   // Status code can be one of:
   //   OK
@@ -90,6 +90,11 @@ message PersistToDiskResultProto {
   // The start time of the binder transaction latency. This is used to measure
   // the latency of passing data from the VM via the binder.
   optional int64 vm_binder_transaction_latency_start_time_ms = 4;
+
+  // Size of the PersistToDiskResultProto response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 5;
 }
 
 // Stats of the top-level function IcingSearchEngine::PersistToDisk.

@@ -51,7 +51,8 @@ void TestGeneralApis(uint32_t seed) {
       {&IcingMonkeyTestRunner::DoUpdateSchema, 4},
       {&IcingMonkeyTestRunner::DoPersistToDisk, 4},
       {&IcingMonkeyTestRunner::DoGetDebugInfo, 3},
-      {&IcingMonkeyTestRunner::ReloadFromDisk, 20}};
+      {&IcingMonkeyTestRunner::ReloadFromDisk, 20},
+      {&IcingMonkeyTestRunner::DoGetNextPage, 100}};
   uint32_t num_iterations = IsAndroidArm() ? 1000 : 5000;
   IcingMonkeyTestRunner runner(std::move(config));
   ASSERT_NO_FATAL_FAILURE(runner.Initialize());

@@ -4789,6 +4789,10 @@ TEST_F(IcingSearchEngineSearchTest, QueryStatsProtoTest) {
   // document5's hits will remain in the lite index.
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
   options.set_index_merge_size(sizeof(TermIdHitPair::Value) * 6);
+  options.set_build_property_existence_metadata_hits(
+      false);  // intentionally not building property existence metadata hits,
+               // so we can control the number of hits in the lite index and
+               // main index.
 
   TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
                               std::make_unique<IcingFilesystem>(),
@@ -4999,6 +5003,10 @@ TEST_F(IcingSearchEngineSearchTest, JoinQueryStatsProtoTest) {
   // email4's hits will remain in the lite index.
   IcingSearchEngineOptions options = GetDefaultIcingOptions();
   options.set_index_merge_size(sizeof(TermIdHitPair::Value) * 13);
+  options.set_build_property_existence_metadata_hits(
+      false);  // intentionally not building property existence metadata hits,
+               // so we can control the number of hits in the lite index and
+               // main index.
 
   TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
                               std::make_unique<IcingFilesystem>(),
@@ -7743,8 +7751,13 @@ TEST_F(IcingSearchEngineSearchTest, NumericFilterQueryStatsProtoTest) {
   auto fake_clock = std::make_unique<FakeClock>();
   fake_clock->SetTimerElapsedMilliseconds(5);
 
-  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
-                              std::make_unique<Filesystem>(),
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_build_property_existence_metadata_hits(
+      false);  // intentionally not building property existence metadata hits,
+               // so we can control the number of hits in the lite index and
+               // main index.
+
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
                               std::make_unique<IcingFilesystem>(),
                               std::move(fake_clock), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());

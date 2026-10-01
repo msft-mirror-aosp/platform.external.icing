@@ -124,6 +124,8 @@ class MonkeyDocumentGenerator {
   std::string GetUri() const;
   std::string GetUriWithRange(int l, int r) const;
 
+  int GetRandomInt32Value() const;
+
   int GetNumTokens() const;
 
   int GetNumVectors(PropertyConfigProto::Cardinality::Code cardinality) const;
@@ -151,6 +153,8 @@ class MonkeyDocumentGenerator {
   }
 
   const SchemaProto* schema() const { return schema_; }
+
+  int num_namespaces() const { return config_->num_namespaces; }
 
  private:
   MonkeyTestRandomEngine* random_;                    // Does not own.

@@ -474,11 +474,8 @@ libtextclassifier3::StatusOr<PendingValue> QueryVisitor::SemanticSearchFunction(
   if (nprobe > 0) {
     // Positive nprobe value indicates that IVF search should be performed.
     ICING_ASSIGN_OR_RETURN(
-        EmbeddingIndex::IvfContextManager ivf_context_manager,
-        EmbeddingIndex::IvfContextManager::Create(query_vector));
-    ICING_ASSIGN_OR_RETURN(cluster_ids,
-                           ivf_context_manager.GetClosestClusterIdsByDistance(
-                               &embedding_index_, query_vector, nprobe));
+        cluster_ids,
+        embedding_index_.GetClosestClusterIdsByDistance(query_vector, nprobe));
     cluster_ids.push_back(embedding_util::kIvfDeltaStoreClusterId);
   }
   cluster_ids.push_back(embedding_util::kLinearSearchClusterId);

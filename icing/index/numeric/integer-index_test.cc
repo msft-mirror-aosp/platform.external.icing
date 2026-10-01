@@ -144,6 +144,28 @@ class NumericIndexIntegerTest : public ::testing::Test {
         /*pre_mapping_fbv=*/false);
   }
 
+  template <typename UnknownIntegerIndexType>
+  libtextclassifier3::StatusOr<std::unique_ptr<NumericIndex<int64_t>>>
+  CreateIntegerIndex(const std::string& /*working_path*/) {
+    return absl_ports::InvalidArgumentError("Unknown type");
+  }
+
+  template <>
+  libtextclassifier3::StatusOr<std::unique_ptr<NumericIndex<int64_t>>>
+  CreateIntegerIndex<DummyNumericIndex<int64_t>>(
+      const std::string& working_path) {
+    return DummyNumericIndex<int64_t>::Create(filesystem_, working_path);
+  }
+
+  template <>
+  libtextclassifier3::StatusOr<std::unique_ptr<NumericIndex<int64_t>>>
+  CreateIntegerIndex<IntegerIndex>(const std::string& working_path) {
+    return IntegerIndex::Create(
+        filesystem_, working_path, /*num_data_threshold_for_bucket_split=*/
+        IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+        /*pre_mapping_fbv=*/false);
+  }
+
   template <typename NotIntegerIndexType>
   bool is_integer_index() const {
     return false;
@@ -1097,6 +1119,95 @@ TYPED_TEST(NumericIndexIntegerTest, OptimizeDeleteAll) {
                           /*key_lower=*/std::numeric_limits<int64_t>::min(),
                           /*key_upper=*/std::numeric_limits<int64_t>::max()),
               IsOkAndHolds(IsEmpty()));
+}
+
+TYPED_TEST(NumericIndexIntegerTest,
+           OptimizeIntoSameWorkingPathShouldReturnInvalidArgumentError) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumericIndex<int64_t>> integer_index,
+      this->template CreateIntegerIndex<TypeParam>());
+
+  std::vector<DocumentId> document_id_old_to_new(1, 0);
+  EXPECT_THAT(
+      integer_index->OptimizeInto(this->working_path_, document_id_old_to_new,
+                                  /*new_last_added_document_id=*/0),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TYPED_TEST(NumericIndexIntegerTest, OptimizeInto) {
+  // DummyNumericIndex is an in-memory mock without disk persistence, so it
+  // cannot be tested via Create(new_working_path) reloading.
+  if (!this->template is_integer_index<TypeParam>()) {
+    return;
+  }
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumericIndex<int64_t>> integer_index,
+      this->template CreateIntegerIndex<TypeParam>());
+
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/1,
+        kDefaultSectionId, /*keys=*/{1});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/2,
+        kDefaultSectionId, /*keys=*/{3});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/3,
+        kDefaultSectionId, /*keys=*/{2});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/5,
+        kDefaultSectionId, /*keys=*/{0});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/8,
+        kDefaultSectionId, /*keys=*/{4});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/13,
+        kDefaultSectionId, /*keys=*/{2});
+  integer_index->set_last_added_document_id(13);
+
+  std::vector<DocumentId> document_id_old_to_new(14, kInvalidDocumentId);
+  document_id_old_to_new[1] = 0;
+  document_id_old_to_new[2] = 1;
+  document_id_old_to_new[8] = 2;
+  document_id_old_to_new[13] = 3;
+
+  std::string new_working_path = this->working_path_ + "_optimized";
+  DocumentId new_last_added_document_id = 3;
+
+  // Successfully optimize into new working path
+  EXPECT_THAT(
+      integer_index->OptimizeInto(new_working_path, document_id_old_to_new,
+                                  new_last_added_document_id),
+      IsOk());
+
+  // Original index remains unchanged
+  EXPECT_THAT(integer_index->last_added_document_id(), Eq(13));
+
+  // Create new index from new_working_path and verify
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumericIndex<int64_t>> new_integer_index,
+      this->template CreateIntegerIndex<TypeParam>(new_working_path));
+  EXPECT_THAT(new_integer_index->last_added_document_id(),
+              Eq(new_last_added_document_id));
+
+  std::vector<SectionId> expected_sections = {kDefaultSectionId};
+  EXPECT_THAT(this->Query(new_integer_index.get(), kDefaultTestPropertyPath,
+                          /*key_lower=*/1, /*key_upper=*/1),
+              IsOkAndHolds(ElementsAre(
+                  EqualsDocHitInfo(/*document_id=*/0, expected_sections))));
+  EXPECT_THAT(this->Query(new_integer_index.get(), kDefaultTestPropertyPath,
+                          /*key_lower=*/3, /*key_upper=*/3),
+              IsOkAndHolds(ElementsAre(
+                  EqualsDocHitInfo(/*document_id=*/1, expected_sections))));
+  EXPECT_THAT(this->Query(new_integer_index.get(), kDefaultTestPropertyPath,
+                          /*key_lower=*/0, /*key_upper=*/0),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(this->Query(new_integer_index.get(), kDefaultTestPropertyPath,
+                          /*key_lower=*/4, /*key_upper=*/4),
+              IsOkAndHolds(ElementsAre(
+                  EqualsDocHitInfo(/*document_id=*/2, expected_sections))));
+  EXPECT_THAT(this->Query(new_integer_index.get(), kDefaultTestPropertyPath,
+                          /*key_lower=*/2, /*key_upper=*/2),
+              IsOkAndHolds(ElementsAre(
+                  EqualsDocHitInfo(/*document_id=*/3, expected_sections))));
+
+  // Clean up
+  new_integer_index.reset();
+  this->filesystem_.DeleteDirectoryRecursively(new_working_path.c_str());
 }
 
 TYPED_TEST(NumericIndexIntegerTest, Clear) {

@@ -1717,68 +1717,6 @@ libtextclassifier3::StatusOr<CorpusId> DocumentStore::GetCorpusId(
   return corpus_mapper_->Get(corpus_nsid_schema_fp.EncodeToCString());
 }
 
-std::optional<int32_t> DocumentStore::GetResultGroupingEntryId(
-    ResultSpecProto::ResultGroupingType result_group_type,
-    std::string_view name_space, std::string_view schema) const {
-  auto namespace_id_or = GetNamespaceId(name_space);
-  auto schema_type_id_or = schema_store_->GetSchemaTypeId(schema);
-
-  NamespaceId namespace_id =
-      namespace_id_or.ok() ? namespace_id_or.ValueOrDie() : kInvalidNamespaceId;
-  SchemaTypeId schema_type_id = schema_type_id_or.ok()
-                                    ? schema_type_id_or.ValueOrDie()
-                                    : kInvalidSchemaTypeId;
-  return GetResultGroupingEntryId(result_group_type, namespace_id,
-                                  schema_type_id);
-}
-
-std::optional<int32_t> DocumentStore::GetResultGroupingEntryId(
-    ResultSpecProto::ResultGroupingType result_group_type,
-    NamespaceId namespace_id, SchemaTypeId schema_type_id) const {
-  static_assert(sizeof(NamespaceId) * 8 <= 16,
-                "Current ResultGroupingEntryId encoding only supports "
-                "namespace id up to 16 bits.");
-  static_assert(sizeof(SchemaTypeId) * 8 <= 16,
-                "Current ResultGroupingEntryId encoding only supports schema "
-                "type id up to 16 bits.");
-
-  // Note: this encoding method only works for a single
-  // ResultSpecProto::ResultGroupingType in a single search request. If multiple
-  // types can be used in the same search request, this encoding method needs to
-  // be updated since there will be encoded id collisions for NAMESPACE and
-  // SCHEMA_TYPE.
-
-  switch (result_group_type) {
-    case ResultSpecProto::ResultGroupingType::
-        ResultSpecProto_ResultGroupingType_NONE:
-      return std::nullopt;
-    case ResultSpecProto::ResultGroupingType::
-        ResultSpecProto_ResultGroupingType_SCHEMA_TYPE: {
-      if (schema_type_id == kInvalidSchemaTypeId) {
-        return std::nullopt;
-      }
-      return schema_type_id;
-    }
-    case ResultSpecProto::ResultGroupingType::
-        ResultSpecProto_ResultGroupingType_NAMESPACE: {
-      if (namespace_id == kInvalidNamespaceId) {
-        return std::nullopt;
-      }
-      return namespace_id;
-    }
-    case ResultSpecProto::ResultGroupingType::
-        ResultSpecProto_ResultGroupingType_NAMESPACE_AND_SCHEMA_TYPE: {
-      if (namespace_id == kInvalidNamespaceId ||
-          schema_type_id == kInvalidSchemaTypeId) {
-        return std::nullopt;
-      }
-      // TODO(b/258715421): Temporary workaround to get a ResultGroupingEntryId
-      //                    given the Namespace Id and SchemaType Id.
-      return (static_cast<int32_t>(namespace_id) << 16) | schema_type_id;
-    }
-  }
-}
-
 libtextclassifier3::StatusOr<DocumentAssociatedScoreData>
 DocumentStore::GetDocumentAssociatedScoreData(DocumentId document_id) const {
   auto score_data_or = score_cache_->GetCopy(document_id);
@@ -2667,18 +2605,20 @@ libtextclassifier3::StatusOr<
     google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo>>
 DocumentStore::CollectCorpusInfo() const {
   google::protobuf::RepeatedPtrField<DocumentDebugInfoProto::CorpusInfo> corpus_info;
-  // Ok to use GetFileBackedSchemaProto() here because we don't need the schema
-  // property definitions.
-  libtextclassifier3::StatusOr<const SchemaProto*> schema_proto_or =
-      schema_store_->GetFileBackedSchemaProto();
-  if (!schema_proto_or.ok()) {
-    return corpus_info;
+  const SchemaProto* schema_proto = nullptr;
+  if (!feature_flags_.schema_store_release_cached_proto_after_use()) {
+    libtextclassifier3::StatusOr<const SchemaProto*> schema_proto_or =
+        schema_store_->GetFileBackedSchemaProto();
+    if (!schema_proto_or.ok()) {
+      return corpus_info;
+    }
+    schema_proto = schema_proto_or.ValueOrDie();
   }
+
   // Maps from CorpusId to the corresponding protocol buffer in the result.
   std::unordered_map<CorpusId, DocumentDebugInfoProto::CorpusInfo*> info_map;
   std::unordered_map<NamespaceId, std::string> namespace_id_to_namespace =
       GetNamespaceIdsToNamespaces(namespace_mapper_.get());
-  const SchemaProto* schema_proto = schema_proto_or.ValueOrDie();
   int64_t current_time_ms = clock_.GetSystemTimeMilliseconds();
   for (DocumentId document_id = 0; document_id < filter_cache_->num_elements();
        ++document_id) {
@@ -2697,21 +2637,38 @@ DocumentStore::CollectCorpusInfo() const {
           << " type id for document id: "
           << document_id;
       continue;
-    } else if (filter_data->schema_type_id() >= schema_proto->types().size()) {
-      ICING_LOG(WARNING)
-          << "Encountered out of range schema type id for document id: "
-          << document_id << ". Schema type id: "
-          << filter_data->schema_type_id() << ", max schema type id: "
-          << schema_proto->types().size();
-      continue;
     }
-    const std::string& schema =
-        schema_proto->types()[filter_data->schema_type_id()].schema_type();
+
+    const std::string* schema = nullptr;
+    if (feature_flags_.schema_store_release_cached_proto_after_use()) {
+      libtextclassifier3::StatusOr<const std::string*> schema_type_or =
+          schema_store_->GetSchemaType(filter_data->schema_type_id());
+      if (!schema_type_or.ok()) {
+        ICING_LOG(WARNING)
+            << "Encountered out of range schema type id for document id: "
+            << document_id
+            << ". Schema type id: " << filter_data->schema_type_id();
+        continue;
+      }
+      schema = schema_type_or.ValueOrDie();
+    } else {
+      if (filter_data->schema_type_id() >= schema_proto->types().size()) {
+        ICING_LOG(WARNING)
+            << "Encountered out of range schema type id for document id: "
+            << document_id
+            << ". Schema type id: " << filter_data->schema_type_id()
+            << ", max schema type id: " << schema_proto->types().size();
+        continue;
+      }
+      schema =
+          &schema_proto->types()[filter_data->schema_type_id()].schema_type();
+    }
+
     auto iter = info_map.find(score_data->corpus_id());
     if (iter == info_map.end()) {
       DocumentDebugInfoProto::CorpusInfo* entry = corpus_info.Add();
       entry->set_namespace_(name_space);
-      entry->set_schema(schema);
+      entry->set_schema(*schema);
       iter = info_map.insert({score_data->corpus_id(), entry}).first;
     }
     iter->second->set_total_documents(iter->second->total_documents() + 1);

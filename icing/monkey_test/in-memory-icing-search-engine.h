@@ -31,8 +31,10 @@
 #include "icing/monkey_test/monkey-tokenized-document.h"
 #include "icing/proto/document.pb.h"
 #include "icing/proto/schema.pb.h"
+#include "icing/proto/scoring.pb.h"
 #include "icing/proto/search.pb.h"
 #include "icing/proto/term.pb.h"
+#include "icing/store/document-group-info.h"
 #include "icing/store/document-id.h"
 #include "icing/tokenization/language-segmenter.h"
 
@@ -65,7 +67,8 @@ class InMemoryIcingSearchEngine {
     std::unique_ptr<MonkeyAbstractQueryNode> curr_query_node;
   };
 
-  InMemoryIcingSearchEngine(MonkeyTestRandomEngine* random);
+  InMemoryIcingSearchEngine(MonkeyTestRandomEngine* random,
+                            bool enable_delete_propagation = false);
 
   uint32_t GetNumAliveDocuments() const { return existing_doc_ids_.size(); }
 
@@ -77,7 +80,7 @@ class InMemoryIcingSearchEngine {
   //
   // p_alive: chance of getting an alive document.
   // p_all:   chance of getting a document that has ever been "Put" before,
-  //          including already "Delete"d documents.
+  //          including already "Deleted" documents.
   // p_other: chance of getting a random namespace + uri that has never been
   //          "Put" before.
   //
@@ -100,19 +103,22 @@ class InMemoryIcingSearchEngine {
     return language_segmenter_.get();
   }
 
-  // Puts the document into the in-memory Icing. If the (namespace, uri) pair
-  // already exists, the old document will be overwritten.
-  void Put(const MonkeyTokenizedDocument &document);
+  // Puts the document into the in-memory Icing.
+  // - If the (namespace, uri) pair already exists, the old document will be
+  //   overwritten.
+  // - If a child document has a join property with delete propagation, and it
+  //   contains a non-existing (parent) ref qualified id, then return an error.
+  libtextclassifier3::Status Put(const MonkeyTokenizedDocument& document);
 
   std::unordered_set<std::string> GetAllNamespaces() const;
 
   // Deletes the Document specified by the given (namespace, uri) pair.
   //
   // Returns:
-  //   OK on success
+  //   On success, a list of deleted document metadata.
   //   NOT_FOUND if no document exists with namespace, uri
-  libtextclassifier3::Status Delete(const std::string &name_space,
-                                    const std::string &uri);
+  libtextclassifier3::StatusOr<std::vector<DocumentMetadata>> Delete(
+      const std::string& name_space, const std::string& uri);
 
   // Deletes all Documents belonging to the specified namespace.
   //
@@ -120,7 +126,7 @@ class InMemoryIcingSearchEngine {
   //   The number of deleted documents on success
   //   INTERNAL_ERROR if there are inconsistencies in the in-memory Icing
   libtextclassifier3::StatusOr<uint32_t> DeleteByNamespace(
-      const std::string &name_space);
+      const std::string& name_space);
 
   // Deletes all Documents belonging to the specified type
   //
@@ -128,16 +134,16 @@ class InMemoryIcingSearchEngine {
   //   The number of deleted documents on success
   //   INTERNAL_ERROR if there are inconsistencies in the in-memory Icing
   libtextclassifier3::StatusOr<uint32_t> DeleteBySchemaType(
-      const std::string &schema_type);
+      const std::string& schema_type);
 
   // Deletes all Documents that match the query specified in the
   // MonkeyAbstractQueryNode. Check the comments of Search() for the supported
   // query types.
   //
   // Returns:
-  //   The number of deleted documents on success
+  //   On success, a list of deleted document metadata.
   //   INTERNAL_ERROR if there are inconsistencies in the in-memory Icing
-  libtextclassifier3::StatusOr<uint32_t> DeleteByQuery(
+  libtextclassifier3::StatusOr<std::vector<DocumentMetadata>> DeleteByQuery(
       const MonkeyAbstractQueryNode* node);
 
   // Retrieves documents according to MonkeyAbstractQueryNode, which is a
@@ -167,7 +173,31 @@ class InMemoryIcingSearchEngine {
   //   Section restrictions are also recognized.
   libtextclassifier3::StatusOr<std::vector<SearchResultProto::ResultProto>>
   Search(const MonkeyAbstractQueryNode* base_query_node,
-         const std::vector<JoinQuerySpec>& nested_queries) const;
+         const std::vector<JoinQuerySpec>& nested_queries,
+         const ScoringSpecProto& scoring_spec) const;
+
+  // Version of Search() that supports pagination.
+  libtextclassifier3::StatusOr<SearchResultProto> Search(
+      const MonkeyAbstractQueryNode* base_query_node,
+      const std::vector<JoinQuerySpec>& nested_queries,
+      const ScoringSpecProto& scoring_spec, int page_size) const;
+
+  // Returns the next page of the search results, given the next page token.
+  libtextclassifier3::StatusOr<SearchResultProto> GetNextPage(
+      int next_page_token) const;
+
+  // Revalidates documents in the in-memory Icing after updating the schema.
+  // - If delete propagation is enabled, then revalidate the dependency in the
+  //   in-memory icing.
+  // - Delete documents that violate the dependency or belong to an incompatible
+  //   or deleted schema type.
+  //
+  // Returns:
+  //   The number of deleted documents on success
+  //   Any error if there are inconsistencies in the in-memory Icing
+  libtextclassifier3::StatusOr<int> RevalidateDocuments(
+      const std::unordered_set<std::string>& schema_types_deleted,
+      const std::unordered_set<std::string>& schema_types_incompatible);
 
   // Returns all join properties in the in-memory Icing. This is used for
   // IcingMonkeyTestRunner to generate join specs.
@@ -207,31 +237,47 @@ class InMemoryIcingSearchEngine {
   struct PropertyJoinableInfo {
     // Data type of the property.
     PropertyConfigProto::DataType::Code data_type;
+
     // The joinable value type.
     JoinableConfig::ValueType::Code value_type =
         JoinableConfig::ValueType::NONE;
+
     // The delete propagation type.
     JoinableConfig::DeletePropagationType::Code delete_propagation_type =
         JoinableConfig::DeletePropagationType::NONE;
+
+    bool HasDeletePropagation() const {
+      return data_type == PropertyConfigProto::DataType::STRING &&
+             value_type == JoinableConfig::ValueType::QUALIFIED_ID &&
+             delete_propagation_type ==
+                 JoinableConfig::DeletePropagationType::PROPAGATE_FROM;
+    }
   };
   std::optional<PropertyJoinableInfo> GetPropertyJoinableInfo(
       const std::string& schema_type, std::string_view property_path) const;
 
  private:
+  // A simplified version of ScoredDocumentHit for the monkey test that only
+  // holds the document id and the score.
+  struct ScoredDocumentId {
+    DocumentId document_id;
+    int score;
+  };
+
   // Nested document id structure for join. It also supports normal search
   // without joining, and in this case, the nested document ids will be empty.
-  struct NestedResultDocumentId {
-    DocumentId document_id;
-    std::vector<NestedResultDocumentId> nested_document_ids;
+  struct NestedScoredDocumentId {
+    ScoredDocumentId scored_document_id;
+    std::vector<NestedScoredDocumentId> nested_scored_document_ids;
   };
 
   // An intermediate result type for join, mapping parent doc id -> a list of
-  // NestedResultDocumentId of its children.
+  // NestedScoredDocumentId of its children.
   //
-  // Note: we use NestedResultDocumentId for the children since it is possible
+  // Note: we use NestedScoredDocumentId for the children since it is possible
   //   to have multiple levels of join.
-  using JoinedNestedResultDocumentIdMap =
-      std::unordered_map<DocumentId, std::vector<NestedResultDocumentId>>;
+  using JoinedNestedScoredDocumentIdMap =
+      std::unordered_map<DocumentId, std::vector<NestedScoredDocumentId>>;
 
   // Finds and returns the internal document id for the document identified by
   // the given key (namespace, uri)
@@ -243,10 +289,10 @@ class InMemoryIcingSearchEngine {
       const std::string& name_space, const std::string& uri) const;
 
   // A helper method for DeleteByQuery and Search to get matched internal doc
-  // ids.
+  // ids, and return the ids based on the scoring spec.
   //
   // Note: join search is supported, and the nested structure is wrapped in
-  //   NestedResultDocumentId. Join iteration is done in reverse order of the
+  //   NestedScoredDocumentId. Join iteration is done in reverse order of the
   //   nested spec structure (each iteration is a single level of join, see
   //   InternalSingleLevelJoinSearch).
   //
@@ -283,10 +329,11 @@ class InMemoryIcingSearchEngine {
   //     - Get the 0th level matched doc ids.
   //     - Join the 0th level matched doc ids with the grouped doc ids obtained
   //       from the previous step.
-  //   - Return the joined nested result doc ids.
-  libtextclassifier3::StatusOr<std::vector<NestedResultDocumentId>>
+  //   - Return the joined nested scored doc ids.
+  libtextclassifier3::StatusOr<std::vector<NestedScoredDocumentId>>
   InternalSearch(const MonkeyAbstractQueryNode* base_query_node,
-                 const std::vector<JoinQuerySpec>& nested_queries) const;
+                 const std::vector<JoinQuerySpec>& nested_queries,
+                 const ScoringSpecProto& scoring_spec) const;
 
   // A helper method to do a single level of join search, according to the given
   // JoinQuerySpec.
@@ -302,8 +349,8 @@ class InMemoryIcingSearchEngine {
   // - child_map: the join result of the PREVIOUS iteration. Note: "previous
   //   iteration" means the lower level as we iterate nested queries in reverse
   //   order.
-  //   - JoinedNestedResultDocumentIdMap maps parent doc id -> a list of
-  //     NestedResultDocumentId of its children.
+  //   - JoinedNestedScoredDocumentIdMap maps parent doc id -> a list of
+  //     NestedScoredDocumentId of its children.
   //   - child_map was obtained from the previous iteration (next level down of
   //     the join structure). Its key "parent doc id" connects to the current
   //     level's result doc ids.
@@ -319,21 +366,70 @@ class InMemoryIcingSearchEngine {
   //   results by the values.
   // - Return the grouped results. It will be used as "child_map" in the next
   //   iteration (upper level).
-  libtextclassifier3::StatusOr<JoinedNestedResultDocumentIdMap>
+  libtextclassifier3::StatusOr<JoinedNestedScoredDocumentIdMap>
   InternalSingleLevelJoinSearch(
       const JoinQuerySpec& join_query_spec,
-      JoinedNestedResultDocumentIdMap&& child_map) const;
+      JoinedNestedScoredDocumentIdMap&& child_map) const;
+
+  // Helper function to batch delete documents.
+  //
+  // Returns:
+  // - On success, a list of deleted document metadata.
+  // - Error if there are inconsistencies in the in-memory Icing.
+  libtextclassifier3::StatusOr<std::vector<DocumentMetadata>>
+  InternalBatchDelete(const std::unordered_set<DocumentId>& doc_ids_to_delete);
 
   // Helper function to recursively fetch the nested documents according to the
   // nested document ids.
   std::vector<SearchResultProto::ResultProto> FetchNestedResultDocuments(
-      const std::vector<NestedResultDocumentId>& nested_result_doc_ids) const;
+      const std::vector<NestedScoredDocumentId>& nested_scored_doc_ids) const;
 
   // Helper function to recursively unzip the nested document ids into a set of
   // document ids.
-  void UnzipNestedResultDocumentIds(
-      const std::vector<NestedResultDocumentId>& nested_result_doc_ids,
+  void UnzipNestedScoredDocumentIds(
+      const std::vector<NestedScoredDocumentId>& nested_scored_doc_ids,
       std::unordered_set<DocumentId>& doc_ids_out) const;
+
+  // Helper function to validate the dependency of the document.
+  //
+  // Returns:
+  // - OK on success.
+  // - Error if the document has a join property with delete propagation, but
+  //   it contains a non-existing (parent) or invalid ref qualified id. Note
+  //   that empty strings are skipped and will not be treated as invalid ref
+  //   qualified ids.
+  libtextclassifier3::Status ValidateDependency(
+      const MonkeyTokenizedDocument& document) const;
+
+  struct DependencyGraphResult {
+    // The dependency graph, mapping parent doc id to a list of child doc ids.
+    std::unordered_map<DocumentId, std::unordered_set<DocumentId>> graph;
+
+    // The set of document ids with unsatisfied dependency, i.e. the document
+    // contains a non-existing (parent) ref qualified id with delete propagation
+    // enabled.
+    std::unordered_set<DocumentId> unsatisfied_doc_ids;
+  };
+  // Helper function to build the dependency graph. If delete propagation is
+  // not enabled, then return an empty graph.
+  DependencyGraphResult BuildDependencyGraph() const;
+
+  // Helper function to get all doc ids for delete propagation.
+  //
+  // In most cases, when calling this function, the in-memory Icing is expected
+  // to be consistent, i.e. there is no dependency violation. So if we encounter
+  // any inconsistency (seeing a non-existing ref qualified id) during
+  // propagation, we should return an error.
+  //
+  // Returns:
+  // - On success, the set of document ids to delete, INCLUDING the original
+  //   doc_ids_to_delete and the propagated child doc ids.
+  // - Error if there are inconsistencies in the in-memory Icing. For example,
+  //   a child document has a join property with delete propagation, but it
+  //   contains a non-existing (parent) ref qualified id.
+  libtextclassifier3::StatusOr<std::unordered_set<DocumentId>>
+  GetDocIdsForDeletePropagation(
+      std::unordered_set<DocumentId>&& doc_ids_to_delete);
 
   libtextclassifier3::StatusOr<const PropertyConfigProto*> GetPropertyConfig(
       const std::string& schema_type, const std::string& property_name) const;
@@ -358,6 +454,28 @@ class InMemoryIcingSearchEngine {
   std::unordered_map<
       std::string, std::unordered_map<std::string, const PropertyConfigProto&>>
       property_config_map_;
+
+  bool enable_delete_propagation_;
+
+  // A struct that holds the page size and the document ids of the remaining
+  // results for pagination.
+  struct PaginationState {
+    std::vector<NestedScoredDocumentId> remaining_results;
+    int page_size;
+  };
+
+  // Helper function to turn NestedScoredDocumentIds into a SearchResultProto of
+  // a given page size.
+  SearchResultProto Paginate(std::unordered_map<int, PaginationState>::iterator&
+                                 paginated_state_itr) const;
+
+  // Helper function to score a document id based on the ranking strategy.
+  libtextclassifier3::StatusOr<std::vector<ScoredDocumentId>> Score(
+      const std::vector<DocumentId>& doc_ids,
+      ScoringSpecProto::RankingStrategy::Code rank_by) const;
+
+  // A map from next page token to the corresponding paginated result.
+  mutable std::unordered_map<int, PaginationState> paginated_results_map_;
 };
 
 }  // namespace lib

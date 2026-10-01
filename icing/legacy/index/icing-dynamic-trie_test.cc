@@ -1729,13 +1729,39 @@ TEST_F(IcingDynamicTrieTest, DumpTrieNoStackOverflow) {
   }
 
   // DumpTrie should now succeed and not crash due to stack overflow
-  std::ostringstream os;
+  std::ostream null_stream(nullptr);
   std::vector<std::string> keys;
 
-  trie.DumpTrie(&os, &keys);
+  trie.DumpTrie(&null_stream, &keys);
 
   // Verify that all keys were successfully dumped
-  EXPECT_EQ(keys.size(), 11);
+  std::vector<std::string> expected_keys;
+  expected_keys.push_back(base_key);
+  for (int i = 1; i <= 10; ++i) {
+    std::string modified_key = base_key;
+    modified_key[modified_key.size() - i] = 'b';
+    expected_keys.push_back(modified_key);
+  }
+  EXPECT_EQ(keys, expected_keys);
+}
+
+TEST_F(IcingDynamicTrieTest, DumpTriePrettyPrint) {
+  IcingFilesystem filesystem;
+  IcingDynamicTrie trie(trie_files_prefix_, IcingDynamicTrie::RuntimeOptions(),
+                        &filesystem);
+  ASSERT_THAT(trie.CreateIfNotExist(IcingDynamicTrie::Options()), IsOk());
+  ASSERT_THAT(trie.Init(), IsOk());
+
+  uint32_t value = 1;
+  ASSERT_THAT(trie.Insert("ab", &value), IsOk());
+  value = 2;
+  ASSERT_THAT(trie.Insert("ac", &value), IsOk());
+
+  std::vector<std::string> keys;
+  std::ostringstream os;
+  trie.DumpTrie(&os, &keys);
+
+  EXPECT_EQ(os.str(), "a\n b\n   01000000 []\n c\n   02000000 []\n");
 }
 
 }  // namespace lib

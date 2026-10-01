@@ -111,6 +111,25 @@ TEST_F(MonkeyHasPropertyQueryNodeTest, HasNonExistentProperty) {
               IsOkAndHolds(::testing::IsEmpty()));
 }
 
+TEST_F(MonkeyHasPropertyQueryNodeTest, MatchesOnNonEmptyPropertyPath) {
+  // Match on a string values property path ("subject") with 4 documents where:
+  // 0. the property path doesn't match
+  // 1. the property path matches but has no values
+  // 2. the property path matches but it's empty
+  // 3. the property path matches and it's non-empty but all the strings are
+  // empty
+  // 4. the property path matches and there is at least one non-empty string
+  IndexDoc("uri0", {{.path = "body", .string_values = {"body"}}});
+  IndexDoc("uri1", {{.path = "subject"}});
+  IndexDoc("uri2", {{.path = "subject", .string_values = {}}});
+  IndexDoc("uri3", {{.path = "subject", .string_values = {"", ""}}});
+  IndexDoc("uri4", {{.path = "subject", .string_values = {"", "subject_val"}}});
+
+  MonkeyHasPropertyQueryNode node("subject");
+  EXPECT_THAT(node.EvaluateQuery(engine_.get()),
+              IsOkAndHolds(UnorderedElementsAre(4)));
+}
+
 TEST_F(MonkeyHasPropertyQueryNodeTest, GenerateQueryString) {
   MonkeyHasPropertyQueryNode node("foo.bar");
   EXPECT_THAT(node.GenerateQueryString(), Eq("hasProperty(\"foo.bar\")"));

@@ -235,6 +235,12 @@ class QualifiedIdJoinIndexImplV3 : public QualifiedIdJoinIndex {
       const std::vector<NamespaceId>& namespace_id_old_to_new,
       DocumentId new_last_added_document_id) override;
 
+  libtextclassifier3::Status OptimizeInto(
+      const DocumentStore* document_store, const std::string& new_working_path,
+      const std::vector<DocumentId>& document_id_old_to_new,
+      const std::vector<NamespaceId>& namespace_id_old_to_new,
+      DocumentId new_last_added_document_id) const override;
+
   libtextclassifier3::Status Clear() override;
 
   QualifiedIdJoinIndex::Version version() const override {

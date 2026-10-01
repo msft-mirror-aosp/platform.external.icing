@@ -86,6 +86,10 @@ class MonkeyAbstractRestrictableLeafQueryNode
             /*document_namespaces=*/std::move(document_namespaces),
             /*document_schema_types=*/std::move(document_schema_types)) {}
 
+  void AddPropertyRestricts(const std::vector<std::string>& property_paths) {
+    property_restricts_.insert(property_paths.begin(), property_paths.end());
+  }
+
   bool IsRestrictedSection(const MonkeySection& section) const {
     return property_restricts_.empty() ||
            property_restricts_.contains(section.path);
