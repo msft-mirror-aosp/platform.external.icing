@@ -229,6 +229,13 @@ libtextclassifier3::Status DynamicTrieKeyMapper<T, Formatter>::Initialize(
 template <typename T, typename Formatter>
 libtextclassifier3::StatusOr<T> DynamicTrieKeyMapper<T, Formatter>::GetOrPut(
     std::string_view key, T next_value) {
+  // Check Find first: Insert's conservative capacity pre-check can return
+  // RESOURCE_EXHAUSTED even if the key already exists.
+  T existing_value;
+  if (trie_.Find(key, &existing_value)) {
+    return existing_value;
+  }
+
   uint32_t value_index;
   libtextclassifier3::Status status =
       trie_.Insert(key, &next_value, &value_index,

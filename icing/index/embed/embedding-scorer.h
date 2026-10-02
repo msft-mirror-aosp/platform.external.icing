@@ -35,11 +35,6 @@ class EmbeddingScorer {
   virtual float Score(int dimension, const float* v1, const uint8_t* v2,
                       const Quantizer& quantizer) const = 0;
 
-  virtual float EigenScore(int dimension, const float* v1,
-                           const float* v2) const = 0;
-  virtual float EigenScore(int dimension, const float* v1, const uint8_t* v2,
-                           const Quantizer& quantizer) const = 0;
-
   virtual ~EmbeddingScorer() = default;
 };
 
@@ -48,11 +43,6 @@ class CosineEmbeddingScorer : public EmbeddingScorer {
   float Score(int dimension, const float* v1, const float* v2) const override;
   float Score(int dimension, const float* v1, const uint8_t* v2,
               const Quantizer& quantizer) const override;
-
-  float EigenScore(int dimension, const float* v1,
-                   const float* v2) const override;
-  float EigenScore(int dimension, const float* v1, const uint8_t* v2,
-                   const Quantizer& quantizer) const override;
 };
 
 class DotProductEmbeddingScorer : public EmbeddingScorer {
@@ -60,11 +50,6 @@ class DotProductEmbeddingScorer : public EmbeddingScorer {
   float Score(int dimension, const float* v1, const float* v2) const override;
   float Score(int dimension, const float* v1, const uint8_t* v2,
               const Quantizer& quantizer) const override;
-
-  float EigenScore(int dimension, const float* v1,
-                   const float* v2) const override;
-  float EigenScore(int dimension, const float* v1, const uint8_t* v2,
-                   const Quantizer& quantizer) const override;
 };
 
 class EuclideanDistanceEmbeddingScorer : public EmbeddingScorer {
@@ -72,11 +57,6 @@ class EuclideanDistanceEmbeddingScorer : public EmbeddingScorer {
   float Score(int dimension, const float* v1, const float* v2) const override;
   float Score(int dimension, const float* v1, const uint8_t* v2,
               const Quantizer& quantizer) const override;
-
-  float EigenScore(int dimension, const float* v1,
-                   const float* v2) const override;
-  float EigenScore(int dimension, const float* v1, const uint8_t* v2,
-                   const Quantizer& quantizer) const override;
 };
 
 }  // namespace lib

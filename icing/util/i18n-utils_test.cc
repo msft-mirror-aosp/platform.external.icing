@@ -172,6 +172,48 @@ TEST(IcuI18nUtilsTest, GetUChar32AtReplacementCharacterAndInvalidUtf8) {
             i18n_utils::kInvalidUChar32);
 }
 
+TEST(IcuI18nUtilsTest, AppendUchar32ToUtf8Valid) {
+  std::string result;
+
+  // 1-byte ASCII
+  i18n_utils::AppendUchar32ToUtf8(&result, 'a');
+  EXPECT_EQ(result, "a");
+
+  // 2-byte UTF-8 character: U+00F1 (ñ)
+  i18n_utils::AppendUchar32ToUtf8(&result, 0x00F1);
+  EXPECT_EQ(result, "añ");
+
+  // 3-byte UTF-8 character: U+30AB (カ)
+  i18n_utils::AppendUchar32ToUtf8(&result, 0x30AB);
+  EXPECT_EQ(result, "añカ");
+
+  // 4-byte UTF-8 character: U+1F44F (👏)
+  i18n_utils::AppendUchar32ToUtf8(&result, 0x1F44F);
+  EXPECT_EQ(result, "añカ👏");
+}
+
+TEST(IcuI18nUtilsTest, AppendUchar32ToUtf8Invalid) {
+  std::string result = "prefix";
+
+  // Invalid sentinel value
+  i18n_utils::AppendUchar32ToUtf8(&result, i18n_utils::kInvalidUChar32);
+  EXPECT_EQ(result, "prefix");
+
+  // Negative value
+  i18n_utils::AppendUchar32ToUtf8(&result, -5);
+  EXPECT_EQ(result, "prefix");
+
+  // Out of Unicode range (> 0x10FFFF)
+  i18n_utils::AppendUchar32ToUtf8(&result, 0x110000);
+  EXPECT_EQ(result, "prefix");
+
+  // Surrogate code point (U+D800 - U+DFFF)
+  i18n_utils::AppendUchar32ToUtf8(&result, 0xD800);
+  EXPECT_EQ(result, "prefix");
+  i18n_utils::AppendUchar32ToUtf8(&result, 0xDFFF);
+  EXPECT_EQ(result, "prefix");
+}
+
 }  // namespace
 }  // namespace lib
 }  // namespace icing

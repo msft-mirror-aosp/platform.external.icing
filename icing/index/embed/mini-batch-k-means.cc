@@ -42,14 +42,13 @@ float ComputeDistance(const EmbeddingReference& embedding,
                       const std::vector<float>& centroid,
                       const EmbeddingScorer* scorer, int dimension) {
   if (embedding.float_vector != nullptr) {
-    return scorer->EigenScore(dimension, embedding.float_vector,
-                              centroid.data());
+    return scorer->Score(dimension, embedding.float_vector, centroid.data());
   } else {
     // Quantized
     Quantizer quantizer(embedding.quantized_vector);
     const uint8_t* q_vec = reinterpret_cast<const uint8_t*>(
         embedding.quantized_vector + sizeof(Quantizer));
-    return scorer->EigenScore(dimension, centroid.data(), q_vec, quantizer);
+    return scorer->Score(dimension, centroid.data(), q_vec, quantizer);
   }
 }
 

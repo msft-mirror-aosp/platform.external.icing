@@ -20,6 +20,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -189,6 +190,36 @@ std::unordered_map<NamespaceId, std::string> GetNamespaceIdsToNamespaces(
         {itr->GetValue(), std::string(itr->GetKey())});
   }
   return namespace_ids_to_namespaces;
+}
+
+// Returns the id of key in id_mapper. If key is not present, inserts it with
+// id_mapper->num_keys() as its id, so that ids are assigned sequentially.
+//
+// REQUIRES: Keys are never deleted from id_mapper. Otherwise num_keys() would
+//   shrink and a new key could be assigned an id that's still in use.
+//
+// Returns:
+//   - The existing or newly assigned id on success.
+//   - RESOURCE_EXHAUSTED if key is new but num_keys() doesn't fit in IdType.
+//     The id would otherwise be truncated and could collide with an existing
+//     id.
+//   - Any error from id_mapper.
+template <typename IdType, typename Formatter>
+libtextclassifier3::StatusOr<IdType> GetOrPutNextId(
+    KeyMapper<IdType, Formatter>* id_mapper, std::string_view key) {
+  static_assert(std::is_integral_v<IdType>, "IdType must be integral");
+  int64_t next_id = id_mapper->num_keys();
+  if (next_id <= std::numeric_limits<IdType>::max()) {
+    return id_mapper->GetOrPut(key, static_cast<IdType>(next_id));
+  }
+  // No new id is available, but existing keys can still be looked up.
+  libtextclassifier3::StatusOr<IdType> existing_id_or = id_mapper->Get(key);
+  if (!absl_ports::IsNotFound(existing_id_or.status())) {
+    return existing_id_or;
+  }
+  return absl_ports::ResourceExhaustedError(
+      absl_ports::StrCat("Id mapper has used all ids up to ",
+                         std::to_string(std::numeric_limits<IdType>::max())));
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<
@@ -619,8 +650,8 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
 
     ICING_ASSIGN_OR_RETURN(
         NamespaceId namespace_id,
-        namespace_mapper_->GetOrPut(document_wrapper.document().namespace_(),
-                                    namespace_mapper_->num_keys()));
+        GetOrPutNextId(namespace_mapper_.get(),
+                       document_wrapper.document().namespace_()));
 
     // Updates key mapper and document_id mapper with the new document
     DocumentId new_document_id = document_id_mapper_->num_elements();
@@ -653,10 +684,10 @@ libtextclassifier3::Status DocumentStore::RegenerateDerivedFiles(
     // Update corpus maps
     NamespaceIdFingerprint corpus_nsid_schema_fingerprint(
         namespace_id, document_wrapper.document().schema());
-    ICING_ASSIGN_OR_RETURN(CorpusId corpus_id,
-                           corpus_mapper_->GetOrPut(
-                               corpus_nsid_schema_fingerprint.EncodeToCString(),
-                               corpus_mapper_->num_keys()));
+    ICING_ASSIGN_OR_RETURN(
+        CorpusId corpus_id,
+        GetOrPutNextId(corpus_mapper_.get(),
+                       corpus_nsid_schema_fingerprint.EncodeToCString()));
 
     ICING_ASSIGN_OR_RETURN(CorpusAssociatedScoreData scoring_data,
                            GetCorpusAssociatedScoreDataToUpdate(corpus_id));
@@ -1138,7 +1169,37 @@ DocumentStore::InternalPut(const DocumentWrapper& document_wrapper,
       timestamp_util::CalculateRawExpirationTimestampMs(
           creation_timestamp_ms, document_wrapper.document().ttl_ms());
 
-  // Update ground truth first
+  // Run fallible steps that don't depend on the document log first, so their
+  // failures don't leave the document in the document log.
+
+  // Allocate the new document id.
+  DocumentId new_document_id = document_id_mapper_->num_elements();
+  if (!IsDocumentIdValid(new_document_id)) {
+    return absl_ports::ResourceExhaustedError(
+        "Exceeded maximum number of documents. Try calling Optimize to reclaim "
+        "some space.");
+  }
+
+  // Update namespace maps
+  libtextclassifier3::StatusOr<NamespaceId> namespace_id_or =
+      GetOrPutNextId(namespace_mapper_.get(), name_space);
+  if (!namespace_id_or.ok()) {
+    return absl_ports::Annotate(namespace_id_or.status(),
+                                "Failed to add namespace to namespace mapper");
+  }
+  NamespaceId namespace_id = std::move(namespace_id_or).ValueOrDie();
+
+  // Update corpus maps
+  NamespaceIdFingerprint corpus_nsid_schema_fingerprint(namespace_id, schema);
+  libtextclassifier3::StatusOr<CorpusId> corpus_id_or = GetOrPutNextId(
+      corpus_mapper_.get(), corpus_nsid_schema_fingerprint.EncodeToCString());
+  if (!corpus_id_or.ok()) {
+    return absl_ports::Annotate(corpus_id_or.status(),
+                                "Failed to add corpus to corpus mapper");
+  }
+  CorpusId corpus_id = std::move(corpus_id_or).ValueOrDie();
+
+  // Update ground truth
   // TODO(b/144458732): Implement a more robust version of TC_ASSIGN_OR_RETURN
   // that can support error logging.
   auto offset_or = document_log_->WriteProto(document_wrapper);
@@ -1156,21 +1217,9 @@ DocumentStore::InternalPut(const DocumentWrapper& document_wrapper,
     return absl_ports::InternalError("Failed to read from key mapper");
   }
 
-  // Creates a new document id, updates key mapper and document_id mapper
-  DocumentId new_document_id = document_id_mapper_->num_elements();
-  if (!IsDocumentIdValid(new_document_id)) {
-    return absl_ports::ResourceExhaustedError(
-        "Exceeded maximum number of documents. Try calling Optimize to reclaim "
-        "some space.");
-  }
   PutResult put_result;
   put_result.new_document_id = new_document_id;
   put_result.expiration_timestamp_ms = raw_expiration_timestamp_ms;
-
-  // Update namespace maps
-  ICING_ASSIGN_OR_RETURN(
-      NamespaceId namespace_id,
-      namespace_mapper_->GetOrPut(name_space, namespace_mapper_->num_keys()));
 
   NamespaceIdFingerprint new_doc_nsid_uri_fingerprint(namespace_id, uri);
 
@@ -1178,13 +1227,6 @@ DocumentStore::InternalPut(const DocumentWrapper& document_wrapper,
   ICING_RETURN_IF_ERROR(document_key_mapper_->Put(
       new_doc_nsid_uri_fingerprint.EncodeToCString(), new_document_id));
   ICING_RETURN_IF_ERROR(document_id_mapper_->Set(new_document_id, file_offset));
-
-  // Update corpus maps
-  NamespaceIdFingerprint corpus_nsid_schema_fingerprint(namespace_id, schema);
-  ICING_ASSIGN_OR_RETURN(
-      CorpusId corpus_id,
-      corpus_mapper_->GetOrPut(corpus_nsid_schema_fingerprint.EncodeToCString(),
-                               corpus_mapper_->num_keys()));
 
   ICING_ASSIGN_OR_RETURN(CorpusAssociatedScoreData scoring_data,
                          GetCorpusAssociatedScoreDataToUpdate(corpus_id));

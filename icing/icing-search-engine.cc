@@ -824,6 +824,14 @@ libtextclassifier3::Status IcingSearchEngine::InitializeMembers(
         ReportDatabaseStablenessStats(
             database_stableness_log_->GetCachedProto(), initialize_stats);
       }
+
+      // Reset the log after reporting.
+      auto reset_status = database_stableness_log_->Reset();
+      if (!reset_status.ok()) {
+        ICING_LOG(WARNING) << "Failed to reset database stableness log. Error: "
+                           << reset_status.error_code()
+                           << ", message: " << reset_status.error_message();
+      }
     }
   }
 
@@ -1630,8 +1638,7 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
     //   internally.
     // - We just need to detect ground truth and derived files changes from the
     //   document store and indices.
-    bool needs_flush_ground_truth = false;
-    bool needs_flush_derived_files = false;
+    bool needs_flush = false;
 
     // Update document store if necessary.
     std::optional<DocumentStore::UpdateSchemaStoreResult> update_result;
@@ -1722,7 +1729,7 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
       }
 
       if (lost_previous_schema || any_index_incompatible || join_incompatible) {
-        needs_flush_derived_files = true;
+        needs_flush = true;
 
         IndexRestorationResult restore_result = RestoreIndexIfNeeded();
         result_proto.set_has_term_index_restored(
@@ -1738,7 +1745,7 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         // valid state and can be queried.
         if (!restore_result.status.ok() &&
             !absl_ports::IsDataLoss(restore_result.status)) {
-          TransformStatus(status, result_status);
+          TransformStatus(restore_result.status, result_status);
           return result_proto;
         }
 
@@ -1773,17 +1780,20 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
         total_deleted_docs += update_result->deleted_document_count;
       }
 
-      needs_flush_derived_files |= update_result->derived_files_changed;
+      needs_flush |= update_result->derived_files_changed;
     }
 
     // TODO(b/384947619): report all metadata of deleted documents to
     //   SetSchemaResultProto for observer.
     result_proto.set_deleted_document_count(total_deleted_docs);
-    needs_flush_ground_truth |= (total_deleted_docs > 0);
+    // Deleting documents always mutates DocumentStore derived files (in
+    // addition to the ground truth), so RECOVERY_PROOF is required rather than
+    // LITE.
+    needs_flush |= (total_deleted_docs > 0);
 
     if (!set_schema_result.schema_types_scorable_property_inconsistent_by_id
              .empty()) {
-      needs_flush_derived_files = true;
+      needs_flush = true;
 
       ScopedTimer scorable_property_cache_regeneration_timer(
           clock_->GetNewTimer(), [&set_schema_stats](int64_t t) {
@@ -1805,24 +1815,8 @@ SetSchemaResultProto IcingSearchEngine::SetSchema(
     }
 
     result_status->set_code(StatusProto::OK);
-    if (needs_flush_derived_files) {
-      // If derived files need to be flushed, then we need RECOVERY_PROOF which:
-      // - Updates all checksums of derived files.
-      // - Flushes ground truth data.
-      //
-      // Here, it is ok to use RECOVERY_PROOF even if ground truth does not need
-      // to be flushed.
+    if (needs_flush) {
       result_proto.set_needs_persist_type(PersistType::RECOVERY_PROOF);
-    } else if (needs_flush_ground_truth) {
-      // If derived files are unchanged but ground truth needs to be flushed,
-      // then we need LITE which only flushes ground truth data.
-      //
-      // Theoretically, it is impossible to have this case since:
-      // - The only possibility of ground truth change is incompatible document
-      //   deletion.
-      // - When deleting incompatible documents, derived files are always
-      //   changed, so it should belong to the RECOVERY_PROOF case.
-      result_proto.set_needs_persist_type(PersistType::LITE);
     } else {
       result_proto.set_needs_persist_type(PersistType::UNKNOWN);
     }

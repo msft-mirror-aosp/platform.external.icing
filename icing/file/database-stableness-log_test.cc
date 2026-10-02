@@ -36,6 +36,7 @@ namespace lib {
 namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
+using ::testing::Eq;
 using ::testing::HasSubstr;
 using ::testing::IsFalse;
 using ::testing::IsTrue;
@@ -62,7 +63,7 @@ class DatabaseStablenessLogTest : public ::testing::Test {
     }
 
     int64_t file_size = filesystem_.GetFileSize(sfd.get());
-    if (file_size == Filesystem::kBadFileSize || file_size <= 0) {
+    if (file_size == Filesystem::kBadFileSize || file_size < 0) {
       return absl_ports::InternalError("Failed to get file size.");
     }
 
@@ -91,6 +92,22 @@ TEST_F(DatabaseStablenessLogTest, CreateNew) {
       std::unique_ptr<DatabaseStablenessLog> database_stableness_log,
       DatabaseStablenessLog::Create(&filesystem_, file_path_));
   EXPECT_THAT(filesystem_.FileExists(file_path_.c_str()), IsTrue());
+  EXPECT_THAT(filesystem_.GetFileSize(file_path_.c_str()), Eq(0));
+
+  EXPECT_THAT(database_stableness_log->GetCachedProto(),
+              EqualsProto(IcingDatabaseStablenessProto::default_instance()));
+  EXPECT_THAT(ReadProtoFromFile(),
+              IsOkAndHolds(EqualsProto(
+                  IcingDatabaseStablenessProto::default_instance())));
+
+  // Destruct database_stableness_log and create again. A zero byte file should
+  // be interpreted as the default proto.
+  database_stableness_log.reset();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      database_stableness_log,
+      DatabaseStablenessLog::Create(&filesystem_, file_path_));
+  EXPECT_THAT(database_stableness_log->GetCachedProto(),
+              EqualsProto(IcingDatabaseStablenessProto::default_instance()));
 }
 
 TEST_F(DatabaseStablenessLogTest, UpdateApiHistory) {
@@ -304,9 +321,61 @@ TEST_F(DatabaseStablenessLogTest, UpdateAll) {
   ApiHistoryProto* api_history2 = expected_proto.add_api_history();
   api_history2->set_call_type(IcingApiCallType::BATCH_PUT);
   api_history2->set_last_call_timestamp_ms(700);
+
   EXPECT_THAT(database_stableness_log->GetCachedProto(),
               EqualsProto(expected_proto));
   EXPECT_THAT(ReadProtoFromFile(), IsOkAndHolds(EqualsProto(expected_proto)));
+}
+
+TEST_F(DatabaseStablenessLogTest, Reset) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DatabaseStablenessLog> database_stableness_log,
+      DatabaseStablenessLog::Create(&filesystem_, file_path_));
+
+  // Update history for some APIs.
+  ICING_ASSERT_OK(database_stableness_log->UpdateApiHistory(
+      IcingApiCallType::INITIALIZE, /*timestamp_ms=*/100));
+  ICING_ASSERT_OK(database_stableness_log->UpdateApiHistory(
+      IcingApiCallType::SET_SCHEMA, /*timestamp_ms=*/200));
+  ICING_ASSERT_OK(database_stableness_log->UpdateApiHistory(
+      IcingApiCallType::BATCH_PUT, /*timestamp_ms=*/300));
+  ICING_ASSERT_OK(database_stableness_log->UpdatePersistToDiskHistory(
+      PersistType::RECOVERY_PROOF, /*timestamp_ms=*/400));
+  ICING_ASSERT_OK(database_stableness_log->UpdateApiHistory(
+      IcingApiCallType::BATCH_PUT, /*timestamp_ms=*/500));
+  ICING_ASSERT_OK(database_stableness_log->UpdateApiHistory(
+      IcingApiCallType::SET_SCHEMA, /*timestamp_ms=*/600));
+  ICING_ASSERT_OK(database_stableness_log->UpdateApiHistory(
+      IcingApiCallType::BATCH_PUT, /*timestamp_ms=*/700));
+  ICING_ASSERT_OK(database_stableness_log->UpdatePersistToDiskHistory(
+      PersistType::FULL, /*timestamp_ms=*/800));
+
+  IcingDatabaseStablenessProto expected_proto_before_reset;
+  expected_proto_before_reset.set_last_flush_recovery_proof_timestamp_ms(400);
+  expected_proto_before_reset.set_last_flush_full_timestamp_ms(800);
+  ApiHistoryProto* api_history0 = expected_proto_before_reset.add_api_history();
+  api_history0->set_call_type(IcingApiCallType::INITIALIZE);
+  api_history0->set_last_call_timestamp_ms(100);
+  ApiHistoryProto* api_history1 = expected_proto_before_reset.add_api_history();
+  api_history1->set_call_type(IcingApiCallType::SET_SCHEMA);
+  api_history1->set_last_call_timestamp_ms(600);
+  ApiHistoryProto* api_history2 = expected_proto_before_reset.add_api_history();
+  api_history2->set_call_type(IcingApiCallType::BATCH_PUT);
+  api_history2->set_last_call_timestamp_ms(700);
+
+  EXPECT_THAT(database_stableness_log->GetCachedProto(),
+              EqualsProto(expected_proto_before_reset));
+  EXPECT_THAT(ReadProtoFromFile(),
+              IsOkAndHolds(EqualsProto(expected_proto_before_reset)));
+
+  // Reset the log. Should be the default proto.
+  EXPECT_THAT(database_stableness_log->Reset(), IsOk());
+
+  EXPECT_THAT(database_stableness_log->GetCachedProto(),
+              EqualsProto(IcingDatabaseStablenessProto::default_instance()));
+  EXPECT_THAT(ReadProtoFromFile(),
+              IsOkAndHolds(EqualsProto(
+                  IcingDatabaseStablenessProto::default_instance())));
 }
 
 }  // namespace
