@@ -26,6 +26,7 @@
 #include "icing/query/query-terms.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 
 namespace icing {
 namespace lib {
@@ -95,6 +96,10 @@ struct SnippetContext {
         embedding_match_info_map(std::move(embedding_match_info_map_in)),
         snippet_spec(std::move(snippet_spec_in)),
         match_type(match_type_in) {}
+
+  // Converts the ids in the snippet context to new ones according to the
+  // optimize_result.
+  void Optimize(const DocumentStore::OptimizeResult& optimize_result);
 
   // Query terms that are used to find snippets
   SectionRestrictQueryTermsMap query_terms;

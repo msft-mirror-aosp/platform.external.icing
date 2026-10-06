@@ -234,10 +234,21 @@ class SchemaStore {
     std::unordered_set<std::string>
         schema_types_changed_fully_compatible_by_name;
 
-    // Schema types that were changed in a way that was backwards compatible,
-    // but invalidated the index. Represented by the `schema_type` field in the
+    // Schema types that were changed in a way that invalidated the term
+    // (string) index. Represented by the `schema_type` field in the
     // SchemaTypeConfigProto.
-    std::unordered_set<std::string> schema_types_index_incompatible_by_name;
+    std::unordered_set<std::string>
+        schema_types_term_index_incompatible_by_name;
+    // Schema types that were changed in a way that invalidated the integer
+    // index. Represented by the `schema_type` field in the
+    // SchemaTypeConfigProto.
+    std::unordered_set<std::string>
+        schema_types_integer_index_incompatible_by_name;
+    // Schema types that were changed in a way that invalidated the embedding
+    // index. Represented by the `schema_type` field in the
+    // SchemaTypeConfigProto.
+    std::unordered_set<std::string>
+        schema_types_embedding_index_incompatible_by_name;
 
     // Schema types that were changed in a way that was backwards compatible,
     // but invalidated the joinable cache. Represented by the `schema_type`

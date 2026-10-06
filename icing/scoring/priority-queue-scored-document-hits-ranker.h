@@ -80,6 +80,13 @@ class PriorityQueueScoredDocumentHitsRanker : public ScoredDocumentHitsRanker {
 
   bool empty() const override { return curr_ == nullptr; }
 
+  void clear() override {
+    scored_data_pq_ =
+        std::priority_queue<ScoredDataType, std::vector<ScoredDataType>,
+                            Comparator>(comparator_);
+    curr_ = nullptr;
+  }
+
  private:
   // Comparator for std::priority_queue. Since std::priority is a max heap
   // (descending order), reverse it if we want ascending order.

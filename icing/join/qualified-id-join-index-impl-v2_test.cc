@@ -910,6 +910,105 @@ TEST_F(QualifiedIdJoinIndexImplV2Test, Optimize) {
                           /*namespace_id=*/0, /*fingerprint=*/103)))));
 }
 
+TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeInto) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinIndexImplV2> index,
+      QualifiedIdJoinIndexImplV2::Create(filesystem_, working_path_,
+                                         /*pre_mapping_fbv=*/false));
+
+  SchemaTypeId schema_type_id1 = 2;
+  SchemaTypeId schema_type_id2 = 5;
+
+  JoinablePropertyId joinable_property_id1 = 11;
+  JoinablePropertyId joinable_property_id2 = 15;
+
+  NamespaceIdFingerprint id1(/*namespace_id=*/2, /*fingerprint=*/101);
+  NamespaceIdFingerprint id2(/*namespace_id=*/3, /*fingerprint=*/102);
+  NamespaceIdFingerprint id3(/*namespace_id=*/4, /*fingerprint=*/103);
+  NamespaceIdFingerprint id4(/*namespace_id=*/0, /*fingerprint=*/104);
+  NamespaceIdFingerprint id5(/*namespace_id=*/0, /*fingerprint=*/105);
+  NamespaceIdFingerprint id6(/*namespace_id=*/1, /*fingerprint=*/106);
+  NamespaceIdFingerprint id7(/*namespace_id=*/3, /*fingerprint=*/107);
+  NamespaceIdFingerprint id8(/*namespace_id=*/2, /*fingerprint=*/108);
+
+  EXPECT_THAT(
+      index->Put(schema_type_id1, joinable_property_id1, /*document_id=*/3,
+                 /*ref_namespace_id_uri_fingerprints=*/{id1, id2, id3}),
+      IsOk());
+  EXPECT_THAT(
+      index->Put(schema_type_id2, joinable_property_id2, /*document_id=*/5,
+                 /*ref_namespace_id_uri_fingerprints=*/{id4}),
+      IsOk());
+  EXPECT_THAT(
+      index->Put(schema_type_id2, joinable_property_id2, /*document_id=*/8,
+                 /*ref_namespace_id_uri_fingerprints=*/{id5, id6}),
+      IsOk());
+  EXPECT_THAT(
+      index->Put(schema_type_id1, joinable_property_id1, /*document_id=*/13,
+                 /*ref_namespace_id_uri_fingerprints=*/{id7}),
+      IsOk());
+  EXPECT_THAT(
+      index->Put(schema_type_id1, joinable_property_id1, /*document_id=*/21,
+                 /*ref_namespace_id_uri_fingerprints=*/{id8}),
+      IsOk());
+  index->set_last_added_document_id(21);
+
+  ASSERT_THAT(index, Pointee(SizeIs(8)));
+
+  std::vector<DocumentId> document_id_old_to_new(22, kInvalidDocumentId);
+  document_id_old_to_new[3] = 0;
+  document_id_old_to_new[8] = 1;
+  document_id_old_to_new[21] = 2;
+
+  std::vector<NamespaceId> namespace_id_old_to_new(5, kInvalidNamespaceId);
+  namespace_id_old_to_new[0] = 1;
+  namespace_id_old_to_new[3] = 2;
+  namespace_id_old_to_new[4] = 0;
+
+  std::string new_working_path = working_path_ + "_optimized";
+  DocumentId new_last_added_document_id = 2;
+
+  // Invalid argument if new_working_path == working_path_
+  EXPECT_THAT(
+      index->OptimizeInto(/*document_store=*/nullptr, working_path_,
+                          document_id_old_to_new, namespace_id_old_to_new,
+                          new_last_added_document_id),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+
+  // Successfully optimize into new working path
+  EXPECT_THAT(
+      index->OptimizeInto(/*document_store=*/nullptr, new_working_path,
+                          document_id_old_to_new, namespace_id_old_to_new,
+                          new_last_added_document_id),
+      IsOk());
+
+  // Original index remains unchanged
+  EXPECT_THAT(index, Pointee(SizeIs(8)));
+
+  // New index can be created and loaded from new_working_path
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinIndexImplV2> new_index,
+      QualifiedIdJoinIndexImplV2::Create(filesystem_, new_working_path,
+                                         /*pre_mapping_fbv=*/false));
+  EXPECT_THAT(new_index, Pointee(SizeIs(3)));
+  EXPECT_THAT(new_index->last_added_document_id(),
+              Eq(new_last_added_document_id));
+
+  // Verify GetIterator API on new index
+  EXPECT_THAT(GetJoinData(*new_index, schema_type_id1, joinable_property_id1),
+              IsOkAndHolds(ElementsAre(
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/0, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/2, /*fingerprint=*/102)),
+                  DocumentIdToJoinInfo<NamespaceIdFingerprint>(
+                      /*document_id=*/0, /*join_info=*/NamespaceIdFingerprint(
+                          /*namespace_id=*/0, /*fingerprint=*/103)))));
+
+  // Clean up
+  new_index.reset();
+  filesystem_.DeleteDirectoryRecursively(new_working_path.c_str());
+}
+
 TEST_F(QualifiedIdJoinIndexImplV2Test, OptimizeDocumentIdChange) {
   // Specific test for Optimize(): document id compaction.
 

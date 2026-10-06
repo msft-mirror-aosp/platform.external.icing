@@ -23,9 +23,12 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
+#include "icing/absl_ports/mutex.h"
+#include "icing/absl_ports/thread_annotations.h"
 #include "icing/index/embed/embedding-hit.h"
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/embedding-query-results.h"
+#include "icing/index/embed/embedding-reference.h"
 #include "icing/proto/document.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-id.h"
@@ -91,12 +94,16 @@ class EmbeddingIndexTestPeer {
         SchemaStore::GetSchemaNameHash(schema_name));
   }
 
-  static bool is_empty(const EmbeddingIndex* embedding_index) {
+  static bool is_empty(const EmbeddingIndex* embedding_index)
+      ICING_LOCKS_EXCLUDED(embedding_index->mutex_) {
+    absl_ports::shared_lock l(&embedding_index->mutex_);
+
     return embedding_index->is_empty();
   }
 
   static std::vector<float> GetRawEmbeddingDataFromIndex(
-      const EmbeddingIndex* embedding_index, uint32_t shard_id);
+      const EmbeddingIndex* embedding_index, uint32_t shard_id)
+      ICING_LOCKS_EXCLUDED(embedding_index->mutex_);
 
   // Gets the quantized embedding vector from the index based on the given hit,
   // and returns the dequantized version of the vector.
@@ -105,10 +112,14 @@ class EmbeddingIndexTestPeer {
       const EmbeddingIndex* embedding_index, const EmbeddingHit& hit,
       uint32_t dimension, std::string_view model_signature,
       std::string_view schema_name,
-      uint32_t cluster_id = embedding_util::kLinearSearchClusterId);
+      uint32_t cluster_id = embedding_util::kLinearSearchClusterId)
+      ICING_LOCKS_EXCLUDED(embedding_index->mutex_);
 
   static int32_t GetTotalQuantizedVectorSize(
-      const EmbeddingIndex* embedding_index, uint32_t shard_id) {
+      const EmbeddingIndex* embedding_index, uint32_t shard_id)
+      ICING_LOCKS_EXCLUDED(embedding_index->mutex_) {
+    absl_ports::shared_lock l(&embedding_index->mutex_);
+
     if (embedding_index->is_empty() ||
         shard_id >= embedding_index->num_shards_ ||
         embedding_index->quantized_embedding_vectors_[shard_id] == nullptr) {
@@ -120,14 +131,27 @@ class EmbeddingIndexTestPeer {
 
   static libtextclassifier3::StatusOr<const float*> GetEmbeddingVector(
       const EmbeddingIndex* index, const EmbeddingHit& hit, uint32_t dimension,
-      uint32_t shard_id) {
+      uint32_t shard_id) ICING_LOCKS_EXCLUDED(index->mutex_) {
+    absl_ports::shared_lock l(&index->mutex_);
+
     return index->GetEmbeddingVector(hit, dimension, shard_id);
   }
 
   static libtextclassifier3::StatusOr<const char*> GetQuantizedEmbeddingVector(
       const EmbeddingIndex* index, const EmbeddingHit& hit, uint32_t dimension,
-      uint32_t shard_id) {
+      uint32_t shard_id) ICING_LOCKS_EXCLUDED(index->mutex_) {
+    absl_ports::shared_lock l(&index->mutex_);
+
     return index->GetQuantizedEmbeddingVector(hit, dimension, shard_id);
+  }
+
+  static libtextclassifier3::StatusOr<uint32_t> AppendEmbeddingVector(
+      EmbeddingIndex* index, const EmbeddingReference& embedding,
+      uint32_t dimension, uint32_t shard_id)
+      ICING_LOCKS_EXCLUDED(index->mutex_) {
+    absl_ports::unique_lock l(&index->mutex_);
+
+    return index->AppendEmbeddingVector(embedding, dimension, shard_id);
   }
 };
 

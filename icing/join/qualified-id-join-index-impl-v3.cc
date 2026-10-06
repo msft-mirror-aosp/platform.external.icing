@@ -416,6 +416,31 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Optimize(
   return libtextclassifier3::Status::OK;
 }
 
+libtextclassifier3::Status QualifiedIdJoinIndexImplV3::OptimizeInto(
+    const DocumentStore* document_store, const std::string& new_working_path,
+    const std::vector<DocumentId>& document_id_old_to_new,
+    const std::vector<NamespaceId>& /*namespace_id_old_to_new*/,
+    DocumentId new_last_added_document_id) const {
+  ICING_RETURN_ERROR_IF_NULL(document_store);
+  if (new_working_path == working_path_) {
+    return absl_ports::InvalidArgumentError(
+        "New working path is the same as the current one.");
+  }
+  ICING_RETURN_IF_ERROR(
+      QualifiedIdJoinIndex::Discard(filesystem_, new_working_path));
+
+  // Transfer all data from the current to new qualified id join index. Also
+  // PersistToDisk and destruct the instance after finishing.
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<QualifiedIdJoinIndexImplV3> new_index,
+                         Create(filesystem_, new_working_path, feature_flags_));
+  ICING_RETURN_IF_ERROR(
+      TransferIndex(*document_store, document_id_old_to_new, new_index.get()));
+  new_index->set_last_added_document_id(new_last_added_document_id);
+  new_index->SetDirty();
+
+  return new_index->PersistToDisk();
+}
+
 libtextclassifier3::Status QualifiedIdJoinIndexImplV3::Clear() {
   SetDirty();
 

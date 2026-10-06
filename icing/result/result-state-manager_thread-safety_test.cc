@@ -203,9 +203,10 @@ TEST_F(ResultStateManagerThreadSafetyTest,
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/false),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(kNumPerPage), *schema_store_, *document_store_,
-          *result_retriever_, clock_->GetSystemTimeMilliseconds()));
+          /*parent_adjustment_info_in=*/nullptr,
+          /*child_adjustment_info_in=*/nullptr, CreateResultSpec(kNumPerPage),
+          *schema_store_, *document_store_, *result_retriever_,
+          clock_->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
   for (int i = 0; i < kNumPerPage; ++i) {
     ASSERT_THAT(page_result_info1.second.results[i].score(), Eq(i));
@@ -306,9 +307,10 @@ TEST_F(ResultStateManagerThreadSafetyTest, InvalidateResultStateWhileUsing) {
           std::make_unique<
               PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
               std::move(scored_document_hits), /*is_descending=*/false),
-          /*parent_adjustment_info=*/nullptr, /*child_adjustment_info=*/nullptr,
-          CreateResultSpec(kNumPerPage), *schema_store_, *document_store_,
-          *result_retriever_, clock_->GetSystemTimeMilliseconds()));
+          /*parent_adjustment_info_in=*/nullptr,
+          /*child_adjustment_info_in=*/nullptr, CreateResultSpec(kNumPerPage),
+          *schema_store_, *document_store_, *result_retriever_,
+          clock_->GetSystemTimeMilliseconds()));
   ASSERT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));
   for (int i = 0; i < kNumPerPage; ++i) {
     ASSERT_THAT(page_result_info1.second.results[i].score(), Eq(i));
@@ -438,8 +440,8 @@ TEST_F(ResultStateManagerThreadSafetyTest, MultipleResultStates) {
             std::make_unique<
                 PriorityQueueScoredDocumentHitsRanker<ScoredDocumentHit>>(
                 std::move(scored_document_hits_copy), /*is_descending=*/false),
-            /*parent_adjustment_info=*/nullptr,
-            /*child_adjustment_info=*/nullptr, CreateResultSpec(kNumPerPage),
+            /*parent_adjustment_info_in=*/nullptr,
+            /*child_adjustment_info_in=*/nullptr, CreateResultSpec(kNumPerPage),
             *schema_store_, *document_store_, *result_retriever,
             clock_->GetSystemTimeMilliseconds()));
     EXPECT_THAT(page_result_info1.second.results, SizeIs(kNumPerPage));

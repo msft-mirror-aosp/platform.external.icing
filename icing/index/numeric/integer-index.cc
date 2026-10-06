@@ -274,8 +274,6 @@ libtextclassifier3::Status IntegerIndex::Optimize(
     const std::vector<DocumentId>& document_id_old_to_new,
     DocumentId new_last_added_document_id) {
   std::string temp_working_path = working_path_ + "_temp";
-  ICING_RETURN_IF_ERROR(Discard(filesystem_, temp_working_path));
-
   DestructibleDirectory temp_working_path_ddir(&filesystem_,
                                                std::move(temp_working_path));
   if (!temp_working_path_ddir.is_valid()) {
@@ -283,19 +281,18 @@ libtextclassifier3::Status IntegerIndex::Optimize(
         "Unable to create temp directory to build new integer index");
   }
 
-  {
-    // Transfer all indexed data from current integer index to new integer
-    // index. Also PersistToDisk and destruct the instance after finishing, so
-    // we can safely swap directories later.
-    ICING_ASSIGN_OR_RETURN(
-        std::unique_ptr<IntegerIndex> new_integer_index,
-        Create(filesystem_, temp_working_path_ddir.dir(),
-               num_data_threshold_for_bucket_split_, pre_mapping_fbv_));
-    ICING_RETURN_IF_ERROR(
-        TransferIndex(document_id_old_to_new, new_integer_index.get()));
-    new_integer_index->set_last_added_document_id(new_last_added_document_id);
-    ICING_RETURN_IF_ERROR(new_integer_index->PersistToDisk());
-  }
+  // OptimizeInto will be called below.
+  // - It deletes the directory and attempts to create it back afterwards, which
+  //   may invalidate some methods of DestructibleDirectory (e.g. is_valid()).
+  // - Currently OptimizeInto guarantees to create back the directory if it
+  //   succeeds. Also the DestructibleDirectory object here is just for
+  //   directory deletion after leaving this method.
+  //
+  // Therefore, it is safe to keep this object here, but any future changes or
+  // is_valid() check should be aware of this issue.
+  ICING_RETURN_IF_ERROR(OptimizeInto(temp_working_path_ddir.dir(),
+                                     document_id_old_to_new,
+                                     new_last_added_document_id));
 
   // Destruct current storage instances to safely swap directories.
   metadata_mmapped_file_.reset();
@@ -353,6 +350,29 @@ libtextclassifier3::Status IntegerIndex::Optimize(
           num_data_threshold_for_bucket_split_, pre_mapping_fbv_));
 
   return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status IntegerIndex::OptimizeInto(
+    const std::string& new_working_path,
+    const std::vector<DocumentId>& document_id_old_to_new,
+    DocumentId new_last_added_document_id) const {
+  if (new_working_path == working_path_) {
+    return absl_ports::InvalidArgumentError(
+        "New working path is the same as the current one.");
+  }
+  ICING_RETURN_IF_ERROR(Discard(filesystem_, new_working_path));
+
+  // Transfer all indexed data from current integer index to new integer
+  // index. Also PersistToDisk and destruct the instance after finishing.
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<IntegerIndex> new_integer_index,
+      Create(filesystem_, new_working_path,
+             num_data_threshold_for_bucket_split_, pre_mapping_fbv_));
+  ICING_RETURN_IF_ERROR(
+      TransferIndex(document_id_old_to_new, new_integer_index.get()));
+  new_integer_index->set_last_added_document_id(new_last_added_document_id);
+  new_integer_index->SetDirty();
+  return new_integer_index->PersistToDisk();
 }
 
 libtextclassifier3::Status IntegerIndex::Clear() {

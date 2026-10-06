@@ -30,11 +30,13 @@
 #include "icing/index/lite/doc-hit-info-iterator-term-lite.h"
 #include "icing/index/lite/term-id-hit-pair.h"
 #include "icing/index/term-id-codec.h"
+#include "icing/index/term-property-id.h"
 #include "icing/legacy/index/icing-dynamic-trie.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/proto/scoring.pb.h"
 #include "icing/proto/term.pb.h"
 #include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 #include "icing/store/namespace-id.h"
 #include "icing/testing/always-false-suggestion-result-checker-impl.h"
 #include "icing/testing/common-matchers.h"
@@ -652,6 +654,283 @@ TEST_F(LiteIndexTest, LiteIndexHitBufferSize) {
               Eq(2 * sizeof(TermIdHitPair::Value)));
   EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(0));
   EXPECT_THAT(lite_index->GetHitBufferUnsortedByteSize(), Eq(0));
+}
+
+TEST_F(LiteIndexTest, OptimizeInto) {
+  std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
+                             LiteIndex::Create(options, &icing_filesystem_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      term_id_codec_,
+      TermIdCodec::Create(
+          IcingDynamicTrie::max_value_index(IcingDynamicTrie::Options()),
+          IcingDynamicTrie::max_value_index(options.lexicon_options)));
+
+  const std::string term = "foo";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t tvi,
+      lite_index->InsertTerm(term, TermMatchType::PREFIX, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(tvi, TviType::LITE));
+
+  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/3,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  Hit doc1_hit(/*section_id=*/1, /*document_id=*/1, /*term_frequency=*/5,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  Hit doc2_hit(/*section_id=*/2, /*document_id=*/2, /*term_frequency=*/2,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc0_hit));
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc1_hit));
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc2_hit));
+  lite_index->set_last_added_document_id(2);
+  ICING_ASSERT_OK(lite_index->PersistToDisk());
+
+  // OptimizeInto new directory
+  std::string new_lite_index_file_name =
+      index_dir_ + "/optimized/test_file.lite-idx.index";
+  LiteIndex::Options new_options(
+      new_lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
+
+  // doc0 -> doc0, doc1 -> deleted, doc2 -> doc1
+  std::vector<DocumentId> doc_id_map = {0, kInvalidDocumentId, 1};
+  ICING_ASSERT_OK(lite_index->OptimizeInto(new_options, doc_id_map,
+                                           term_id_codec_.get(),
+                                           /*new_last_added_document_id=*/1));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<LiteIndex> new_lite_index,
+      LiteIndex::Create(new_options, &icing_filesystem_));
+
+  EXPECT_THAT(new_lite_index->last_added_document_id(), Eq(1));
+  EXPECT_THAT(new_lite_index, Pointee(SizeIs(2)));
+
+  std::vector<DocHitInfo> hits;
+  new_lite_index->FetchHits(
+      foo_term_id, kSectionIdMaskAll,
+      /*only_from_prefix_sections=*/false,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+      /*namespace_checker=*/nullptr, &hits);
+  EXPECT_THAT(hits,
+              ElementsAre(EqualsDocHitInfo(1, std::vector<SectionId>{2}),
+                          EqualsDocHitInfo(0, std::vector<SectionId>{0})));
+}
+
+TEST_F(LiteIndexTest, OptimizeIntoDeletesUnusedTerms) {
+  std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
+                             LiteIndex::Create(options, &icing_filesystem_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      term_id_codec_,
+      TermIdCodec::Create(
+          IcingDynamicTrie::max_value_index(IcingDynamicTrie::Options()),
+          IcingDynamicTrie::max_value_index(options.lexicon_options)));
+
+  // "foo" has hits in doc0 (kept) and doc1 (deleted).
+  const std::string term_foo = "foo";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t foo_tvi,
+      lite_index->InsertTerm(term_foo, TermMatchType::PREFIX, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t foo_term_id,
+      term_id_codec_->EncodeTvi(foo_tvi, TviType::LITE));
+
+  // "foo" has a non-prefix hit in doc0 (kept) and a prefix hit in doc1 (deleted).
+  Hit doc0_hit(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/3,
+               /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+               /*is_stemmed_hit=*/false);
+  Hit doc1_hit(/*section_id=*/1, /*document_id=*/1, /*term_frequency=*/5,
+               /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+               /*is_stemmed_hit=*/false);
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc0_hit));
+  ICING_ASSERT_OK(lite_index->AddHit(foo_term_id, doc1_hit));
+
+  // "qux" has a prefix hit in doc0 (kept).
+  const std::string term_qux = "qux";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t qux_tvi,
+      lite_index->InsertTerm(term_qux, TermMatchType::PREFIX, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t qux_term_id,
+      term_id_codec_->EncodeTvi(qux_tvi, TviType::LITE));
+  Hit doc0_qux_hit(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/1,
+                   /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+                   /*is_stemmed_hit=*/false);
+  ICING_ASSERT_OK(lite_index->AddHit(qux_term_id, doc0_qux_hit));
+
+  // "bar" has hits ONLY in doc1 (deleted).
+  const std::string term_bar = "bar";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t bar_tvi,
+      lite_index->InsertTerm(term_bar, TermMatchType::PREFIX, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t bar_term_id,
+      term_id_codec_->EncodeTvi(bar_tvi, TviType::LITE));
+
+  Hit doc1_bar_hit(/*section_id=*/0, /*document_id=*/1, /*term_frequency=*/2,
+                   /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                   /*is_stemmed_hit=*/false);
+  ICING_ASSERT_OK(lite_index->AddHit(bar_term_id, doc1_bar_hit));
+
+  // "baz" is inserted into lexicon but has NO hits.
+  const std::string term_baz = "baz";
+  ICING_ASSERT_OK(
+      lite_index->InsertTerm(term_baz, TermMatchType::PREFIX, kNamespace0));
+
+  lite_index->set_last_added_document_id(1);
+  ICING_ASSERT_OK(lite_index->PersistToDisk());
+
+  std::string new_lite_index_file_name =
+      index_dir_ + "/optimized/test_file.lite-idx.index";
+  LiteIndex::Options new_options(
+      new_lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 8);
+
+  // doc0 -> doc0, doc1 -> deleted
+  std::vector<DocumentId> doc_id_map = {0, kInvalidDocumentId};
+  ICING_ASSERT_OK(lite_index->OptimizeInto(new_options, doc_id_map,
+                                           term_id_codec_.get(),
+                                           /*new_last_added_document_id=*/0));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<LiteIndex> new_lite_index,
+      LiteIndex::Create(new_options, &icing_filesystem_));
+
+  EXPECT_THAT(new_lite_index->last_added_document_id(), Eq(0));
+  EXPECT_THAT(new_lite_index, Pointee(SizeIs(2)));
+
+  // "foo" and "qux" should exist in the new index.
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_new_tvi,
+                             new_lite_index->GetTermId(term_foo));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t qux_new_tvi,
+                             new_lite_index->GetTermId(term_qux));
+
+  IcingDynamicTrie::PropertyReader prefix_prop_reader(
+      new_lite_index->lexicon(), GetHasHitsInPrefixSectionPropertyId());
+  // "foo" should NOT retain the stale prefix property since its prefix hit was in deleted doc1.
+  EXPECT_FALSE(prefix_prop_reader.HasProperty(foo_new_tvi));
+  // "qux" should have the prefix property since its prefix hit was in valid doc0.
+  EXPECT_TRUE(prefix_prop_reader.HasProperty(qux_new_tvi));
+
+  // "bar" and "baz" should NOT exist in the new index.
+  EXPECT_THAT(new_lite_index->GetTermId(term_bar),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  EXPECT_THAT(new_lite_index->GetTermId(term_baz),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+}
+
+TEST_F(LiteIndexTest, OptimizeIntoWithUnsortedHits) {
+  std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
+  LiteIndex::Options options(
+      lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 100);
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LiteIndex> lite_index,
+                             LiteIndex::Create(options, &icing_filesystem_));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      term_id_codec_,
+      TermIdCodec::Create(
+          IcingDynamicTrie::max_value_index(IcingDynamicTrie::Options()),
+          IcingDynamicTrie::max_value_index(options.lexicon_options)));
+
+  // Add terms: "cat", "dog"
+  const std::string term_cat = "cat";
+  const std::string term_dog = "dog";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t cat_tvi,
+      lite_index->InsertTerm(term_cat, TermMatchType::PREFIX, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t cat_term_id,
+      term_id_codec_->EncodeTvi(cat_tvi, TviType::LITE));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t dog_tvi,
+      lite_index->InsertTerm(term_dog, TermMatchType::PREFIX, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t dog_term_id,
+      term_id_codec_->EncodeTvi(dog_tvi, TviType::LITE));
+
+  // Add hits in interleaved order so the hit buffer is unsorted by term_id:
+  // "cat" (doc 0), "dog" (doc 1), "cat" (doc 2)
+  Hit cat_doc0_hit(/*section_id=*/0, /*document_id=*/0, /*term_frequency=*/1,
+                   /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                   /*is_stemmed_hit=*/false);
+  Hit dog_doc1_hit(/*section_id=*/1, /*document_id=*/1, /*term_frequency=*/2,
+                   /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+                   /*is_stemmed_hit=*/false);
+  Hit cat_doc2_hit(/*section_id=*/2, /*document_id=*/2, /*term_frequency=*/3,
+                   /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+                   /*is_stemmed_hit=*/false);
+
+  ICING_ASSERT_OK(lite_index->AddHit(cat_term_id, cat_doc0_hit));
+  ICING_ASSERT_OK(lite_index->AddHit(dog_term_id, dog_doc1_hit));
+  ICING_ASSERT_OK(lite_index->AddHit(cat_term_id, cat_doc2_hit));
+
+  // Confirm hit buffer has unsorted hits
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(3));
+
+  std::string new_lite_index_file_name =
+      index_dir_ + "/optimized/test_file.lite-idx.index";
+  LiteIndex::Options new_options(
+      new_lite_index_file_name,
+      /*hit_buffer_want_merge_bytes=*/1024 * 1024,
+      /*hit_buffer_sort_threshold_bytes=*/sizeof(TermIdHitPair) * 100);
+
+  // doc0 -> doc0, doc1 -> deleted, doc2 -> doc1
+  std::vector<DocumentId> doc_id_map = {0, kInvalidDocumentId, 1};
+  ICING_ASSERT_OK(lite_index->OptimizeInto(new_options, doc_id_map,
+                                           term_id_codec_.get(),
+                                           /*new_last_added_document_id=*/1));
+
+  // The source lite_index should still have unsorted hits (never mutated or sorted by OptimizeInto)
+  EXPECT_THAT(lite_index->GetHitBufferUnsortedSize(), Eq(3));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<LiteIndex> new_lite_index,
+      LiteIndex::Create(new_options, &icing_filesystem_));
+
+  EXPECT_THAT(new_lite_index->last_added_document_id(), Eq(1));
+  EXPECT_THAT(new_lite_index, Pointee(SizeIs(2)));
+  EXPECT_THAT(new_lite_index->GetHitBufferUnsortedSize(), Eq(0));
+
+  // "cat" should exist and have hits in doc0 and doc1 (mapped from doc2).
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t cat_new_tvi,
+                             new_lite_index->GetTermId(term_cat));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t cat_new_term_id,
+      term_id_codec_->EncodeTvi(cat_new_tvi, TviType::LITE));
+
+  std::vector<DocHitInfo> cat_hits;
+  new_lite_index->FetchHits(
+      cat_new_term_id, kSectionIdMaskAll,
+      /*only_from_prefix_sections=*/false,
+      SuggestionScoringSpecProto::SuggestionRankingStrategy::DOCUMENT_COUNT,
+      /*namespace_checker=*/nullptr, &cat_hits);
+  EXPECT_THAT(cat_hits,
+              ElementsAre(EqualsDocHitInfo(1, std::vector<SectionId>{2}),
+                          EqualsDocHitInfo(0, std::vector<SectionId>{0})));
+
+  // "cat" should have prefix property set (from cat_doc2_hit which survived).
+  IcingDynamicTrie::PropertyReader prefix_prop_reader(
+      new_lite_index->lexicon(), GetHasHitsInPrefixSectionPropertyId());
+  EXPECT_TRUE(prefix_prop_reader.HasProperty(cat_new_tvi));
+
+  // "dog" should NOT exist because doc1 was deleted.
+  EXPECT_THAT(new_lite_index->GetTermId(term_dog),
+              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
 
 }  // namespace

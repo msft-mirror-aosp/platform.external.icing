@@ -236,10 +236,11 @@ bool FlashIndexStorage::OpenHeader(int64_t file_size) {
                      << ") does not match the requested block size ("
                      << block_size << "). Defaulting to existing block size "
                      << read_header.header()->block_size;
-    ICING_ASSIGN_OR_RETURN(HeaderBlock read_header,
+    ICING_ASSIGN_OR_RETURN(HeaderBlock new_read_header,
                            HeaderBlock::Read(filesystem_, storage_sfd_.get(),
                                              read_header.header()->block_size),
                            false);
+    read_header = std::move(new_read_header);
   }
   header_block_ = std::make_unique<HeaderBlock>(std::move(read_header));
 

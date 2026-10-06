@@ -19,22 +19,10 @@
 #include <vector>
 
 #include "icing/store/document-id.h"
+#include "icing/util/document-util.h"
 
 namespace icing {
 namespace lib {
-
-namespace {
-
-DocumentId GetNewDocumentId(
-    const DocumentId& document_id,
-    const std::vector<DocumentId>& document_id_old_to_new) {
-  if (document_id < 0 || document_id >= document_id_old_to_new.size()) {
-    return kInvalidDocumentId;
-  }
-  return document_id_old_to_new[document_id];
-}
-
-}  // namespace
 
 JoinedScoredDocumentHit ScoredDocumentHit::Converter::operator()(
     ScoredDocumentHit&& scored_doc_hit) const {
@@ -54,8 +42,8 @@ JoinedScoredDocumentHit ScoredDocumentHit::Converter::operator()(
 
 std::optional<ScoredDocumentHit> ScoredDocumentHit::Optimize(
     const std::vector<DocumentId>& document_id_old_to_new) && {
-  DocumentId new_doc_id =
-      GetNewDocumentId(document_id_, document_id_old_to_new);
+  DocumentId new_doc_id = document_util::GetOptimizedDocumentId(
+      document_id_, document_id_old_to_new);
   if (new_doc_id == kInvalidDocumentId) {
     return std::nullopt;
   }

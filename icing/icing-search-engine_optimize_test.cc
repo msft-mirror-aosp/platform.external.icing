@@ -74,6 +74,7 @@ using ::testing::Eq;
 using ::testing::Ge;
 using ::testing::Gt;
 using ::testing::HasSubstr;
+using ::testing::IsEmpty;
 using ::testing::Lt;
 using ::testing::Ne;
 using ::testing::Return;
@@ -2732,6 +2733,565 @@ TEST_F(IcingSearchEngineOptimizeTest,
                 /*score=*/-0.5, /*query_index=*/1,
                 SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
   }
+}
+
+TEST_F(IcingSearchEngineOptimizeTest,
+       GetNextPage_optimizeResultStatesDisabled) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("AnotherType"))
+          .Build();
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "uri0")
+                                .SetSchema("AnotherType")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(100)
+                                .Build();
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("icing", "uri1")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(101)
+                                .AddStringProperty("body", "test one")
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("icing", "uri2")
+                                .SetSchema("AnotherType")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(102)
+                                .Build();
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("icing", "uri3")
+                                .SetSchema("AnotherType")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(103)
+                                .Build();
+  DocumentProto document4 = DocumentBuilder()
+                                .SetKey("icing", "uri4")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(104)
+                                .AddStringProperty("body", "test four")
+                                .Build();
+  DocumentProto document5 = DocumentBuilder()
+                                .SetKey("icing", "uri5")
+                                .SetSchema("AnotherType")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(105)
+                                .Build();
+  DocumentProto document6 = DocumentBuilder()
+                                .SetKey("icing", "uri6")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(106)
+                                .AddStringProperty("body", "test six")
+                                .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_optimize_result_states(false);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document0).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document5).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document6).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_query("body:test");
+
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  result_spec.set_num_per_page(1);
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // The query should match document1, document4 and document6, and they should
+  // be returned by 3 pages.
+  // First page. Should get document6.
+  SearchResultProto results1 =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results1.status(), ProtoIsOk());
+  ASSERT_THAT(results1.results(), SizeIs(1));
+  EXPECT_THAT(results1.results(0).document(), EqualsProto(document6));
+
+  // Delete document 3 and run Optimize. This will change the internal document
+  // ids:
+  // - "icing/uri0": id 0 -> id 0.
+  // - "icing/uri1": id 1 -> id 1.
+  // - "icing/uri2": id 2 -> id 2.
+  // - "icing/uri4": id 4 -> id 3.
+  // - "icing/uri5": id 5 -> id 4.
+  // - "icing/uri6": id 6 -> id 5.
+  ASSERT_THAT(icing.Delete(document3.namespace_(), document3.uri()).status(),
+              ProtoIsOk());
+  ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+
+  // Call GetNextPage to fetch the second page. ResultState should be
+  // invalidated and the second page should be empty.
+  SearchResultProto results2 = icing.GetNextPage(results1.next_page_token());
+  EXPECT_THAT(results2.status(), ProtoIsOk());
+  EXPECT_THAT(results2.results(), IsEmpty());
+  EXPECT_THAT(results2.query_stats().page_token_type(),
+              Eq(QueryStatsProto::PageTokenType::NOT_FOUND));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest, GetNextPage_optimizeResultStatesEnabled) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("AnotherType"))
+          .Build();
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "uri0")
+                                .SetSchema("AnotherType")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(100)
+                                .Build();
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("icing", "uri1")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(101)
+                                .AddStringProperty("body", "test one")
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("icing", "uri2")
+                                .SetSchema("AnotherType")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(102)
+                                .Build();
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("icing", "uri3")
+                                .SetSchema("AnotherType")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(103)
+                                .Build();
+  DocumentProto document4 = DocumentBuilder()
+                                .SetKey("icing", "uri4")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(104)
+                                .AddStringProperty("body", "test four")
+                                .Build();
+  DocumentProto document5 = DocumentBuilder()
+                                .SetKey("icing", "uri5")
+                                .SetSchema("AnotherType")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(105)
+                                .Build();
+  DocumentProto document6 = DocumentBuilder()
+                                .SetKey("icing", "uri6")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(106)
+                                .AddStringProperty("body", "test six")
+                                .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_optimize_result_states(true);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document0).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document5).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document6).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_query("body:test");
+
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  result_spec.set_num_per_page(1);
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // The query should match document1, document4 and document6, and they should
+  // be returned by 3 pages.
+  // First page. Should get document6.
+  SearchResultProto results1 =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results1.status(), ProtoIsOk());
+  ASSERT_THAT(results1.results(), SizeIs(1));
+  EXPECT_THAT(results1.results(0).document(), EqualsProto(document6));
+
+  // Delete document 3 and run Optimize. This will change the internal document
+  // ids:
+  // - "icing/uri0": id 0 -> id 0.
+  // - "icing/uri1": id 1 -> id 1.
+  // - "icing/uri2": id 2 -> id 2.
+  // - "icing/uri4": id 4 -> id 3.
+  // - "icing/uri5": id 5 -> id 4.
+  // - "icing/uri6": id 6 -> id 5.
+  ASSERT_THAT(icing.Delete(document3.namespace_(), document3.uri()).status(),
+              ProtoIsOk());
+  ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+
+  // Call GetNextPage to fetch the second page. Document4 should be returned,
+  // although Optimize() changed the internal document ids.
+  SearchResultProto results2 = icing.GetNextPage(results1.next_page_token());
+  EXPECT_THAT(results2.status(), ProtoIsOk());
+  ASSERT_THAT(results2.results(), SizeIs(1));
+  EXPECT_THAT(results2.results(0).document(), EqualsProto(document4));
+
+  // Delete document 0, 2, 5 and run Optimize. This will change the internal
+  // document ids:
+  // - "icing/uri1": id 1 -> id 0.
+  // - "icing/uri4": id 3 -> id 1.
+  // - "icing/uri6": id 5 -> id 2.
+  ASSERT_THAT(icing.Delete(document0.namespace_(), document0.uri()).status(),
+              ProtoIsOk());
+  ASSERT_THAT(icing.Delete(document2.namespace_(), document2.uri()).status(),
+              ProtoIsOk());
+  ASSERT_THAT(icing.Delete(document5.namespace_(), document5.uri()).status(),
+              ProtoIsOk());
+  ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+
+  // Call GetNextPage to fetch the third page. Document1 should be returned,
+  // although Optimize() changed the internal document ids.
+  SearchResultProto results3 = icing.GetNextPage(results2.next_page_token());
+  EXPECT_THAT(results3.status(), ProtoIsOk());
+  ASSERT_THAT(results3.results(), SizeIs(1));
+  EXPECT_THAT(results3.results(0).document(), EqualsProto(document1));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest,
+       GetNextPage_optimizeResultStatesEnabled_embeddingSnippetShouldWork) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("Email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("body")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("embedding2")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_REPEATED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("AnotherType"))
+          .Build();
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("icing", "uri0")
+                                .SetSchema("AnotherType")
+                                .SetCreationTimestampMs(1)
+                                .Build();
+  DocumentProto document1 =
+      DocumentBuilder()
+          .SetKey("icing", "uri1")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1)
+          .AddStringProperty("body", "foo")
+          .AddVectorProperty(
+              "embedding1",
+              CreateVector("my_model_v1", {0.1, 0.2, 0.3, 0.4, 0.5}),
+              CreateVector("my_model_v1", {1, 2, 3, 4, 5}),
+              CreateVector("my_model_v1", {0.6, 0.7, 0.8, 0.9, -1}))
+          .AddVectorProperty(
+              "embedding2",
+              CreateVector("my_model_v1", {-0.1, -0.2, -0.3, 0.4, 0.5}),
+              CreateVector("my_model_v2", {0.6, 0.7, 0.8}))
+          .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("icing", "uri2")
+                                .SetSchema("AnotherType")
+                                .SetCreationTimestampMs(1)
+                                .Build();
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("icing", "uri3")
+                                .SetSchema("AnotherType")
+                                .SetCreationTimestampMs(1)
+                                .Build();
+  DocumentProto document4 =
+      DocumentBuilder()
+          .SetKey("icing", "uri4")
+          .SetSchema("Email")
+          .SetCreationTimestampMs(1)
+          .AddVectorProperty(
+              "embedding1",
+              CreateVector("my_model_v1", {-0.1, 0.2, -0.3, -0.4, 0.5}))
+          .AddVectorProperty("embedding2",
+                             CreateVector("my_model_v2", {0.6, 0.7, -0.8}))
+          .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_optimize_result_states(true);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document0).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(
+      std::string(kListFilterQueryLanguageFeature));
+
+  // Add an embedding query with semantic scores:
+  // - document 1: -0.5 (embedding1[0]), -5 (embedding1[1]), 1 (embedding1[2]),
+  //                0.3 (embedding2[0])
+  // - document 4: -0.9 (embedding1[0])
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model_v1", {1, -1, -1, 1, -1});
+  // Add an embedding query with semantic scores:
+  // - document 1: -0.5 (embedding2[1])
+  // - document 4: -2.1 (embedding2[0])
+  *search_spec.add_embedding_query_vectors() =
+      CreateVector("my_model_v2", {-1, -1, 1});
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+  scoring_spec.set_rank_by(
+      ScoringSpecProto::RankingStrategy::ADVANCED_SCORING_EXPRESSION);
+
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  result_spec.set_num_per_page(1);
+  result_spec.mutable_snippet_spec()->set_num_to_snippet(3);
+  result_spec.mutable_snippet_spec()->set_num_matches_per_property(5);
+  result_spec.mutable_snippet_spec()->set_get_embedding_match_info(true);
+
+  // Match documents that have embeddings with a similarity closer to 0 that is
+  // greater than -1.
+  //
+  // The matched embeddings for each doc are:
+  // - document 1: -0.5 (embedding1[0]), 1 (embedding1[2]), 0.3 (embedding2[0])
+  // - document 4: -0.9 (embedding1[0])
+  // The scoring expression for each doc will be evaluated as:
+  // - document 1: sum({-0.5, 1, 0.3}) + sum({}) = 0.8
+  // - document 4: sum({-0.9}) + sum({}) = -0.9
+  search_spec.set_query("semanticSearch(getEmbeddingParameter(0), -1)");
+  scoring_spec.set_advanced_scoring_expression(
+      "sum(this.matchedSemanticScores(getEmbeddingParameter(0)))");
+
+  // The query should match document1 and document4, and they should be returned
+  // by 2 pages.
+  // First page. Should get document1.
+  SearchResultProto results1 =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results1.status(), ProtoIsOk());
+  ASSERT_THAT(results1.results(), SizeIs(1));
+  EXPECT_THAT(results1.results(0).document(), EqualsProto(document1));
+  EXPECT_THAT(results1.results(0).score(), DoubleNear(-0.5 + 1 + 0.3, kEps));
+  // Snippet
+  ASSERT_THAT(results1.results(0).snippet().entries(), SizeIs(3));
+  EXPECT_THAT(results1.results(0).snippet().entries(0).property_name(),
+              Eq("embedding1[0]"));
+  EXPECT_THAT(
+      results1.results(0).snippet().entries(0).embedding_matches(),
+      ElementsAre(
+          EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+              /*score=*/-0.5, /*query_index=*/0,
+              SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+  EXPECT_THAT(results1.results(0).snippet().entries(1).property_name(),
+              Eq("embedding1[2]"));
+  EXPECT_THAT(
+      results1.results(0).snippet().entries(1).embedding_matches(),
+      ElementsAre(
+          EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+              /*score=*/1, /*query_index=*/0,
+              SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+  EXPECT_THAT(results1.results(0).snippet().entries(2).property_name(),
+              Eq("embedding2[0]"));
+  EXPECT_THAT(
+      results1.results(0).snippet().entries(2).embedding_matches(),
+      ElementsAre(
+          EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+              /*score=*/0.3, /*query_index=*/0,
+              SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+
+  // Delete document 0, 2, 3 and run Optimize. This will change the internal
+  // document ids:
+  // - "icing/uri1": id 1 -> id 0.
+  // - "icing/uri4": id 4 -> id 1.
+  ASSERT_THAT(icing.Delete(document0.namespace_(), document0.uri()).status(),
+              ProtoIsOk());
+  ASSERT_THAT(icing.Delete(document2.namespace_(), document2.uri()).status(),
+              ProtoIsOk());
+  ASSERT_THAT(icing.Delete(document3.namespace_(), document3.uri()).status(),
+              ProtoIsOk());
+  ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+
+  // Call GetNextPage to fetch the second page. Document4 should be returned and
+  // snippet should work, although Optimize() changed the internal document ids.
+  SearchResultProto results2 = icing.GetNextPage(results1.next_page_token());
+  EXPECT_THAT(results2.status(), ProtoIsOk());
+  ASSERT_THAT(results2.results(), SizeIs(1));
+  EXPECT_THAT(results2.results(0).document(), EqualsProto(document4));
+  EXPECT_THAT(results2.results(0).score(), DoubleNear(-0.9, kEps));
+  // Snippet
+  ASSERT_THAT(results2.results(0).snippet().entries(), SizeIs(1));
+  EXPECT_THAT(results2.results(0).snippet().entries(0).property_name(),
+              Eq("embedding1"));
+  EXPECT_THAT(
+      results2.results(0).snippet().entries(0).embedding_matches(),
+      ElementsAre(
+          EqualsEmbeddingMatchSnippetProto(CreateEmbeddingMatchSnippetProto(
+              /*score=*/-0.9, /*query_index=*/0,
+              SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT))));
+}
+
+TEST_F(
+    IcingSearchEngineOptimizeTest,
+    GetNextPage_optimizeResultStatesEnabled_namespaceResultGroupingShouldWork) {
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Email").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .AddType(SchemaTypeConfigBuilder().SetType("AnotherType"))
+          .Build();
+  DocumentProto document0 = DocumentBuilder()
+                                .SetKey("ns0", "uri0")
+                                .SetSchema("AnotherType")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(100)
+                                .Build();
+  DocumentProto document1 = DocumentBuilder()
+                                .SetKey("ns1", "uri1")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(101)
+                                .AddStringProperty("body", "test one")
+                                .Build();
+  DocumentProto document2 = DocumentBuilder()
+                                .SetKey("ns1", "uri2")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(102)
+                                .AddStringProperty("body", "test two")
+                                .Build();
+  DocumentProto document3 = DocumentBuilder()
+                                .SetKey("ns2", "uri3")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(103)
+                                .AddStringProperty("body", "test three")
+                                .Build();
+  DocumentProto document4 = DocumentBuilder()
+                                .SetKey("ns2", "uri4")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(104)
+                                .AddStringProperty("body", "test four")
+                                .Build();
+  DocumentProto document5 = DocumentBuilder()
+                                .SetKey("ns3", "uri5")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(105)
+                                .AddStringProperty("body", "test five")
+                                .Build();
+  DocumentProto document6 = DocumentBuilder()
+                                .SetKey("ns3", "uri6")
+                                .SetSchema("Email")
+                                .SetCreationTimestampMs(1)
+                                .SetScore(106)
+                                .AddStringProperty("body", "test six")
+                                .Build();
+
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_enable_optimize_result_states(true);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document0).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document3).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document4).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document5).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(document6).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+  search_spec.set_query("body:test");
+
+  ResultSpecProto result_spec = ResultSpecProto::default_instance();
+  result_spec.set_num_per_page(1);
+  result_spec.set_result_group_type(ResultSpecProto::NAMESPACE);
+  ResultSpecProto::ResultGrouping* result_grouping1 =
+      result_spec.add_result_groupings();
+  ResultSpecProto::ResultGrouping::Entry* entry =
+      result_grouping1->add_entry_groupings();
+  result_grouping1->set_max_results(1);
+  entry->set_namespace_("ns1");
+  entry = result_grouping1->add_entry_groupings();
+  entry->set_namespace_("ns2");
+  ResultSpecProto::ResultGrouping* result_grouping2 =
+      result_spec.add_result_groupings();
+  result_grouping2->set_max_results(1);
+  entry = result_grouping2->add_entry_groupings();
+  entry->set_namespace_("ns3");
+
+  ScoringSpecProto scoring_spec = GetDefaultScoringSpec();
+
+  // The query should match document1 to document6, with result grouping by
+  // namespace.
+  // First page. Should get document6.
+  // Note: document6 is in "ns3", so result_grouping2 ("ns3") reaches the limit
+  //   after returning document6.
+  SearchResultProto results1 =
+      icing.Search(search_spec, scoring_spec, result_spec);
+  EXPECT_THAT(results1.status(), ProtoIsOk());
+  ASSERT_THAT(results1.results(), SizeIs(1));
+  EXPECT_THAT(results1.results(0).document(), EqualsProto(document6));
+
+  // Delete document 0 and run Optimize. This will change the internal namespace
+  // ids:
+  // - "ns0": id 0 -> X (deleted).
+  // - "ns1": id 1 -> id 0.
+  // - "ns2": id 2 -> id 1.
+  // - "ns3": id 3 -> id 2.
+  ASSERT_THAT(icing.Delete(document0.namespace_(), document0.uri()).status(),
+              ProtoIsOk());
+  ASSERT_THAT(icing.Optimize().status(), ProtoIsOk());
+
+  // Call GetNextPage to fetch the second page. Although document5 was matched,
+  // result grouping limit should skip it, and document4 should be returned.
+  // Note: document4 is in "ns2", so result_grouping1 ("ns1", "ns2") reaches the
+  //   limit after returning document4.
+  SearchResultProto results2 = icing.GetNextPage(results1.next_page_token());
+  EXPECT_THAT(results2.status(), ProtoIsOk());
+  ASSERT_THAT(results2.results(), SizeIs(1));
+  EXPECT_THAT(results2.results(0).document(), EqualsProto(document4));
+
+  // Call GetNextPage to fetch the third page. Should be an empty page since
+  // result grouping limits are reached for all groups.
+  SearchResultProto results3 = icing.GetNextPage(results2.next_page_token());
+  EXPECT_THAT(results3.status(), ProtoIsOk());
+  EXPECT_THAT(results3.results(), IsEmpty());
 }
 
 }  // namespace

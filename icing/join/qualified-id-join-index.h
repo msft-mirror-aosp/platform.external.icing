@@ -207,6 +207,30 @@ class QualifiedIdJoinIndex : public PersistentStorage {
       const std::vector<NamespaceId>& namespace_id_old_to_new,
       DocumentId new_last_added_document_id) = 0;
 
+  // Transfers and compacts data into a new qualified id join index under
+  // new_working_path. Unlike Optimize(), this method does not modify or swap
+  // the current index directory, and writes directly into new_working_path.
+  //
+  // - document_store: only used in V3.
+  // - new_working_path: destination working path for the optimized index.
+  // - document_id_old_to_new: a map for converting old document id to new
+  //   document id.
+  // - namespace_id_old_to_new: a map for converting old namespace id to new
+  //   namespace id.
+  // - new_last_added_document_id: will be used to update the last added
+  //                               document id in the qualified id type joinable
+  //                               index.
+  //
+  // Returns:
+  //   - OK on success
+  //   - INVALID_ARGUMENT_ERROR if new_working_path is the same as the current
+  //   - INTERNAL_ERROR on I/O error
+  virtual libtextclassifier3::Status OptimizeInto(
+      const DocumentStore* document_store, const std::string& new_working_path,
+      const std::vector<DocumentId>& document_id_old_to_new,
+      const std::vector<NamespaceId>& namespace_id_old_to_new,
+      DocumentId new_last_added_document_id) const = 0;
+
   // Clears all data and set last_added_document_id to kInvalidDocumentId.
   //
   // Returns:

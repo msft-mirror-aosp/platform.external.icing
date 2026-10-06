@@ -14,12 +14,16 @@
 
 #include "icing/result/result-state-manager.h"
 
+#include <atomic>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <queue>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/absl_ports/mutex.h"
@@ -149,6 +153,44 @@ ResultStateManager::GetNextPage(uint64_t next_page_token, int32_t max_results,
     next_page_token = kInvalidNextPageToken;
   }
   return std::make_pair(next_page_token, std::move(page_result));
+}
+
+ResultStateManager::OptimizeResult ResultStateManager::Optimize(
+    const DocumentStore::OptimizeResult& doc_store_optimize_result) {
+  absl_ports::unique_lock l(&mutex_);
+
+  int num_result_states_optimized = 0;
+  std::vector<uint64_t> failed_tokens;
+  for (auto& [next_page_token, result_state] : result_state_map_) {
+    absl_ports::unique_lock result_state_l(&result_state->mutex);
+
+    auto status = result_state->Optimize(doc_store_optimize_result);
+    if (!status.ok()) {
+      // If we fail to convert optimized ids for a result state:
+      // - Skip this result state and invalidate it later.
+      // - Clear the result state to release the memory. Since result_state is a
+      //   shared_ptr and (although unlikely) it might be used by another thread
+      //   after releasing the lock here, we should clear the result state if
+      //   failing to convert optimized ids "atomically", in order to avoid
+      //   ResultState being at a "partially optimized" (corrupted) state.
+      ICING_LOG(WARNING)
+          << "Failed to convert optimized ids for result state due to: "
+          << status.error_message() << ". Invalidate this result state.";
+      result_state->Clear();
+      failed_tokens.push_back(next_page_token);
+    } else {
+      ++num_result_states_optimized;
+    }
+  }
+
+  // Finally, invalidate all failed result state tokens.
+  for (uint64_t failed_token : failed_tokens) {
+    InternalInvalidateResultState(failed_token);
+  }
+
+  return OptimizeResult{
+      .num_result_states_optimized = num_result_states_optimized,
+      .num_result_states_invalidated = static_cast<int>(failed_tokens.size())};
 }
 
 int ResultStateManager::GetNumActiveResultStates(int64_t current_time_ms) {
