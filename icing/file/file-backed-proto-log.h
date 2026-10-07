@@ -573,7 +573,11 @@ libtextclassifier3::StatusOr<ProtoT> FileBackedProtoLog<ProtoT>::ReadProto(
   // Deserialize proto
   ProtoT proto;
   if (header_->compress) {
-    protobuf_ports::GzipInputStream decompress_stream(&proto_stream);
+    std::unique_ptr<uint8_t[]> buffer =
+        std::make_unique<uint8_t[]>(protobuf_ports::kDefaultBufferSize);
+    protobuf_ports::GzipInputStream decompress_stream(
+        &proto_stream, protobuf_ports::GzipInputStream::AUTO, buffer.get(),
+        protobuf_ports::kDefaultBufferSize);
     proto.ParseFromZeroCopyStream(&decompress_stream);
   } else {
     proto.ParseFromZeroCopyStream(&proto_stream);

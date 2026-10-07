@@ -14,6 +14,7 @@
 
 #include "icing/store/dynamic-trie-key-mapper.h"
 
+#include <limits>
 #include <string>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
@@ -52,13 +53,13 @@ TEST_F(DynamicTrieKeyMapperTest, InvalidBaseDir) {
 TEST_F(DynamicTrieKeyMapperTest, NegativeMaxKeyMapperSizeReturnsInternalError) {
   EXPECT_THAT(
       DynamicTrieKeyMapper<DocumentId>::Create(filesystem_, base_dir_, -1),
-      StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 TEST_F(DynamicTrieKeyMapperTest, TooLargeMaxKeyMapperSizeReturnsInternalError) {
   EXPECT_THAT(DynamicTrieKeyMapper<DocumentId>::Create(
                   filesystem_, base_dir_, std::numeric_limits<int>::max()),
-              StatusIs(libtextclassifier3::StatusCode::INTERNAL));
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
 }
 
 }  // namespace

@@ -23,7 +23,7 @@ option objc_class_prefix = "ICNG";
 // Canonical status to indicate the results of API calls.
 // Next tag: 3
 message StatusProto {
-  // Next tag: 10
+  // Next tag: 11
   enum Code {
     // A default for all other use-cases. Should never be used in practice. This
     // may happen if there are backwards-compatibility issues.

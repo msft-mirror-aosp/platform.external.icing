@@ -46,6 +46,11 @@ uint32_t Crc32::Append(const std::string_view str) {
   return crc_;
 }
 
+uint32_t Crc32::Combine(const Crc32& other_crc, int other_data_size) {
+  crc_ = crc32_combine(crc_, other_crc.Get(), other_data_size);
+  return crc_;
+}
+
 libtextclassifier3::StatusOr<uint32_t> Crc32::UpdateWithXor(
     const std::string_view xored_str, int full_data_size, int position) {
   // For appending, use Append().

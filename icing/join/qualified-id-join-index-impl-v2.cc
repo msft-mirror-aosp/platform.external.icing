@@ -38,6 +38,7 @@
 #include "icing/schema/joinable-property.h"
 #include "icing/store/document-filter-data.h"
 #include "icing/store/document-id.h"
+#include "icing/store/document-store.h"
 #include "icing/store/key-mapper.h"
 #include "icing/store/namespace-id-fingerprint.h"
 #include "icing/store/namespace-id.h"
@@ -296,6 +297,7 @@ QualifiedIdJoinIndexImplV2::GetIterator(
 }
 
 libtextclassifier3::Status QualifiedIdJoinIndexImplV2::Optimize(
+    const DocumentStore* /*document_store*/,
     const std::vector<DocumentId>& document_id_old_to_new,
     const std::vector<NamespaceId>& namespace_id_old_to_new,
     DocumentId new_last_added_document_id) {
@@ -336,9 +338,9 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV2::Optimize(
   }
 
   // Reinitialize qualified id join index.
-  if (!filesystem_.PRead(GetMetadataFilePath(working_path_).c_str(),
-                         metadata_buffer_.get(), kMetadataFileSize,
-                         /*offset=*/0)) {
+  if (filesystem_.PRead(GetMetadataFilePath(working_path_).c_str(),
+                        metadata_buffer_.get(), kMetadataFileSize,
+                        /*offset=*/0) != kMetadataFileSize) {
     return absl_ports::InternalError("Fail to read metadata file");
   }
   ICING_ASSIGN_OR_RETURN(
@@ -359,6 +361,31 @@ libtextclassifier3::Status QualifiedIdJoinIndexImplV2::Optimize(
       std::make_unique<FlashIndexStorage>(std::move(flash_index_storage));
 
   return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status QualifiedIdJoinIndexImplV2::OptimizeInto(
+    const DocumentStore* /*document_store*/,
+    const std::string& new_working_path,
+    const std::vector<DocumentId>& document_id_old_to_new,
+    const std::vector<NamespaceId>& namespace_id_old_to_new,
+    DocumentId new_last_added_document_id) const {
+  if (new_working_path == working_path_) {
+    return absl_ports::InvalidArgumentError(
+        "New working path is the same as the current one.");
+  }
+  ICING_RETURN_IF_ERROR(
+      QualifiedIdJoinIndex::Discard(filesystem_, new_working_path));
+
+  // Transfer all data from the current to new qualified id join index. Also
+  // PersistToDisk and destruct the instance after finishing.
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<QualifiedIdJoinIndexImplV2> new_index,
+      Create(filesystem_, new_working_path, pre_mapping_fbv_));
+  ICING_RETURN_IF_ERROR(TransferIndex(
+      document_id_old_to_new, namespace_id_old_to_new, new_index.get()));
+  new_index->set_last_added_document_id(new_last_added_document_id);
+  new_index->SetDirty();
+  return new_index->PersistToDisk();
 }
 
 libtextclassifier3::Status QualifiedIdJoinIndexImplV2::Clear() {
@@ -461,9 +488,9 @@ QualifiedIdJoinIndexImplV2::InitializeExistingFiles(
     bool pre_mapping_fbv) {
   // PRead metadata file.
   auto metadata_buffer = std::make_unique<uint8_t[]>(kMetadataFileSize);
-  if (!filesystem.PRead(GetMetadataFilePath(working_path).c_str(),
-                        metadata_buffer.get(), kMetadataFileSize,
-                        /*offset=*/0)) {
+  if (filesystem.PRead(GetMetadataFilePath(working_path).c_str(),
+                       metadata_buffer.get(), kMetadataFileSize,
+                       /*offset=*/0) != kMetadataFileSize) {
     return absl_ports::InternalError("Fail to read metadata file");
   }
 

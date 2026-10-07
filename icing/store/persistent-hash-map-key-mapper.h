@@ -108,8 +108,8 @@ class PersistentHashMapKeyMapper : public KeyMapper<T, Formatter> {
     return value;
   }
 
-  bool Delete(std::string_view key) override {
-    return persistent_hash_map_->Delete(key).ok();
+  libtextclassifier3::Status Delete(std::string_view key) override {
+    return persistent_hash_map_->Delete(key);
   }
 
   std::unique_ptr<typename KeyMapper<T, Formatter>::Iterator> GetIterator()

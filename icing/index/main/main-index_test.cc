@@ -23,6 +23,7 @@
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "icing/feature-flags.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/hit/hit.h"
@@ -39,6 +40,7 @@
 #include "icing/store/document-id.h"
 #include "icing/store/namespace-id.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/test-feature-flags.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/status-macros.h"
 
@@ -99,10 +101,11 @@ class MainIndexTest : public testing::Test {
     index_dir_ = GetTestTempDir() + "/test_dir";
     ASSERT_TRUE(filesystem_.CreateDirectoryRecursively(index_dir_.c_str()));
 
+    feature_flags_ = std::make_unique<FeatureFlags>(GetTestFeatureFlags());
+
     std::string lite_index_file_name = index_dir_ + "/test_file.lite-idx.index";
     LiteIndex::Options options(lite_index_file_name,
                                /*hit_buffer_want_merge_bytes=*/1024 * 1024,
-                               /*hit_buffer_sort_at_indexing=*/true,
                                /*hit_buffer_sort_threshold_bytes=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                                LiteIndex::Create(options, &icing_filesystem_));
@@ -121,6 +124,7 @@ class MainIndexTest : public testing::Test {
   }
 
   std::string index_dir_;
+  std::unique_ptr<FeatureFlags> feature_flags_;
   Filesystem filesystem_;
   IcingFilesystem icing_filesystem_;
   std::unique_ptr<LiteIndex> lite_index_;
@@ -137,7 +141,7 @@ TEST_F(MainIndexTest, MainIndexCreateIOFailure) {
       .WillByDefault(Return(false));
   std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
   EXPECT_THAT(MainIndex::Create(main_index_file_name, &filesystem_,
-                                &mock_icing_filesystem),
+                                &mock_icing_filesystem, feature_flags_.get()),
               StatusIs(libtextclassifier3::StatusCode::INTERNAL));
 }
 
@@ -146,8 +150,8 @@ TEST_F(MainIndexTest, MainIndexGetAccessorForPrefixTermNotFound) {
   std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<MainIndex> main_index,
-      MainIndex::Create(main_index_file_name, &filesystem_,
-                        &icing_filesystem_));
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
   EXPECT_THAT(main_index->GetAccessorForPrefixTerm("foo"),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
@@ -170,8 +174,8 @@ TEST_F(MainIndexTest, MainIndexGetAccessorForPrefixReturnsValidAccessor) {
   std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<MainIndex> main_index,
-      MainIndex::Create(main_index_file_name, &filesystem_,
-                        &icing_filesystem_));
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
 
   // 3. Merge the index. The main index should contain "foo".
   ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
@@ -197,8 +201,8 @@ TEST_F(MainIndexTest, MainIndexGetAccessorForPrefixReturnsNotFound) {
   std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<MainIndex> main_index,
-      MainIndex::Create(main_index_file_name, &filesystem_,
-                        &icing_filesystem_));
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
 
   // 3. Merge the index. The main index should return not found when we search
   // prefix contain "foo".
@@ -213,8 +217,8 @@ TEST_F(MainIndexTest, MainIndexGetAccessorForExactTermNotFound) {
   std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<MainIndex> main_index,
-      MainIndex::Create(main_index_file_name, &filesystem_,
-                        &icing_filesystem_));
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
   EXPECT_THAT(main_index->GetAccessorForExactTerm("foo"),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
@@ -237,8 +241,8 @@ TEST_F(MainIndexTest, MainIndexGetAccessorForExactReturnsValidAccessor) {
   std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<MainIndex> main_index,
-      MainIndex::Create(main_index_file_name, &filesystem_,
-                        &icing_filesystem_));
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
 
   // 3. Merge the index. The main index should contain "foo".
   ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
@@ -289,8 +293,8 @@ TEST_F(MainIndexTest, MergeIndexToEmpty) {
   std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<MainIndex> main_index,
-      MainIndex::Create(main_index_file_name, &filesystem_,
-                        &icing_filesystem_));
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
 
   std::vector<DocHitInfo> hits =
       GetExactHits(main_index.get(), /*term_start_index=*/0,
@@ -370,8 +374,8 @@ TEST_F(MainIndexTest, MergeIndexToPreexisting) {
   std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<MainIndex> main_index,
-      MainIndex::Create(main_index_file_name, &filesystem_,
-                        &icing_filesystem_));
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
 
   // 3. Merge the index. The main index should contain "fool", "foot"
   // and "far" as well as a branch points for "foo" and "f". "fa" and "fo"
@@ -384,7 +388,6 @@ TEST_F(MainIndexTest, MergeIndexToPreexisting) {
   std::string lite_index_file_name2 = index_dir_ + "/test_file.lite-idx.index2";
   LiteIndex::Options options(lite_index_file_name2,
                              /*hit_buffer_want_merge_bytes=*/1024 * 1024,
-                             /*hit_buffer_sort_at_indexing=*/true,
                              /*hit_buffer_sort_threshold_bytes=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                              LiteIndex::Create(options, &icing_filesystem_));
@@ -488,8 +491,8 @@ TEST_F(MainIndexTest, ExactRetrievedInPrefixSearch) {
   std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<MainIndex> main_index,
-      MainIndex::Create(main_index_file_name, &filesystem_,
-                        &icing_filesystem_));
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
 
   // 3. Merge the lite lexicon. The main lexicon should contain "foot" and
   // "foo".
@@ -542,8 +545,8 @@ TEST_F(MainIndexTest, PrefixNotRetrievedInExactSearch) {
   std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<MainIndex> main_index,
-      MainIndex::Create(main_index_file_name, &filesystem_,
-                        &icing_filesystem_));
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
 
   // 3. Merge the lite lexicon. The main lexicon should contain "foot" and
   // "foo".
@@ -564,7 +567,7 @@ TEST_F(MainIndexTest, PrefixNotRetrievedInExactSearch) {
 }
 
 TEST_F(MainIndexTest,
-       SearchChainedPostingListsShouldMergeSectionsAndTermFrequency) {
+       SearchChainedPostingLists_shouldMergeSectionsAndTermFrequency) {
   // Index 2048 document with 3 hits in each document. When merged into the main
   // index, this will 1) lead to a chained posting list and 2) split at least
   // one document's hits across multiple posting lists.
@@ -602,8 +605,8 @@ TEST_F(MainIndexTest,
   std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<MainIndex> main_index,
-      MainIndex::Create(main_index_file_name, &filesystem_,
-                        &icing_filesystem_));
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
 
   // 3. Merge the lite index.
   ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
@@ -639,6 +642,62 @@ TEST_F(MainIndexTest,
   EXPECT_THAT(expected_document_id, Eq(-1));
 }
 
+TEST_F(
+    MainIndexTest,
+    SearchChainedPostingLists_skipAllHitsInTheFirstPLShouldFetchTheNextUntilHitFound) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t tvi,
+      lite_index_->InsertTerm("foo", TermMatchType::EXACT_ONLY, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(tvi, TviType::LITE));
+  SectionId section_id = 0;
+  // Create hits in several chained posting lists.
+  // - Doc 0 to doc 2999 contain prefix hits for "foo" in section 0.
+  // - Doc 3000 contains an exact hit for "foo" in section 0.
+  // - Doc 3001 to 9999 contain prefix hits for "foo" in section 0.
+  for (DocumentId document_id = 0; document_id < 3000; ++document_id) {
+    Hit doc_hit(section_id, document_id, Hit::kDefaultTermFrequency,
+                /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+                /*is_stemmed_hit=*/false);
+    ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit));
+  }
+
+  Hit doc_hit3000(section_id, /*document_id=*/3000, Hit::kDefaultTermFrequency,
+                  /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                  /*is_stemmed_hit=*/false);
+  ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit3000));
+
+  for (DocumentId document_id = 3001; document_id < 10000; ++document_id) {
+    Hit doc_hit(section_id, document_id, Hit::kDefaultTermFrequency,
+                /*is_in_prefix_section=*/true, /*is_prefix_hit=*/true,
+                /*is_stemmed_hit=*/false);
+    ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit));
+  }
+
+  std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<MainIndex> main_index,
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
+
+  ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
+
+  // Now, get exact hits for "foo". We should only get the hit from doc 3000.
+  // - All hits from the 1st posting list will be skipped because they are
+  //   prefix hits.
+  // - DocHitInfoIteratorTermMainExact should move to the 2nd, 3rd, ... PLs
+  //   until fetching hits and make the cache list containing at least 2 hits.
+  //
+  // It tests the correctness of the 1st posting list page handling when all
+  // hits are skipped.
+  std::vector<DocHitInfo> hits =
+      GetExactHits(main_index.get(), /*term_start_index=*/0,
+                   /*unnormalized_term_length=*/0, "foo");
+  EXPECT_THAT(
+      hits, ElementsAre(EqualsDocHitInfo(/*document_id=*/3000,
+                                         std::vector<SectionId>{section_id})));
+}
+
 TEST_F(MainIndexTest, MergeIndexBackfilling) {
   // 1. Index one doc in the Lite Index:
   // - Doc0 {"fool" is_in_prefix_section=true}
@@ -657,8 +716,8 @@ TEST_F(MainIndexTest, MergeIndexBackfilling) {
   std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<MainIndex> main_index,
-      MainIndex::Create(main_index_file_name, &filesystem_,
-                        &icing_filesystem_));
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
 
   // 3. Merge the index. The main index should contain "fool".
   ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
@@ -668,7 +727,6 @@ TEST_F(MainIndexTest, MergeIndexBackfilling) {
   std::string lite_index_file_name2 = index_dir_ + "/test_file.lite-idx.index2";
   LiteIndex::Options options(lite_index_file_name2,
                              /*hit_buffer_want_merge_bytes=*/1024 * 1024,
-                             /*hit_buffer_sort_at_indexing=*/true,
                              /*hit_buffer_sort_threshold_bytes=*/1024 * 8);
   ICING_ASSERT_OK_AND_ASSIGN(lite_index_,
                              LiteIndex::Create(options, &icing_filesystem_));
@@ -722,8 +780,8 @@ TEST_F(MainIndexTest, OneHitInTheFirstPageForTwoPagesMainIndex) {
   std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<MainIndex> main_index,
-      MainIndex::Create(main_index_file_name, &filesystem_,
-                        &icing_filesystem_));
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
 
   ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
   std::vector<DocHitInfo> hits =
@@ -735,6 +793,103 @@ TEST_F(MainIndexTest, OneHitInTheFirstPageForTwoPagesMainIndex) {
         hits[num_docs - 1 - document_id],
         EqualsDocHitInfo(document_id, std::vector<SectionId>{section_id}));
   }
+}
+
+TEST_F(MainIndexTest, Reset) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t tvi,
+      lite_index_->InsertTerm("foo", TermMatchType::EXACT_ONLY, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(tvi, TviType::LITE));
+  SectionId section_id = 0;
+  // Add 32 docs (id 0 to 31).
+  int num_docs = 32;
+  for (DocumentId document_id = 0; document_id < num_docs; ++document_id) {
+    Hit doc_hit(section_id, document_id, Hit::kDefaultTermFrequency,
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
+    ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit));
+  }
+  lite_index_->set_last_added_document_id(num_docs - 1);
+
+  std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<MainIndex> main_index,
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
+
+  ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
+  ASSERT_THAT(main_index->last_added_document_id(), Eq(num_docs - 1));
+
+  // Reset the main index. Last added document id should be reset to
+  // kInvalidDocumentId, and all hits should be deleted.
+  ICING_ASSERT_OK(main_index->Reset());
+  EXPECT_THAT(main_index->last_added_document_id(), Eq(kInvalidDocumentId));
+  std::vector<DocHitInfo> hits_after_reset =
+      GetExactHits(main_index.get(), /*term_start_index=*/0,
+                   /*unnormalized_term_length=*/0, "foo");
+  EXPECT_THAT(hits_after_reset, IsEmpty());
+
+  // Add back hits to the main index. This makes sure every member is still
+  // valid after Reset().
+  ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
+  EXPECT_THAT(main_index->last_added_document_id(), Eq(num_docs - 1));
+  std::vector<DocHitInfo> hits =
+      GetExactHits(main_index.get(), /*term_start_index=*/0,
+                   /*unnormalized_term_length=*/0, "foo");
+  ASSERT_THAT(hits, SizeIs(num_docs));
+  for (DocumentId document_id = num_docs - 1; document_id >= 0; --document_id) {
+    ASSERT_THAT(
+        hits[num_docs - 1 - document_id],
+        EqualsDocHitInfo(document_id, std::vector<SectionId>{section_id}));
+  }
+}
+
+TEST_F(MainIndexTest, OptimizeInto) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      uint32_t tvi,
+      lite_index_->InsertTerm("foo", TermMatchType::EXACT_ONLY, kNamespace0));
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t foo_term_id,
+                             term_id_codec_->EncodeTvi(tvi, TviType::LITE));
+  SectionId section_id = 0;
+  // Add 3 docs (0, 1, 2).
+  for (DocumentId document_id = 0; document_id < 3; ++document_id) {
+    Hit doc_hit(section_id, document_id, Hit::kDefaultTermFrequency,
+                /*is_in_prefix_section=*/false, /*is_prefix_hit=*/false,
+                /*is_stemmed_hit=*/false);
+    ICING_ASSERT_OK(lite_index_->AddHit(foo_term_id, doc_hit));
+  }
+  lite_index_->set_last_added_document_id(2);
+
+  std::string main_index_file_name = index_dir_ + "/test_file.idx.index";
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<MainIndex> main_index,
+      MainIndex::Create(main_index_file_name, &filesystem_, &icing_filesystem_,
+                        feature_flags_.get()));
+
+  ICING_ASSERT_OK(Merge(*lite_index_, *term_id_codec_, main_index.get()));
+  ASSERT_THAT(main_index->last_added_document_id(), Eq(2));
+
+  // OptimizeInto new directory
+  std::string new_main_index_file_name =
+      index_dir_ + "/optimized/test_file.idx.index";
+  std::vector<DocumentId> doc_id_map = {0, kInvalidDocumentId, 1};
+  ICING_ASSERT_OK(
+      main_index->OptimizeInto(new_main_index_file_name, doc_id_map));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<MainIndex> new_main_index,
+      MainIndex::Create(new_main_index_file_name, &filesystem_,
+                        &icing_filesystem_, feature_flags_.get()));
+
+  EXPECT_THAT(new_main_index->last_added_document_id(), Eq(1));
+  std::vector<DocHitInfo> hits =
+      GetExactHits(new_main_index.get(), /*term_start_index=*/0,
+                   /*unnormalized_term_length=*/0, "foo");
+  EXPECT_THAT(
+      hits,
+      ElementsAre(EqualsDocHitInfo(1, std::vector<SectionId>{section_id}),
+                  EqualsDocHitInfo(0, std::vector<SectionId>{section_id})));
 }
 
 }  // namespace

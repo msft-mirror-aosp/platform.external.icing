@@ -27,6 +27,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-state-v2.h"
+#include "icing/result/result-utils.h"
 #include "icing/result/snippet-retriever.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
@@ -53,7 +54,8 @@ class GroupResultLimiterV2 {
   //     is not present. The caller should exclude the document from the page.
   virtual std::optional<int> GetGroupResultLimitsIndex(
       const ScoredDocumentHit& scored_document_hit,
-      const std::unordered_map<int32_t, int>& entry_id_group_id_map,
+      const std::unordered_map<result_utils::ResultGroupingEntryId, int>&
+          entry_id_group_index_map,
       const DocumentStore& document_store,
       ResultSpecProto::ResultGroupingType result_group_type,
       int64_t current_time_ms) const;
@@ -80,8 +82,8 @@ class ResultRetrieverV2 {
   // out the next top rank documents from ResultState, retrieves the documents
   // from storage, updates ResultState, and finally wraps the result + other
   // information into PageResult. The expected number of documents to return is
-  // min(num_per_page, the number of all scored document hits) inside
-  // ResultState.
+  // min(max_results, num_per_page, the number of all scored document hits)
+  // inside ResultState.
   //
   // The number of snippets to return is based on the total number of snippets
   // needed and number of snippets that have already been returned previously
@@ -97,6 +99,7 @@ class ResultRetrieverV2 {
   // Returns:
   //   std::pair<PageResult, bool>
   std::pair<PageResult, bool> RetrieveNextPage(ResultStateV2& result_state,
+                                               int32_t max_results,
                                                int64_t current_time_ms) const
       ICING_LOCKS_EXCLUDED(result_state.mutex);
 

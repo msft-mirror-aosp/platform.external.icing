@@ -47,7 +47,7 @@ libtextclassifier3::Status DocHitInfoIteratorMatchScoreExpression::Advance() {
 
   // Didn't find anything on the delegate iterator.
   doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-  return absl_ports::ResourceExhaustedError("No more DocHitInfos in iterator");
+  return absl_ports::ResourceExhaustedError("");
 }
 
 }  // namespace lib

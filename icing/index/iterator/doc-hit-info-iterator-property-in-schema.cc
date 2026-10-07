@@ -84,7 +84,7 @@ libtextclassifier3::Status DocHitInfoIteratorPropertyInSchema::Advance() {
   }
 
   // Didn't find anything on the delegate iterator.
-  return absl_ports::ResourceExhaustedError("No more DocHitInfos in iterator");
+  return absl_ports::ResourceExhaustedError("");
 }
 
 libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>

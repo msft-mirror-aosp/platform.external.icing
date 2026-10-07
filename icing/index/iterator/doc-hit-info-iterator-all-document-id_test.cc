@@ -55,23 +55,25 @@ TEST(DocHitInfoIteratorAllDocumentIdTest, Initialize) {
 
 TEST(DocHitInfoIteratorAllDocumentIdTest, GetCallStats) {
   DocHitInfoIteratorAllDocumentId all_it(100);
-  EXPECT_THAT(
-      all_it.GetCallStats(),
-      EqualsDocHitInfoIteratorCallStats(
-          /*num_leaf_advance_calls_lite_index=*/0,
-          /*num_leaf_advance_calls_main_index=*/0,
-          /*num_leaf_advance_calls_integer_index=*/0,
-          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/0));
+  EXPECT_THAT(all_it.GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/0,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/0,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   for (int i = 1; i <= 5; ++i) {
     EXPECT_THAT(all_it.Advance(), IsOk());
-    EXPECT_THAT(
-        all_it.GetCallStats(),
-        EqualsDocHitInfoIteratorCallStats(
-            /*num_leaf_advance_calls_lite_index=*/0,
-            /*num_leaf_advance_calls_main_index=*/0,
-            /*num_leaf_advance_calls_integer_index=*/0,
-            /*num_leaf_advance_calls_no_index=*/i, /*num_blocks_inspected=*/0));
+    EXPECT_THAT(all_it.GetCallStats(),
+                EqualsDocHitInfoIteratorCallStats(
+                    /*num_leaf_advance_calls_lite_index=*/0,
+                    /*num_leaf_advance_calls_main_index=*/0,
+                    /*num_leaf_advance_calls_integer_index=*/0,
+                    /*num_leaf_advance_calls_no_index=*/i,
+                    /*num_blocks_inspected=*/0,
+                    DocHitInfoIterator::CallStats::EmbeddingStats()));
   }
 }
 

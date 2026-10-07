@@ -46,6 +46,7 @@
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
 #include "icing/util/crc32.h"
+#include "icing/util/logging.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
@@ -928,7 +929,13 @@ IntegerIndexStorage::InitializeExistingFiles(
   // Validate other values of info and options.
   // Magic should be consistent with the codebase.
   if (integer_index_storage->info().magic != Info::kMagic) {
-    return absl_ports::FailedPreconditionError("Incorrect magic value");
+    ICING_LOG(ERROR) << "Invalid header magic for IntegerIndexStorage "
+                     << integer_index_storage->working_path_
+                     << ". Expected: " << Info::kMagic
+                     << ", actual: " << integer_index_storage->info().magic;
+    return absl_ports::FailedPreconditionError(
+        absl_ports::StrCat("Invalid header magic for IntegerIndexStorage: ",
+                           integer_index_storage->working_path_));
   }
 
   return integer_index_storage;

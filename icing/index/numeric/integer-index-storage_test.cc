@@ -30,9 +30,11 @@
 #include "icing/file/file-backed-vector.h"
 #include "icing/file/filesystem.h"
 #include "icing/file/persistent-storage.h"
+#include "icing/file/posting_list/flash-index-storage.h"
 #include "icing/file/posting_list/posting-list-identifier.h"
 #include "icing/index/hit/doc-hit-info.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/index/numeric/integer-index-data.h"
 #include "icing/index/numeric/posting-list-integer-index-serializer.h"
 #include "icing/schema/section.h"
 #include "icing/store/document-id.h"
@@ -309,15 +311,17 @@ TEST_P(IntegerIndexStorageTest, InitializeNewFiles) {
 
   // Check info section
   Info info;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                IntegerIndexStorage::kInfoMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                IntegerIndexStorage::kInfoMetadataFileOffset),
+              Eq(sizeof(Info)));
   EXPECT_THAT(info.magic, Eq(Info::kMagic));
   EXPECT_THAT(info.num_data, Eq(0));
 
   // Check crcs section
   Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                IntegerIndexStorage::kCrcsMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                IntegerIndexStorage::kCrcsMetadataFileOffset),
+              Eq(sizeof(Crcs)));
   // # of elements in sorted_buckets should be 1, so it should have non-zero
   // all storages crc value.
   EXPECT_THAT(crcs.component_crcs.storages_crc, Ne(0));
@@ -518,8 +522,9 @@ TEST_P(IntegerIndexStorageTest,
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Crcs crcs;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
-                                IntegerIndexStorage::kCrcsMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &crcs, sizeof(Crcs),
+                                IntegerIndexStorage::kCrcsMetadataFileOffset),
+              Eq(sizeof(Crcs)));
 
   // Manually corrupt all_crc
   crcs.all_crc += kCorruptedValueOffset;
@@ -567,8 +572,9 @@ TEST_P(IntegerIndexStorageTest,
   ASSERT_TRUE(metadata_sfd.is_valid());
 
   Info info;
-  ASSERT_TRUE(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
-                                IntegerIndexStorage::kInfoMetadataFileOffset));
+  ASSERT_THAT(filesystem_.PRead(metadata_sfd.get(), &info, sizeof(Info),
+                                IntegerIndexStorage::kInfoMetadataFileOffset),
+              Eq(sizeof(Info)));
 
   // Modify info, but don't update the checksum. This would be similar to
   // corruption of info.
@@ -1513,13 +1519,14 @@ TEST_P(IntegerIndexStorageTest, IteratorCallStatsMultipleBuckets) {
   while (iter1->Advance().ok()) {
     // Advance all hits.
   }
-  EXPECT_THAT(
-      iter1->GetCallStats(),
-      EqualsDocHitInfoIteratorCallStats(
-          /*num_leaf_advance_calls_lite_index=*/0,
-          /*num_leaf_advance_calls_main_index=*/0,
-          /*num_leaf_advance_calls_integer_index=*/5,
-          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/2));
+  EXPECT_THAT(iter1->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/5,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/2,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // GetIterator for range [-1000, -100] and Advance all. Since we only have to
   // read bucket (-1000,-100), there will be 3 advance calls and 1 block
@@ -1530,13 +1537,14 @@ TEST_P(IntegerIndexStorageTest, IteratorCallStatsMultipleBuckets) {
   while (iter2->Advance().ok()) {
     // Advance all hits.
   }
-  EXPECT_THAT(
-      iter2->GetCallStats(),
-      EqualsDocHitInfoIteratorCallStats(
-          /*num_leaf_advance_calls_lite_index=*/0,
-          /*num_leaf_advance_calls_main_index=*/0,
-          /*num_leaf_advance_calls_integer_index=*/3,
-          /*num_leaf_advance_calls_no_index=*/0, /*num_blocks_inspected=*/1));
+  EXPECT_THAT(iter2->GetCallStats(),
+              EqualsDocHitInfoIteratorCallStats(
+                  /*num_leaf_advance_calls_lite_index=*/0,
+                  /*num_leaf_advance_calls_main_index=*/0,
+                  /*num_leaf_advance_calls_integer_index=*/3,
+                  /*num_leaf_advance_calls_no_index=*/0,
+                  /*num_blocks_inspected=*/1,
+                  DocHitInfoIterator::CallStats::EmbeddingStats()));
 }
 
 TEST_P(IntegerIndexStorageTest, IteratorCallStatsSingleBucketChainedBlocks) {
@@ -1550,17 +1558,19 @@ TEST_P(IntegerIndexStorageTest, IteratorCallStatsSingleBucketChainedBlocks) {
                   /*pre_mapping_fbv_in=*/GetParam()),
           serializer_.get()));
 
-  int32_t num_keys_to_add = 800;
+  // Create keys to fill 1 single bucket with 3 chained posting lists. Using
+  // block_size / sizeof(IntegerIndexData) * 2 will fill more than 2 blocks
+  // because of the block header.
+  int32_t expected_num_blocks_inspected = 3;
+  int32_t num_keys_to_add = FlashIndexStorage::SelectBlockSize() /
+                            sizeof(IntegerIndexData) *
+                            (expected_num_blocks_inspected - 1);
   ASSERT_THAT(num_keys_to_add,
               Lt(IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit));
   for (int i = 0; i < num_keys_to_add; ++i) {
     ICING_ASSERT_OK(storage->AddKeys(/*document_id=*/i, kDefaultSectionId,
                                      /*new_keys=*/{i}));
   }
-
-  // Those 800 keys are in 1 single bucket with 3 chained posting lists, so we
-  // will be inspecting 3 blocks.
-  int32_t expected_num_blocks_inspected = 3;
 
   // GetIterator for range [INT_MIN, INT_MAX] and Advance all.
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -1570,13 +1580,14 @@ TEST_P(IntegerIndexStorageTest, IteratorCallStatsSingleBucketChainedBlocks) {
   while (iter1->Advance().ok()) {
     // Advance all hits.
   }
-  EXPECT_THAT(iter1->GetCallStats(),
-              EqualsDocHitInfoIteratorCallStats(
-                  /*num_leaf_advance_calls_lite_index=*/0,
-                  /*num_leaf_advance_calls_main_index=*/0,
-                  /*num_leaf_advance_calls_integer_index=*/num_keys_to_add,
-                  /*num_leaf_advance_calls_no_index=*/0,
-                  expected_num_blocks_inspected));
+  EXPECT_THAT(
+      iter1->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/num_keys_to_add,
+          /*num_leaf_advance_calls_no_index=*/0, expected_num_blocks_inspected,
+          DocHitInfoIterator::CallStats::EmbeddingStats()));
 
   // GetIterator for range [1, 1] and Advance all. Although there is only 1
   // relevant data, we still have to inspect the entire bucket and its posting
@@ -1587,13 +1598,14 @@ TEST_P(IntegerIndexStorageTest, IteratorCallStatsSingleBucketChainedBlocks) {
   while (iter2->Advance().ok()) {
     // Advance all hits.
   }
-  EXPECT_THAT(iter2->GetCallStats(),
-              EqualsDocHitInfoIteratorCallStats(
-                  /*num_leaf_advance_calls_lite_index=*/0,
-                  /*num_leaf_advance_calls_main_index=*/0,
-                  /*num_leaf_advance_calls_integer_index=*/num_keys_to_add,
-                  /*num_leaf_advance_calls_no_index=*/0,
-                  expected_num_blocks_inspected));
+  EXPECT_THAT(
+      iter2->GetCallStats(),
+      EqualsDocHitInfoIteratorCallStats(
+          /*num_leaf_advance_calls_lite_index=*/0,
+          /*num_leaf_advance_calls_main_index=*/0,
+          /*num_leaf_advance_calls_integer_index=*/num_keys_to_add,
+          /*num_leaf_advance_calls_no_index=*/0, expected_num_blocks_inspected,
+          DocHitInfoIterator::CallStats::EmbeddingStats()));
 }
 
 TEST_P(IntegerIndexStorageTest, SplitBuckets) {

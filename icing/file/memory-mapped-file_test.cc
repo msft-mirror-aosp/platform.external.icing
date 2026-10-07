@@ -161,8 +161,9 @@ TEST_F(MemoryMappedFileTest, CreateWithPreMappingInfo) {
     ASSERT_TRUE(sfd.is_valid());
     int buf_size = 10;
     auto buf = std::make_unique<char[]>(buf_size);
-    ASSERT_TRUE(filesystem_.PRead(sfd.get(), buf.get(), buf_size,
-                                  pre_mapping_file_offset));
+    ASSERT_THAT(filesystem_.PRead(sfd.get(), buf.get(), buf_size,
+                                  pre_mapping_file_offset),
+                Eq(buf_size));
     EXPECT_THAT(buf.get()[0], Eq('a'));
   }
 }
@@ -300,8 +301,9 @@ TEST_F(MemoryMappedFileTest, GrowAndRemapIfNecessary) {
   ASSERT_TRUE(sfd.is_valid());
   int buf_size = 1;
   auto buf = std::make_unique<char[]>(buf_size);
-  ASSERT_TRUE(filesystem_.PRead(sfd.get(), buf.get(), buf_size,
-                                pre_mapping_file_offset));
+  ASSERT_THAT(filesystem_.PRead(sfd.get(), buf.get(), buf_size,
+                                pre_mapping_file_offset),
+              Eq(buf_size));
   EXPECT_THAT(buf.get()[0], Eq('a'));
 }
 

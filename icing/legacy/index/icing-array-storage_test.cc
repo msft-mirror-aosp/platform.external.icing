@@ -20,6 +20,7 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/legacy/index/icing-filesystem.h"
+#include "icing/testing/common-matchers.h"
 #include "icing/testing/tmp-directory.h"
 #include "icing/util/crc32.h"
 
@@ -61,7 +62,8 @@ TEST_F(IcingArrayStorageTest, UpdateCrcNoCrcPtr) {
   EXPECT_THAT(storage.UpdateCrc(), Eq(Crc32()));
   EXPECT_THAT(storage.GetCrc(), Eq(Crc32()));
 
-  uint32_t* val = storage.GetMutableMem<uint32_t>(0, 1);
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t* val,
+                             storage.GetMutableMem<uint32_t>(0, 1));
   *val = 5;
 
   // Because there is no crc_ptr, the crc should remain 0 even though we have
@@ -85,7 +87,8 @@ TEST_F(IcingArrayStorageTest, UpdateCrc) {
   EXPECT_THAT(storage.UpdateCrc(), Eq(Crc32()));
   EXPECT_THAT(storage.GetCrc(), Eq(Crc32()));
 
-  uint32_t* val = storage.GetMutableMem<uint32_t>(0, 1);
+  ICING_ASSERT_OK_AND_ASSIGN(uint32_t* val,
+                             storage.GetMutableMem<uint32_t>(0, 1));
   *val = 5;
 
   EXPECT_THAT(storage.GetCrc(), Eq(Crc32(937357362)));
@@ -110,7 +113,8 @@ TEST_F(IcingArrayStorageTest, GetCrcDoesNotUpdateHeader) {
     EXPECT_THAT(storage_one.UpdateCrc(), Eq(Crc32()));
     EXPECT_THAT(storage_one.GetCrc(), Eq(Crc32()));
 
-    uint32_t* val = storage_one.GetMutableMem<uint32_t>(0, 1);
+    ICING_ASSERT_OK_AND_ASSIGN(uint32_t* val,
+                               storage_one.GetMutableMem<uint32_t>(0, 1));
     *val = 5;
 
     EXPECT_THAT(storage_one.GetCrc(), Eq(Crc32(937357362)));
@@ -144,7 +148,8 @@ TEST_F(IcingArrayStorageTest, UpdateCrcDoesUpdateHeader) {
     EXPECT_THAT(storage_one.UpdateCrc(), Eq(Crc32()));
     EXPECT_THAT(storage_one.GetCrc(), Eq(Crc32()));
 
-    uint32_t* val = storage_one.GetMutableMem<uint32_t>(0, 1);
+    ICING_ASSERT_OK_AND_ASSIGN(uint32_t* val,
+                               storage_one.GetMutableMem<uint32_t>(0, 1));
     *val = 5;
 
     EXPECT_THAT(storage_one.GetCrc(), Eq(Crc32(937357362)));

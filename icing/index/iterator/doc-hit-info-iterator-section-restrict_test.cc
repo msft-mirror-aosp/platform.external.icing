@@ -454,7 +454,12 @@ TEST_F(DocHitInfoIteratorSectionRestrictTest, GetCallStats) {
       /*num_leaf_advance_calls_main_index_in=*/5,
       /*num_leaf_advance_calls_integer_index_in=*/3,
       /*num_leaf_advance_calls_no_index_in=*/1,
-      /*num_blocks_inspected_in=*/4);  // arbitrary value
+      /*num_blocks_inspected_in=*/4,
+      /*embedding_stats_in=*/
+      {.num_unquantized_embeddings_scored = 2,
+       .num_quantized_embeddings_scored = 3,
+       .unquantized_shards_read = {1, 2},
+       .quantized_shards_read{3, 4}});  // arbitrary value
   auto original_iterator = std::make_unique<DocHitInfoIteratorDummy>();
   original_iterator->SetCallStats(original_call_stats);
 

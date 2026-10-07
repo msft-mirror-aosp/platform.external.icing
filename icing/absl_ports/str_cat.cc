@@ -28,46 +28,30 @@ char* Append(char* out, std::string_view s) {
 
 std::string StrCat(std::string_view a, std::string_view b) {
   std::string::size_type result_size = a.length() + b.length();
-  // Create result with enough room to fit all operands.
   std::string result;
-  // __resize_default_init is provided by libc++ >= 8.0 and allows us to
-  // allocate room for the content we're about to copy while avoiding the
-  // unnecessary zero-initialization that the normal std::string::resize will
-  // perform.
-  //
-  // The current absl implementation copies a null char to the character at
-  // previous_size after the call to resize_default_init due to implementation
-  // differences between libstdc++ and libc++. That behavior is NOT copied over
-  // here because the following lines are just about to overwrite that character
-  // anyways.
-  result.__resize_default_init(result_size);
-
-  char* out = &result[0];
-  out = Append(out, a);
-  out = Append(out, b);
+  ResizeAndOverwrite(result, result_size,
+                     [a, b](char* out, std::string::size_type n) {
+    char* next = out;
+    next = Append(next, a);
+    next = Append(next, b);
+    assert(next == out + n);
+    return n;
+  });
   return result;
 }
 
 std::string StrCat(std::string_view a, std::string_view b, std::string_view c) {
   std::string::size_type result_size = a.length() + b.length() + c.length();
-  // Create result with enough room to fit all operands.
   std::string result;
-  // __resize_default_init is provided by libc++ >= 8.0 and allows us to
-  // allocate room for the content we're about to copy while avoiding the
-  // unnecessary zero-initialization that the normal std::string::resize will
-  // perform.
-  //
-  // The current absl implementation copies a null char to the character at
-  // previous_size after the call to resize_default_init due to implementation
-  // differences between libstdc++ and libc++. That behavior is NOT copied over
-  // here because the following lines are just about to overwrite that character
-  // anyways.
-  result.__resize_default_init(result_size);
-
-  char* out = &result[0];
-  out = Append(out, a);
-  out = Append(out, b);
-  out = Append(out, c);
+  ResizeAndOverwrite(result, result_size,
+                     [a, b, c](char* out, std::string::size_type n) {
+    char* next = out;
+    next = Append(next, a);
+    next = Append(next, b);
+    next = Append(next, c);
+    assert(next == out + n);
+    return n;
+  });
   return result;
 }
 
@@ -75,25 +59,17 @@ std::string StrCat(std::string_view a, std::string_view b, std::string_view c,
                    std::string_view d) {
   std::string::size_type result_size =
       a.length() + b.length() + c.length() + d.length();
-  // Create result with enough room to fit all operands.
   std::string result;
-  // __resize_default_init is provided by libc++ >= 8.0 and allows us to
-  // allocate room for the content we're about to copy while avoiding the
-  // unnecessary zero-initialization that the normal std::string::resize will
-  // perform.
-  //
-  // The current absl implementation copies a null char to the character at
-  // previous_size after the call to resize_default_init due to implementation
-  // differences between libstdc++ and libc++. That behavior is NOT copied over
-  // here because the following lines are just about to overwrite that character
-  // anyways.
-  result.__resize_default_init(result_size);
-
-  char* out = &result[0];
-  out = Append(out, a);
-  out = Append(out, b);
-  out = Append(out, c);
-  out = Append(out, d);
+  ResizeAndOverwrite(result, result_size,
+                     [a, b, c, d](char* out, std::string::size_type n) {
+    char* next = out;
+    next = Append(next, a);
+    next = Append(next, b);
+    next = Append(next, c);
+    next = Append(next, d);
+    assert(next == out + n);
+    return n;
+  });
   return result;
 }
 
@@ -102,44 +78,42 @@ std::string StrCatPieces(std::vector<std::string_view> pieces) {
   for (std::string_view s : pieces) {
     result_size += s.length();
   }
-  // Create result with enough room to fit all operands.
   std::string result;
-  // __resize_default_init is provided by libc++ >= 8.0 and allows us to
-  // allocate room for the content we're about to copy while avoiding the
-  // unnecessary zero-initialization that the normal std::string::resize will
-  // perform.
-  //
-  // The current absl implementation copies a null char to the character at
-  // previous_size after the call to resize_default_init due to implementation
-  // differences between libstdc++ and libc++. That behavior is NOT copied over
-  // here because the following lines are just about to overwrite that character
-  // anyways.
-  result.__resize_default_init(result_size);
-
-  char* out = &result[0];
-  for (std::string_view s : pieces) {
-    out = Append(out, s);
-  }
+  ResizeAndOverwrite(result, result_size,
+                     [&pieces](char* out, std::string::size_type n) {
+    char* next = out;
+    for (std::string_view s : pieces) {
+      next = Append(next, s);
+    }
+    assert(next == out + n);
+    return n;
+  });
   return result;
 }
 
 void StrAppend(std::string* dest, std::string_view a) {
   std::string::size_type old_size = dest->size();
   std::string::size_type new_size = old_size + a.length();
-  dest->__resize_default_init(new_size);
-
-  char* out = &(*dest)[old_size];
-  out = Append(out, a);
+  ResizeAndOverwrite(*dest, new_size,
+                     [old_size, a](char* out, std::string::size_type n) {
+    char* next = out + old_size;
+    next = Append(next, a);
+    assert(next == out + n);
+    return n;
+  });
 }
 
 void StrAppend(std::string* dest, std::string_view a, std::string_view b) {
   std::string::size_type old_size = dest->size();
   std::string::size_type new_size = old_size + a.length() + b.length();
-  dest->__resize_default_init(new_size);
-
-  char* out = &(*dest)[old_size];
-  out = Append(out, a);
-  out = Append(out, b);
+  ResizeAndOverwrite(*dest, new_size,
+                     [old_size, a, b](char* out, std::string::size_type n) {
+    char* next = out + old_size;
+    next = Append(next, a);
+    next = Append(next, b);
+    assert(next == out + n);
+    return n;
+  });
 }
 
 void StrAppend(std::string* dest, std::string_view a, std::string_view b,
@@ -147,12 +121,15 @@ void StrAppend(std::string* dest, std::string_view a, std::string_view b,
   std::string::size_type old_size = dest->size();
   std::string::size_type new_size =
       old_size + a.length() + b.length() + c.length();
-  dest->__resize_default_init(new_size);
-
-  char* out = &(*dest)[old_size];
-  out = Append(out, a);
-  out = Append(out, b);
-  out = Append(out, c);
+  ResizeAndOverwrite(*dest, new_size,
+                     [old_size, a, b, c](char* out, std::string::size_type n) {
+    char* next = out + old_size;
+    next = Append(next, a);
+    next = Append(next, b);
+    next = Append(next, c);
+    assert(next == out + n);
+    return n;
+  });
 }
 
 void StrAppend(std::string* dest, std::string_view a, std::string_view b,
@@ -160,28 +137,33 @@ void StrAppend(std::string* dest, std::string_view a, std::string_view b,
   std::string::size_type old_size = dest->size();
   std::string::size_type new_size =
       old_size + a.length() + b.length() + c.length() + d.length();
-  dest->__resize_default_init(new_size);
-
-  char* out = &(*dest)[old_size];
-  out = Append(out, a);
-  out = Append(out, b);
-  out = Append(out, c);
-  out = Append(out, d);
+  ResizeAndOverwrite(*dest, new_size, [old_size, a, b, c, d](char* out,
+                                           std::string::size_type n) {
+    char* next = out + old_size;
+    next = Append(next, a);
+    next = Append(next, b);
+    next = Append(next, c);
+    next = Append(next, d);
+    assert(next == out + n);
+    return n;
+  });
 }
 
 void StrAppendPieces(std::string* dest, std::vector<std::string_view> pieces) {
   std::string::size_type old_size = dest->size();
-  std::string::size_type result_size = old_size;
+  std::string::size_type total_size = old_size;
   for (std::string_view s : pieces) {
-    result_size += s.length();
+    total_size += s.length();
   }
-  // Resize dest with enough room to fit all operands.
-  dest->__resize_default_init(result_size);
-
-  char* out = &(*dest)[old_size];
-  for (std::string_view s : pieces) {
-    out = Append(out, s);
-  }
+  ResizeAndOverwrite(*dest, total_size,
+                     [old_size, &pieces](char* out, std::string::size_type n) {
+    char* next = out + old_size;
+    for (std::string_view s : pieces) {
+      next = Append(next, s);
+    }
+    assert(next == out + n);
+    return n;
+  });
 }
 
 }  // namespace absl_ports

@@ -189,7 +189,7 @@ TEST(TrigramTokenizerTest, CalculateTokenStartAndEndExclusive_ascii) {
 
   // Advance to "abc".
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "abc")));
   ICING_ASSERT_OK_AND_ASSIGN(CharacterIterator start_itr0,
                              itr->CalculateTokenStart());
@@ -200,7 +200,7 @@ TEST(TrigramTokenizerTest, CalculateTokenStartAndEndExclusive_ascii) {
 
   // Advance to "bcd".
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "bcd")));
   ICING_ASSERT_OK_AND_ASSIGN(CharacterIterator start_itr1,
                              itr->CalculateTokenStart());
@@ -221,7 +221,7 @@ TEST(TrigramTokenizerTest, CalculateTokenStartAndEndExclusive_utf8) {
 
   // Advance to "我每天".
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "我每天")));
   ICING_ASSERT_OK_AND_ASSIGN(CharacterIterator start_itr0,
                              itr->CalculateTokenStart());
@@ -232,7 +232,7 @@ TEST(TrigramTokenizerTest, CalculateTokenStartAndEndExclusive_utf8) {
 
   // Advance to "每天走".
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "每天走")));
   ICING_ASSERT_OK_AND_ASSIGN(CharacterIterator start_itr1,
                              itr->CalculateTokenStart());
@@ -257,7 +257,7 @@ TEST(TrigramTokenizerTest, ResetToTokenStartingAfter_resetBackward_ascii) {
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "efg")));
 
   // Reset backward to after utf32_offset 1.
@@ -265,22 +265,22 @@ TEST(TrigramTokenizerTest, ResetToTokenStartingAfter_resetBackward_ascii) {
 
   // Verify the iterator is pointing to "cde" since it is the leftmost trigram
   // token after utf32_offset 1.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "def".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "def")));
   // Advance to "efg".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "efg")));
   // Advance to "fgh".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "fgh")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -291,26 +291,26 @@ TEST(TrigramTokenizerTest, ResetToTokenStartingAfter_resetBackward_ascii) {
 
   // Verify the iterator is pointing to "bcd" since it is the leftmost trigram
   // token after utf32_offset 0.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "bcd")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "cde".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
   // Advance to "def".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "def")));
   // Advance to "efg".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "efg")));
   // Advance to "fgh".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "fgh")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -329,7 +329,7 @@ TEST(TrigramTokenizerTest, ResetToTokenStartingAfter_resetBackward_utf8) {
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "路去上")));
 
   // Reset backward to after "每". Note that the utf32_offset of "每" is 1.
@@ -337,22 +337,22 @@ TEST(TrigramTokenizerTest, ResetToTokenStartingAfter_resetBackward_utf8) {
 
   // Verify the iterator is pointing to "天走路" since it is the leftmost
   // trigram token after "每".
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "天走路")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "走路去".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "走路去")));
   // Advance to "路去上".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "路去上")));
   // Advance to "去上班".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "去上班")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -363,26 +363,26 @@ TEST(TrigramTokenizerTest, ResetToTokenStartingAfter_resetBackward_utf8) {
 
   // Verify the iterator is pointing to "每天走" since it is the leftmost
   // trigram token after utf32_offset 0.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "每天走")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "天走路".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "天走路")));
   // Advance to "走路去".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "走路去")));
   // Advance to "路去上".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "路去上")));
   // Advance to "去上班".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "去上班")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -397,7 +397,7 @@ TEST(TrigramTokenizerTest, ResetToTokenStartingAfter_resetForward_ascii) {
 
   // Advance 1 time to "abc".
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "abc")));
 
   // Reset forward to after utf32_offset 2.
@@ -405,18 +405,18 @@ TEST(TrigramTokenizerTest, ResetToTokenStartingAfter_resetForward_ascii) {
 
   // Verify the iterator is pointing to "def" since it is the leftmost trigram
   // token after utf32_offset 2.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "def")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "efg".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "efg")));
   // Advance to "fgh".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "fgh")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -431,7 +431,7 @@ TEST(TrigramTokenizerTest, ResetToTokenStartingAfter_resetForward_utf8) {
 
   // Advance 1 time to "我每天".
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "我每天")));
 
   // Reset forward to after "天". Note that the utf32_offset of "天" is 2.
@@ -439,18 +439,18 @@ TEST(TrigramTokenizerTest, ResetToTokenStartingAfter_resetForward_utf8) {
 
   // Verify the iterator is pointing to "走路去" since it is the leftmost
   // trigram token after "天".
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "走路去")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "路去上".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "路去上")));
   // Advance to "去上班".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "去上班")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -467,7 +467,7 @@ TEST(TrigramTokenizerTest,
   // Advance twice to "bcd".
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "bcd")));
 
   // Reset to after utf32_offset -1.
@@ -475,18 +475,18 @@ TEST(TrigramTokenizerTest,
 
   // Verify the iterator is pointing to "abc" since it is the leftmost trigram
   // token after utf32_offset -1.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "abc")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "bcd".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "bcd")));
   // Advance to "cde".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -496,18 +496,18 @@ TEST(TrigramTokenizerTest,
 
   // Verify the iterator is pointing to "abc" since it is the leftmost trigram
   // token after utf32_offset -2.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "abc")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "bcd".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "bcd")));
   // Advance to "cde".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
 }
 
@@ -522,7 +522,7 @@ TEST(TrigramTokenizerTest,
   // Advance twice to "bcd".
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "bcd")));
 
   // Reset to after utf32_offset 2. Since the last token is "cde" and the
@@ -556,7 +556,7 @@ TEST(TrigramTokenizerTest,
 
   // Advance once to "我每天".
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "我每天")));
 
   // Reset to after "天" (with utf32_offset 2). Since the last token is
@@ -595,14 +595,14 @@ TEST(
 
   // Verify the iterator is pointing to "cde" since it is the leftmost trigram
   // token after utf32_offset 1.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "def".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "def")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -622,14 +622,14 @@ TEST(TrigramTokenizerTest,
 
   // Verify the iterator is pointing to "天走路" since it is the leftmost
   // trigram token after utf32_offset 1.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "天走路")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "走路去".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "走路去")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -705,14 +705,14 @@ TEST(TrigramTokenizerTest,
 
   // Verify the iterator is pointing to "cde" since it is the leftmost trigram
   // token after utf32_offset 1.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "def".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "def")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -739,14 +739,14 @@ TEST(TrigramTokenizerTest,
 
   // Verify the iterator is pointing to "天走路" since it is the leftmost
   // trigram token after utf32_offset 1.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "天走路")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "走路去".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "走路去")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -822,7 +822,7 @@ TEST(TrigramTokenizerTest, ResetToTokenEndingBefore_resetBackward_ascii) {
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "efg")));
 
   // Reset backward to before utf32_offset 5.
@@ -830,22 +830,22 @@ TEST(TrigramTokenizerTest, ResetToTokenEndingBefore_resetBackward_ascii) {
 
   // Verify the iterator is pointing to "cde" since it is the rightmost trigram
   // token before utf32_offset 5.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "def".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "def")));
   // Advance to "efg".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "efg")));
   // Advance to "fgh".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "fgh")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -864,7 +864,7 @@ TEST(TrigramTokenizerTest, ResetToTokenEndingBefore_resetBackward_utf8) {
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "路去上")));
 
   // Reset backward to before "去". Note that the utf32_offset of "去" is 5.
@@ -872,22 +872,22 @@ TEST(TrigramTokenizerTest, ResetToTokenEndingBefore_resetBackward_utf8) {
 
   // Verify the iterator is pointing to "天走路" since it is the rightmost
   // trigram token before "每".
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "天走路")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "走路去".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "走路去")));
   // Advance to "路去上".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "路去上")));
   // Advance to "去上班".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "去上班")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -902,7 +902,7 @@ TEST(TrigramTokenizerTest, ResetToTokenEndingBefore_resetForward_ascii) {
 
   // Advance 1 time to "abc".
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "abc")));
 
   // Reset forward to before utf32_offset 6.
@@ -910,18 +910,18 @@ TEST(TrigramTokenizerTest, ResetToTokenEndingBefore_resetForward_ascii) {
 
   // Verify the iterator is pointing to "def" since it is the rightmost trigram
   // token before utf32_offset 6.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "def")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "efg".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "efg")));
   // Advance to "fgh".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "fgh")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -936,7 +936,7 @@ TEST(TrigramTokenizerTest, ResetToTokenEndingBefore_resetForward_utf8) {
 
   // Advance 1 time to "我每天".
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "我每天")));
 
   // Reset forward to before "上". Note that the utf32_offset of "上" is 6.
@@ -944,18 +944,18 @@ TEST(TrigramTokenizerTest, ResetToTokenEndingBefore_resetForward_utf8) {
 
   // Verify the iterator is pointing to "走路去" since it is the rightmost
   // trigram token before "上".
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "走路去")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "路去上".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "路去上")));
   // Advance to "去上班".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "去上班")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -972,7 +972,7 @@ TEST(
 
   // Advance once to "abc".
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "abc")));
 
   // Reset to before utf32_offset 5. Since the last token "cde" ends at
@@ -982,7 +982,7 @@ TEST(
 
   // Verify the iterator is pointing to "cde" since it is the rightmost trigram
   // token before utf32_offset 5.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
 
   // Since it is the last token, the next Advance() should fail.
@@ -998,7 +998,7 @@ TEST(
 
   // Verify the iterator is pointing to "cde" since it is the rightmost trigram
   // token before utf32_offset 6.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
 
   // Since it is the last token, the next Advance() should fail.
@@ -1016,7 +1016,7 @@ TEST(
 
   // Advance once to "我每天".
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "我每天")));
 
   // Reset to before utf32_offset 5. Since the last token "天走路" ends at
@@ -1026,7 +1026,7 @@ TEST(
 
   // Verify the iterator is pointing to "天走路" since it is the rightmost
   // trigram token before utf32_offset 5.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "天走路")));
 
   // Since it is the last token, the next Advance() should fail.
@@ -1042,7 +1042,7 @@ TEST(
 
   // Verify the iterator is pointing to "天走路" since it is the rightmost
   // trigram token before utf32_offset 6.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "天走路")));
 
   // Since it is the last token, the next Advance() should fail.
@@ -1060,7 +1060,7 @@ TEST(TrigramTokenizerTest,
   // Advance twice to "bcd".
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "bcd")));
 
   // Reset to before utf32_offset 2. Since the first token is "abc" and the
@@ -1091,7 +1091,7 @@ TEST(TrigramTokenizerTest,
 
   // Advance once to "我每天".
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "我每天")));
 
   // Reset to before "天" (with utf32_offset 2). Since the first token is
@@ -1126,14 +1126,14 @@ TEST(TrigramTokenizerTest,
 
   // Verify the iterator is pointing to "cde" since it is the rightmost trigram
   // token before utf32_offset 5.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "def".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "def")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -1153,14 +1153,14 @@ TEST(TrigramTokenizerTest,
 
   // Verify the iterator is pointing to "天走路" since it is the rightmost
   // trigram token before utf32_offset 5.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "天走路")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "走路去".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "走路去")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -1240,14 +1240,14 @@ TEST(TrigramTokenizerTest,
 
   // Verify the iterator is pointing to "cde" since it is the rightmost trigram
   // token before utf32_offset 5.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "def".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "def")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -1274,14 +1274,14 @@ TEST(TrigramTokenizerTest,
 
   // Verify the iterator is pointing to "天走路" since it is the rightmost
   // trigram token before utf32_offset 5.
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "天走路")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "走路去".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "走路去")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -1360,29 +1360,29 @@ TEST(TrigramTokenizerTest, ResetToStart_ascii) {
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
 
   // Call ResetToStart().
   EXPECT_THAT(itr->ResetToStart(), IsTrue());
 
   // Verify the iterator is pointing to the start trigram "abc".
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "abc")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "bcd".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "bcd")));
   // Advance to "cde".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
   // Advance to "def".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "def")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -1399,29 +1399,29 @@ TEST(TrigramTokenizerTest, ResetToStart_utf8) {
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
   ASSERT_THAT(itr->Advance(), IsTrue());
-  ASSERT_THAT(itr->GetTokens(),
+  ASSERT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "天走路")));
 
   // Call ResetToStart().
   EXPECT_THAT(itr->ResetToStart(), IsTrue());
 
   // Verify the iterator is pointing to the start trigram "我每天".
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "我每天")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "每天走".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "每天走")));
   // Advance to "天走路".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "天走路")));
   // Advance to "走路去".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "走路去")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -1439,18 +1439,18 @@ TEST(TrigramTokenizerTest,
   EXPECT_THAT(itr->ResetToStart(), IsTrue());
 
   // Verify the iterator is pointing to "abc".
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "abc")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "bcd".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "bcd")));
   // Advance to "cde".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -1468,18 +1468,18 @@ TEST(TrigramTokenizerTest,
   EXPECT_THAT(itr->ResetToStart(), IsTrue());
 
   // Verify the iterator is pointing to "我每天".
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "我每天")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "每天走".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "每天走")));
   // Advance to "天走路".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "天走路")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -1543,22 +1543,22 @@ TEST(TrigramTokenizerTest,
   EXPECT_THAT(itr->ResetToStart(), IsTrue());
 
   // Verify the iterator is pointing to the start trigram "abc".
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "abc")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "bcd".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "bcd")));
   // Advance to "cde".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "cde")));
   // Advance to "def".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "def")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());
@@ -1583,22 +1583,22 @@ TEST(TrigramTokenizerTest,
   EXPECT_THAT(itr->ResetToStart(), IsTrue());
 
   // Verify the iterator is pointing to the start trigram "我每天".
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "我每天")));
 
   // Verify the iterator is still valid and able to advance to the rest of the
   // tokens.
   // Advance to "每天走".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "每天走")));
   // Advance to "天走路".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "天走路")));
   // Advance to "走路去".
   EXPECT_THAT(itr->Advance(), IsTrue());
-  EXPECT_THAT(itr->GetTokens(),
+  EXPECT_THAT(itr->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::TRIGRAM, "走路去")));
 
   EXPECT_THAT(itr->Advance(), IsFalse());

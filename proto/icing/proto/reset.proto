@@ -20,11 +20,10 @@ import "icing/proto/status.proto";
 
 option java_package = "com.google.android.icing.proto";
 option java_multiple_files = true;
-
 option objc_class_prefix = "ICNG";
 
 // Result of a call to IcingSearchEngine.Reset
-// Next tag: 2
+// Next tag: 5
 message ResetResultProto {
   // Status code can be one of:
   //   OK
@@ -33,4 +32,16 @@ message ResetResultProto {
   //
   // See status.proto for more details.
   optional StatusProto status = 1;
+
+  // The latency of the GetVm call.
+  optional int32 get_vm_latency_ms = 2;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 3;
+
+  // Size of the ResetResultProto response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 4;
 }

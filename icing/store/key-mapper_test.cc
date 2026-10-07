@@ -235,7 +235,7 @@ TEST_P(KeyMapperTest, DeleteByKey_singleEntry) {
               UnorderedElementsAre(Pair("foo", 1)));
 
   // Delete "foo".
-  EXPECT_THAT(key_mapper->Delete("foo"), IsTrue());
+  ICING_EXPECT_OK(key_mapper->Delete("foo"));
 
   // Verify num_keys().
   EXPECT_THAT(key_mapper->num_keys(), 0);
@@ -269,7 +269,7 @@ TEST_P(KeyMapperTest, DeleteByKey_multipleEntries) {
       UnorderedElementsAre(Pair("foo", 1), Pair("bar", 2), Pair("baz", 3)));
 
   // Delete "foo".
-  EXPECT_THAT(key_mapper->Delete("foo"), IsTrue());
+  ICING_EXPECT_OK(key_mapper->Delete("foo"));
 
   // Verify num_keys().
   EXPECT_THAT(key_mapper->num_keys(), 2);
@@ -310,9 +310,9 @@ TEST_P(KeyMapperTest, DeleteByKey_multipleEntriesDeleteAll) {
       UnorderedElementsAre(Pair("foo", 1), Pair("bar", 2), Pair("baz", 3)));
 
   // Delete all keys.
-  EXPECT_THAT(key_mapper->Delete("foo"), IsTrue());
-  EXPECT_THAT(key_mapper->Delete("bar"), IsTrue());
-  EXPECT_THAT(key_mapper->Delete("baz"), IsTrue());
+  ICING_EXPECT_OK(key_mapper->Delete("foo"));
+  ICING_EXPECT_OK(key_mapper->Delete("bar"));
+  ICING_EXPECT_OK(key_mapper->Delete("baz"));
 
   // Verify num_keys().
   EXPECT_THAT(key_mapper->num_keys(), 0);

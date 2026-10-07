@@ -15,21 +15,18 @@
 #include "icing/join/document-dependency-processor.h"
 
 #include <cstdint>
-#include <optional>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
+#include "icing/absl_ports/str_cat.h"
 #include "icing/join/qualified-id.h"
 #include "icing/proto/document.pb.h"
 #include "icing/schema/joinable-property.h"
-#include "icing/store/document-filter-data.h"
-#include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/util/status-macros.h"
 #include "icing/util/timestamp-util.h"
@@ -72,11 +69,7 @@ DocumentDependencyProcessor::Create(
                                      current_time_ms);
 }
 
-libtextclassifier3::StatusOr<DocumentDependencyProcessor::EvaluateResult>
-DocumentDependencyProcessor::Evaluate() {
-  EvaluateResult result;
-  result.outer_dependency_document_ids.resize(batch_documents_to_add_.size());
-
+libtextclassifier3::Status DocumentDependencyProcessor::Evaluate() {
   // Validate the dependencies and construct the dependent graph.
   for (int i = 0; i < batch_documents_to_add_.size(); ++i) {
     const TokenizedDocument& tokenized_document = batch_documents_to_add_[i];
@@ -100,31 +93,15 @@ DocumentDependencyProcessor::Evaluate() {
       // - Add the dependency document id (out of the batch) into result.
       for (std::string_view dep_qualified_id_str :
            dep_qualified_id_prop.values) {
-        ICING_RETURN_IF_ERROR(ValidateDependency(
-            dep_qualified_id_str, result.outer_dependency_document_ids[i]));
-      }
-    }
-
-    // Check if this document to add is replacing an expired document.
-    auto existing_doc_id_or = document_store_.GetDocumentId(
-        tokenized_document.document_wrapper().document().namespace_(),
-        tokenized_document.document_wrapper().document().uri());
-    if (existing_doc_id_or.ok()) {
-      DocumentId existing_doc_id = existing_doc_id_or.ValueOrDie();
-      std::optional<DocumentFilterData> filter_data =
-          document_store_.GetNonDeletedDocumentFilterData(existing_doc_id);
-      if (filter_data.has_value() &&
-          filter_data->expiration_timestamp_ms() <= current_time_ms_) {
-        result.existing_expired_doc_ids_to_replace.insert(existing_doc_id);
+        ICING_RETURN_IF_ERROR(ValidateDependency(dep_qualified_id_str));
       }
     }
   }
-  return result;
+  return libtextclassifier3::Status::OK;
 }
 
 libtextclassifier3::Status DocumentDependencyProcessor::ValidateDependency(
-    std::string_view dep_qualified_id_str,
-    std::unordered_set<DocumentId>& outer_dep_doc_ids) const {
+    std::string_view dep_qualified_id_str) const {
   if (dep_qualified_id_str.empty()) {
     // Allow empty qualified id.
     return libtextclassifier3::Status::OK;
@@ -135,7 +112,8 @@ libtextclassifier3::Status DocumentDependencyProcessor::ValidateDependency(
   if (!dep_qualified_id_or.ok()) {
     // Incorrect format of qualified id string. Return INVALID_ARGUMENT_ERROR
     // for unsatisfied dependency.
-    return absl_ports::InvalidArgumentError("Invalid qualified id string.");
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        "Invalid qualified id string: ", dep_qualified_id_str));
   }
   QualifiedId dep_qualified_id = std::move(dep_qualified_id_or).ValueOrDie();
 
@@ -149,26 +127,12 @@ libtextclassifier3::Status DocumentDependencyProcessor::ValidateDependency(
   }
 
   // Case 2: check if the dependency document is alive in the document store.
-  auto dep_doc_id_or = document_store_.GetDocumentId(
-      dep_qualified_id.name_space(), dep_qualified_id.uri());
-  if (!dep_doc_id_or.ok()) {
-    if (absl_ports::IsNotFound(dep_doc_id_or.status())) {
-      // Document not found in the document store. Return INVALID_ARGUMENT_ERROR
-      // for unsatisfied dependency.
-      return absl_ports::InvalidArgumentError(
-          "A dependency document is not found.");
-    }
-    // Real error.
-    return std::move(dep_doc_id_or).status();
+  if (!document_store_.IsDocumentAlive(dep_qualified_id.name_space(),
+                                       dep_qualified_id.uri(),
+                                       current_time_ms_)) {
+    return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+        "A dependency document is not alive: ", dep_qualified_id_str));
   }
-  DocumentId dep_doc_id = dep_doc_id_or.ValueOrDie();
-
-  if (!document_store_.IsDocumentAlive(dep_doc_id, current_time_ms_)) {
-    return absl_ports::InvalidArgumentError(
-        "A dependency document is not alive.");
-  }
-
-  outer_dep_doc_ids.insert(dep_doc_id);
 
   return libtextclassifier3::Status::OK;
 }
