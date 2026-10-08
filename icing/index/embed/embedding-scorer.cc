@@ -34,6 +34,26 @@
 namespace icing {
 namespace lib {
 
+libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingScorer>>
+EmbeddingScorer::Create(
+    SearchSpecProto::EmbeddingQueryMetricType::Code metric_type) {
+  switch (metric_type) {
+    case SearchSpecProto::EmbeddingQueryMetricType::COSINE:
+      return std::make_unique<CosineEmbeddingScorer>();
+    case SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT:
+      return std::make_unique<DotProductEmbeddingScorer>();
+    case SearchSpecProto::EmbeddingQueryMetricType::EUCLIDEAN:
+      return std::make_unique<EuclideanDistanceEmbeddingScorer>();
+    default:
+      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
+          "Invalid EmbeddingQueryMetricType: ", std::to_string(metric_type)));
+  }
+}
+
+#ifdef ICING_DISABLE_EIGEN
+
+// Scalar implementations, used when Eigen is not available.
+
 namespace {
 
 template <typename T>
@@ -90,47 +110,7 @@ float CalculateEuclideanDistance(int dimension, const T1* v1, const T2* v2,
   return std::sqrt(result);
 }
 
-#ifndef ICING_DISABLE_EIGEN
-// Returns a lazily-evaluated (due to the return type "auto") expression that
-// dequantizes the quantized vector.
-//
-// It requires that the scale factor is not 0. If it is 0, the caller should
-// handle the case specifically.
-inline auto DequantizeEigenVector(
-    const Quantizer& quantizer,
-    Eigen::Ref<const Eigen::VectorX<uint8_t>> quantized_vec) {
-  return (quantized_vec.cast<float>().array() / quantizer.scale_factor() +
-          quantizer.float_min())
-      .matrix();
-}
-
-float EigenCosine(Eigen::Ref<const Eigen::VectorXf> v1,
-                  Eigen::Ref<const Eigen::VectorXf> v2) {
-  float divisor = v1.norm() * v2.norm();
-  if (divisor == 0.0) {
-    return 0.0;
-  }
-  return v1.dot(v2) / divisor;
-}
-#endif  // ICING_DISABLE_EIGEN
-
 }  // namespace
-
-libtextclassifier3::StatusOr<std::unique_ptr<EmbeddingScorer>>
-EmbeddingScorer::Create(
-    SearchSpecProto::EmbeddingQueryMetricType::Code metric_type) {
-  switch (metric_type) {
-    case SearchSpecProto::EmbeddingQueryMetricType::COSINE:
-      return std::make_unique<CosineEmbeddingScorer>();
-    case SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT:
-      return std::make_unique<DotProductEmbeddingScorer>();
-    case SearchSpecProto::EmbeddingQueryMetricType::EUCLIDEAN:
-      return std::make_unique<EuclideanDistanceEmbeddingScorer>();
-    default:
-      return absl_ports::InvalidArgumentError(absl_ports::StrCat(
-          "Invalid EmbeddingQueryMetricType: ", std::to_string(metric_type)));
-  }
-}
 
 float CosineEmbeddingScorer::Score(int dimension, const float* v1,
                                    const float* v2) const {
@@ -165,32 +145,58 @@ float EuclideanDistanceEmbeddingScorer::Score(
   return CalculateEuclideanDistance(dimension, v1, v2, quantizer);
 }
 
-#ifndef ICING_DISABLE_EIGEN
-float CosineEmbeddingScorer::EigenScore(int dimension, const float* v1,
-                                        const float* v2) const {
+#else  // ICING_DISABLE_EIGEN
+
+namespace {
+
+// Returns a lazily-evaluated (due to the return type "auto") expression that
+// dequantizes the quantized vector.
+//
+// It requires that the scale factor is not 0. If it is 0, the caller should
+// handle the case specifically.
+inline auto DequantizeEigenVector(
+    const Quantizer& quantizer,
+    Eigen::Ref<const Eigen::VectorX<uint8_t>> quantized_vec) {
+  return (quantized_vec.cast<float>().array() / quantizer.scale_factor() +
+          quantizer.float_min())
+      .matrix();
+}
+
+float EigenCosine(Eigen::Ref<const Eigen::VectorXf> v1,
+                  Eigen::Ref<const Eigen::VectorXf> v2) {
+  float divisor = v1.norm() * v2.norm();
+  if (divisor == 0.0) {
+    return 0.0;
+  }
+  return v1.dot(v2) / divisor;
+}
+
+}  // namespace
+
+float CosineEmbeddingScorer::Score(int dimension, const float* v1,
+                                   const float* v2) const {
   Eigen::Map<const Eigen::VectorXf> vec1(v1, dimension);
   Eigen::Map<const Eigen::VectorXf> vec2(v2, dimension);
   return EigenCosine(vec1, vec2);
 }
 
-float DotProductEmbeddingScorer::EigenScore(int dimension, const float* v1,
-                                            const float* v2) const {
+float DotProductEmbeddingScorer::Score(int dimension, const float* v1,
+                                       const float* v2) const {
   Eigen::Map<const Eigen::VectorXf> vec1(v1, dimension);
   Eigen::Map<const Eigen::VectorXf> vec2(v2, dimension);
   return vec1.dot(vec2);
 }
 
-float EuclideanDistanceEmbeddingScorer::EigenScore(int dimension,
-                                                   const float* v1,
-                                                   const float* v2) const {
+float EuclideanDistanceEmbeddingScorer::Score(int dimension, const float* v1,
+                                              const float* v2) const {
   Eigen::Map<const Eigen::VectorXf> vec1(v1, dimension);
   Eigen::Map<const Eigen::VectorXf> vec2(v2, dimension);
   return (vec1 - vec2).norm();
 }
 
-float CosineEmbeddingScorer::EigenScore(int dimension, const float* v1,
-                                        const uint8_t* v2,
-                                        const Quantizer& quantizer) const {
+float CosineEmbeddingScorer::Score(int dimension, const float* v1,
+                                   const uint8_t* v2,
+                                   const Quantizer& quantizer) const {
   Eigen::Map<const Eigen::VectorXf> vec1(v1, dimension);
   Eigen::Map<const Eigen::Matrix<uint8_t, Eigen::Dynamic, 1>> vec2(v2,
                                                                    dimension);
@@ -201,9 +207,9 @@ float CosineEmbeddingScorer::EigenScore(int dimension, const float* v1,
   return EigenCosine(vec1, DequantizeEigenVector(quantizer, vec2));
 }
 
-float DotProductEmbeddingScorer::EigenScore(int dimension, const float* v1,
-                                            const uint8_t* v2,
-                                            const Quantizer& quantizer) const {
+float DotProductEmbeddingScorer::Score(int dimension, const float* v1,
+                                       const uint8_t* v2,
+                                       const Quantizer& quantizer) const {
   Eigen::Map<const Eigen::VectorXf> vec1(v1, dimension);
   Eigen::Map<const Eigen::Matrix<uint8_t, Eigen::Dynamic, 1>> vec2(v2,
                                                                    dimension);
@@ -214,7 +220,7 @@ float DotProductEmbeddingScorer::EigenScore(int dimension, const float* v1,
   return vec1.dot(DequantizeEigenVector(quantizer, vec2));
 }
 
-float EuclideanDistanceEmbeddingScorer::EigenScore(
+float EuclideanDistanceEmbeddingScorer::Score(
     int dimension, const float* v1, const uint8_t* v2,
     const Quantizer& quantizer) const {
   Eigen::Map<const Eigen::VectorXf> vec1(v1, dimension);
@@ -225,42 +231,7 @@ float EuclideanDistanceEmbeddingScorer::EigenScore(
   }
   return (vec1 - DequantizeEigenVector(quantizer, vec2)).norm();
 }
-#else   // ICING_DISABLE_EIGEN
-// If Eigen is disabled, just fall back to the regular Score() function.
 
-float CosineEmbeddingScorer::EigenScore(int dimension, const float* v1,
-                                        const float* v2) const {
-  return Score(dimension, v1, v2);
-}
-
-float DotProductEmbeddingScorer::EigenScore(int dimension, const float* v1,
-                                            const float* v2) const {
-  return Score(dimension, v1, v2);
-}
-
-float EuclideanDistanceEmbeddingScorer::EigenScore(int dimension,
-                                                   const float* v1,
-                                                   const float* v2) const {
-  return Score(dimension, v1, v2);
-}
-
-float CosineEmbeddingScorer::EigenScore(int dimension, const float* v1,
-                                        const uint8_t* v2,
-                                        const Quantizer& quantizer) const {
-  return Score(dimension, v1, v2, quantizer);
-}
-
-float DotProductEmbeddingScorer::EigenScore(int dimension, const float* v1,
-                                            const uint8_t* v2,
-                                            const Quantizer& quantizer) const {
-  return Score(dimension, v1, v2, quantizer);
-}
-
-float EuclideanDistanceEmbeddingScorer::EigenScore(
-    int dimension, const float* v1, const uint8_t* v2,
-    const Quantizer& quantizer) const {
-  return Score(dimension, v1, v2, quantizer);
-}
 #endif  // ICING_DISABLE_EIGEN
 
 }  // namespace lib

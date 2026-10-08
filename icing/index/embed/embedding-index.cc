@@ -229,8 +229,8 @@ EmbeddingIndex::IvfContextManager::GetClosestClusterIdsByDistance(
                              embedding_index->GetEmbeddingVector(
                                  centroid_hit, dimension_, centroid_shard_id));
 
-      float distance = scorer->EigenScore(static_cast<int>(dimension_),
-                                          query_floats, centroid_vector);
+      float distance = scorer->Score(static_cast<int>(dimension_), query_floats,
+                                     centroid_vector);
       cluster_ids.push_back(embedding_util::kIvfBaseClusterId +
                             current_cluster_index);
       distances.push_back(distance);
@@ -1159,9 +1159,9 @@ EmbeddingIndex::EmbeddingHitAccessor::ScoreEmbeddingHit(
     ICING_ASSIGN_OR_RETURN(
         const float* vector,
         embedding_index_.GetEmbeddingVector(hit, dimension, shard_id));
-    semantic_score = scorer.EigenScore(dimension,
-                                       /*v1=*/query_floats.data(),
-                                       /*v2=*/vector);
+    semantic_score = scorer.Score(dimension,
+                                  /*v1=*/query_floats.data(),
+                                  /*v2=*/vector);
     ++embedding_stats_.num_unquantized_embeddings_scored;
     embedding_stats_.unquantized_shards_read.insert(shard_id);
     embedding_stats_.num_embedding_bytes_read +=
@@ -1173,9 +1173,9 @@ EmbeddingIndex::EmbeddingHitAccessor::ScoreEmbeddingHit(
     Quantizer quantizer(data);
     const uint8_t* quantized_vector =
         reinterpret_cast<const uint8_t*>(data + sizeof(Quantizer));
-    semantic_score = scorer.EigenScore(dimension,
-                                       /*v1=*/query_floats.data(),
-                                       /*v2=*/quantized_vector, quantizer);
+    semantic_score = scorer.Score(dimension,
+                                  /*v1=*/query_floats.data(),
+                                  /*v2=*/quantized_vector, quantizer);
     ++embedding_stats_.num_quantized_embeddings_scored;
     embedding_stats_.quantized_shards_read.insert(shard_id);
     embedding_stats_.num_embedding_bytes_read +=
