@@ -14,7 +14,10 @@
 
 #include "icing/transform/icu/icu-normalizer.h"
 
+#include "icing/transform/normalizer-options.h"
+
 #include <cctype>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -54,10 +57,6 @@ constexpr UChar kTransformRulesUtf16[] =
     "[:Greek:] NFD; "               // Decompose Greek letters
     "[:Nonspacing Mark:] Remove; "  // Remove accent / diacritic marks
     "NFKC";                         // Decompose and compose everything
-
-// Length of the transform rules excluding the terminating NULL.
-constexpr int kTransformRulesLength =
-    sizeof(kTransformRulesUtf16) / sizeof(kTransformRulesUtf16[0]) - 1;
 
 // Transforms a Unicode character with diacritics to its counterpart in ASCII
 // range. E.g. "ü" -> "u". Result will be set to char_out. Returns true if
@@ -99,6 +98,40 @@ bool DiacriticCharToAscii(const UNormalizer2* normalizer2, UChar32 uchar32_in,
   return false;
 }
 
+std::u16string BuildIcuNormalizerRules(
+    const NormalizerRulesConfig& config) {
+  std::string rules_utf8;
+
+  // 1. Lowercase mapping (always enabled in standard rules).
+  rules_utf8 += "Lower; ";
+
+  // 2. Hanzi-to-Pinyin transliteration (if requested).
+  if (config.enable_pinyin_normalization) {
+    rules_utf8 += "Han-Latin; ";
+  }
+
+  // 3. Latin-ASCII conversion
+  rules_utf8 += "Latin-ASCII; ";
+
+  // 4. Japanese Katakana mappings
+  rules_utf8 += "Hiragana-Katakana; ";
+
+  // 5. Diacritics/Accents Removal
+  rules_utf8 += "[:Latin:] NFD; ";
+  rules_utf8 += "[:Greek:] NFD; ";
+  rules_utf8 += "[:Nonspacing Mark:] Remove; ";
+
+  // 6. Unicode NFKC normalization
+  rules_utf8 += "NFKC; ";
+
+  auto rules_utf16_or = i18n_utils::Utf8ToUtf16(rules_utf8);
+  if (!rules_utf16_or.ok()) {
+    ICING_LOG(WARNING) << "Failed to convert rule string to UTF-16, falling back to defaults";
+    return std::u16string(reinterpret_cast<const char16_t*>(kTransformRulesUtf16));
+  }
+  return std::move(rules_utf16_or).ValueOrDie();
+}
+
 }  // namespace
 
 // Creates a IcuNormalizer with a valid TermTransformer instance.
@@ -107,10 +140,12 @@ bool DiacriticCharToAscii(const UNormalizer2* normalizer2, UChar32 uchar32_in,
 // we need some custom transform rules other than NFC/NFKC we have to use
 // TermTransformer as a custom transform rule executor.
 libtextclassifier3::StatusOr<std::unique_ptr<IcuNormalizer>>
-IcuNormalizer::Create(int max_term_byte_size) {
+IcuNormalizer::Create(int max_term_byte_size,
+                      const NormalizerRulesConfig& rules_config) {
+  std::u16string rules = BuildIcuNormalizerRules(rules_config);
   ICING_ASSIGN_OR_RETURN(
       std::unique_ptr<IcuNormalizer::TermTransformer> term_transformer,
-      IcuNormalizer::TermTransformer::Create());
+      IcuNormalizer::TermTransformer::Create(rules));
 
   return std::unique_ptr<IcuNormalizer>(
       new IcuNormalizer(std::move(term_transformer), max_term_byte_size));
@@ -188,11 +223,12 @@ IcuNormalizer::NormalizeLatinResult IcuNormalizer::NormalizeLatin(
 }
 
 libtextclassifier3::StatusOr<std::unique_ptr<IcuNormalizer::TermTransformer>>
-IcuNormalizer::TermTransformer::Create() {
+IcuNormalizer::TermTransformer::Create(const std::u16string& rules) {
   UErrorCode status = U_ZERO_ERROR;
   UTransliterator* term_transformer = utrans_openU(
-      kTransformRulesUtf16, kTransformRulesLength, UTRANS_FORWARD,
-      /*rules=*/nullptr, /*rulesLength=*/0, /*parseError=*/nullptr, &status);
+      reinterpret_cast<const UChar*>(rules.data()),
+      static_cast<int32_t>(rules.length()), UTRANS_FORWARD, /*rules=*/nullptr,
+      /*rulesLength=*/0, /*parseError=*/nullptr, &status);
 
   if (U_FAILURE(status)) {
     return absl_ports::InternalError("Failed to create UTransliterator.");

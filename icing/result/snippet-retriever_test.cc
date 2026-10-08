@@ -2224,12 +2224,12 @@ TEST_F(SnippetRetrieverTest, EmbeddingMatchInfo) {
   EXPECT_THAT(snippet.entries(0).property_name(), Eq("embedding1[0]"));
   EXPECT_THAT(
       snippet.entries(0).embedding_matches(),
-      UnorderedElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
+      ElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
           /*score=*/0.5, /*query_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT))));
   EXPECT_THAT(snippet.entries(1).property_name(), Eq("embedding1[2]"));
   EXPECT_THAT(
       snippet.entries(1).embedding_matches(),
-      UnorderedElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
+      ElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
           /*score=*/0.6, /*query_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT))));
   EXPECT_THAT(snippet.entries(2).property_name(), Eq("embedding1[3]"));
   EXPECT_THAT(
@@ -2241,7 +2241,7 @@ TEST_F(SnippetRetrieverTest, EmbeddingMatchInfo) {
               /*score=*/-0.4, /*query_index=*/3, EMBEDDING_METRIC_COSINE))));
   EXPECT_THAT(snippet.entries(3).property_name(), Eq("embedding1[4]"));
   EXPECT_THAT(snippet.entries(3).embedding_matches(),
-              UnorderedElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
+              ElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
                   /*score=*/3, /*query_index=*/2, EMBEDDING_METRIC_COSINE))));
 
   // Section 1 matches
@@ -2256,7 +2256,7 @@ TEST_F(SnippetRetrieverTest, EmbeddingMatchInfo) {
   EXPECT_THAT(snippet.entries(5).property_name(), Eq("embedding2[2]"));
   EXPECT_THAT(
       snippet.entries(5).embedding_matches(),
-      UnorderedElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
+      ElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
           /*score=*/1, /*query_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT))));
 }
 
@@ -2376,12 +2376,12 @@ TEST_F(SnippetRetrieverTest, EmbeddingMatchInfoDocumentWithNoMatch) {
   EXPECT_THAT(snippet.entries(0).property_name(), Eq("embedding1[0]"));
   EXPECT_THAT(
       snippet.entries(0).embedding_matches(),
-      UnorderedElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
+      ElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
           /*score=*/0.5, /*query_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT))));
   EXPECT_THAT(snippet.entries(1).property_name(), Eq("embedding1[2]"));
   EXPECT_THAT(
       snippet.entries(1).embedding_matches(),
-      UnorderedElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
+      ElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
           /*score=*/0.6, /*query_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT))));
   EXPECT_THAT(snippet.entries(2).property_name(), Eq("embedding1[3]"));
   EXPECT_THAT(
@@ -2393,7 +2393,7 @@ TEST_F(SnippetRetrieverTest, EmbeddingMatchInfoDocumentWithNoMatch) {
               /*score=*/-0.4, /*query_index=*/3, EMBEDDING_METRIC_COSINE))));
   EXPECT_THAT(snippet.entries(3).property_name(), Eq("embedding1[4]"));
   EXPECT_THAT(snippet.entries(3).embedding_matches(),
-              UnorderedElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
+              ElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
                   /*score=*/3, /*query_index=*/2, EMBEDDING_METRIC_COSINE))));
 
   // Section 1 matches
@@ -2408,7 +2408,7 @@ TEST_F(SnippetRetrieverTest, EmbeddingMatchInfoDocumentWithNoMatch) {
   EXPECT_THAT(snippet.entries(5).property_name(), Eq("embedding2[2]"));
   EXPECT_THAT(
       snippet.entries(5).embedding_matches(),
-      UnorderedElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
+      ElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
           /*score=*/1, /*query_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT))));
 
   // Document 1 has no matches
@@ -2559,12 +2559,12 @@ TEST_F(SnippetRetrieverTest, HybridSearchSnippet) {
   EXPECT_THAT(snippet.entries(1).property_name(), Eq("embedding1[0]"));
   EXPECT_THAT(
       snippet.entries(1).embedding_matches(),
-      UnorderedElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
+      ElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
           /*score=*/0.5, /*query_index=*/0, EMBEDDING_METRIC_DOT_PRODUCT))));
   EXPECT_THAT(snippet.entries(2).property_name(), Eq("embedding1[2]"));
   EXPECT_THAT(
       snippet.entries(2).embedding_matches(),
-      UnorderedElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
+      ElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
           /*score=*/0.6, /*query_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT))));
   EXPECT_THAT(snippet.entries(3).property_name(), Eq("embedding1[3]"));
   EXPECT_THAT(
@@ -2576,7 +2576,7 @@ TEST_F(SnippetRetrieverTest, HybridSearchSnippet) {
               /*score=*/-0.4, /*query_index=*/3, EMBEDDING_METRIC_COSINE))));
   EXPECT_THAT(snippet.entries(4).property_name(), Eq("embedding1[4]"));
   EXPECT_THAT(snippet.entries(4).embedding_matches(),
-              UnorderedElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
+              ElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
                   /*score=*/3, /*query_index=*/2, EMBEDDING_METRIC_COSINE))));
 
   // embedding2 matches
@@ -2591,7 +2591,7 @@ TEST_F(SnippetRetrieverTest, HybridSearchSnippet) {
   EXPECT_THAT(snippet.entries(6).property_name(), Eq("embedding2[2]"));
   EXPECT_THAT(
       snippet.entries(6).embedding_matches(),
-      UnorderedElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
+      ElementsAre(EqualsProto(CreateEmbeddingMatchSnippetProto(
           /*score=*/1, /*query_index=*/1, EMBEDDING_METRIC_DOT_PRODUCT))));
 
   // 'subject' text matches

@@ -186,6 +186,18 @@ public class IcingSearchEngineImpl implements Closeable {
     nativeInvalidateNextPageToken(this, nextPageToken);
   }
 
+  @Nullable
+  public byte[] handleExpiredDocuments() {
+    throwIfClosed();
+    return nativeHandleExpiredDocuments(this);
+  }
+
+  @Nullable
+  public byte[] maintainAnnIndex(@NonNull byte[] maintainAnnIndexOptionsBytes) {
+    throwIfClosed();
+    return nativeMaintainAnnIndex(this, maintainAnnIndexOptionsBytes);
+  }
+
   @NonNull
   public byte[] openWriteBlob(@NonNull byte[] blobHandleBytes) {
     throwIfClosed();
@@ -377,6 +389,11 @@ public class IcingSearchEngineImpl implements Closeable {
 
   private static native void nativeInvalidateNextPageToken(
       IcingSearchEngineImpl instance, long nextPageToken);
+
+  private static native byte[] nativeHandleExpiredDocuments(IcingSearchEngineImpl instance);
+
+  private static native byte[] nativeMaintainAnnIndex(
+      IcingSearchEngineImpl instance, byte[] maintainAnnIndexOptionsBytes);
 
   private static native byte[] nativeOpenWriteBlob(
       IcingSearchEngineImpl instance, byte[] blobHandleBytes);

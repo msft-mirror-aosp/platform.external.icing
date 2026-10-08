@@ -15,8 +15,11 @@
 #ifndef ICING_UTIL_DOCUMENT_UTIL_H_
 #define ICING_UTIL_DOCUMENT_UTIL_H_
 
+#include <vector>
+
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -25,6 +28,13 @@ namespace document_util {
 
 // Creates a DocumentWrapper from a DocumentProto.
 DocumentWrapper CreateDocumentWrapper(DocumentProto document);
+
+// Returns the optimized document id by the given document id mapping from the
+// optimize result. If document_id is out of range or invalid, then
+// kInvalidDocumentId will be returned.
+DocumentId GetOptimizedDocumentId(
+    DocumentId document_id,
+    const std::vector<DocumentId>& document_id_old_to_new);
 
 }  // namespace document_util
 

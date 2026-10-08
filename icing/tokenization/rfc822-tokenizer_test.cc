@@ -17,6 +17,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
@@ -985,6 +986,27 @@ TEST(Rfc822TokenizerTest, ResetToTokenEndingBefore) {
   EXPECT_THAT(token_iterator->GetTokensForTest().at(0).text, "a@g.c");
 
   ASSERT_FALSE(token_iterator->ResetToTokenEndingBefore(4));
+}
+
+TEST(Rfc822TokenizerTest, InvalidUtf8AndReplacementCharacterDoNotLoopForever) {
+  Rfc822Tokenizer rfc822_tokenizer = Rfc822Tokenizer();
+
+  // U+FFFD (Replacement Character) in UTF-8 is "\xEF\xBF\xBD"
+  std::string text_with_ufffd =
+      "foo\xEF\xBF\xBD"
+      "bar@google.com";
+
+  auto tokenizer = rfc822_tokenizer.Tokenize(text_with_ufffd);
+  ASSERT_TRUE(tokenizer.ok());
+  auto iterator = std::move(tokenizer).ValueOrDie();
+  EXPECT_TRUE(iterator->Advance());
+
+  // Ill-formed UTF-8 byte (\xFF) should also terminate without infinite loop.
+  std::string text_with_invalid = "foo\xFF" "bar@google.com";
+  auto tokenizer_invalid = rfc822_tokenizer.Tokenize(text_with_invalid);
+  ASSERT_TRUE(tokenizer_invalid.ok());
+  auto iterator_invalid = std::move(tokenizer_invalid).ValueOrDie();
+  EXPECT_TRUE(iterator_invalid->Advance());
 }
 
 }  // namespace

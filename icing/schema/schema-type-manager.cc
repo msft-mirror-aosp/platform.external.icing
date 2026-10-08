@@ -15,8 +15,10 @@
 #include "icing/schema/schema-type-manager.h"
 
 #include <memory>
+#include <string>
 #include <utility>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/schema/joinable-property-manager.h"
@@ -32,20 +34,25 @@ namespace icing {
 namespace lib {
 
 /* static */ libtextclassifier3::StatusOr<std::unique_ptr<SchemaTypeManager>>
-SchemaTypeManager::Create(const SchemaUtil::TypeConfigMap& type_config_map,
-                          const KeyMapper<SchemaTypeId>* schema_type_mapper) {
+SchemaTypeManager::Create(
+    const SchemaUtil::TypeConfigInfoCache& type_config_info_cache,
+    const KeyMapper<SchemaTypeId>* schema_type_mapper) {
   ICING_RETURN_ERROR_IF_NULL(schema_type_mapper);
 
   SectionManager::Builder section_manager_builder(*schema_type_mapper);
   JoinablePropertyManager::Builder joinable_property_manager_builder(
       *schema_type_mapper);
 
-  for (const auto& [type_config_name, type_config] : type_config_map) {
+  for (const auto& [type_config_name, _] :
+       type_config_info_cache.type_config_map()) {
     ICING_ASSIGN_OR_RETURN(SchemaTypeId schema_type_id,
                            schema_type_mapper->Get(type_config_name));
+    ICING_ASSIGN_OR_RETURN(
+        SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder,
+        type_config_info_cache.GetFullSchemaTypeConfigHolder(type_config_name));
 
     // Use iterator to traverse all leaf properties of the schema.
-    SchemaPropertyIterator iterator(type_config, type_config_map);
+    SchemaPropertyIterator iterator(type_config_holder, type_config_info_cache);
     while (true) {
       libtextclassifier3::Status status = iterator.Advance();
       if (!status.ok()) {
@@ -60,7 +67,7 @@ SchemaTypeManager::Create(const SchemaUtil::TypeConfigMap& type_config_map,
         ICING_RETURN_IF_ERROR(
             section_manager_builder.ProcessSchemaTypePropertyConfig(
                 schema_type_id, iterator.GetCurrentPropertyConfig(),
-                iterator.GetCurrentPropertyPath()));
+                iterator.GetCurrentPropertyPath(), type_config_name));
       }
 
       // Process joinable property
@@ -95,7 +102,7 @@ SchemaTypeManager::Create(const SchemaUtil::TypeConfigMap& type_config_map,
       ICING_RETURN_IF_ERROR(
           section_manager_builder.ProcessSchemaTypePropertyConfig(
               schema_type_id, unknown_property_config,
-              std::string(property_path)));
+              std::string(property_path), type_config_name));
     }
   }
 

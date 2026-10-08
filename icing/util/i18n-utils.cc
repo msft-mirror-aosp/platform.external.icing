@@ -90,8 +90,11 @@ libtextclassifier3::StatusOr<std::u16string> Utf8ToUtf16(
 
 UChar32 GetUChar32At(const char* data, int length, int position) {
   UChar32 uchar32;
-  U8_NEXT_OR_FFFD(data, position, length, uchar32);
-  return uchar32;
+  // U8_NEXT yields a negative value on ill-formed input; map that to our
+  // sentinel.  We deliberately do NOT use U8_NEXT_OR_FFFD because U+FFFD is a
+  // perfectly valid code point that may legitimately appear in user content.
+  U8_NEXT(data, position, length, uchar32);
+  return uchar32 < 0 ? kInvalidUChar32 : uchar32;
 }
 
 void SafeTruncateUtf8(std::string* str, int truncate_to_length) {

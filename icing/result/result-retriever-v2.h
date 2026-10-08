@@ -27,6 +27,7 @@
 #include "icing/proto/search.pb.h"
 #include "icing/result/page-result.h"
 #include "icing/result/result-state-v2.h"
+#include "icing/result/result-utils.h"
 #include "icing/result/snippet-retriever.h"
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
@@ -53,7 +54,8 @@ class GroupResultLimiterV2 {
   //     is not present. The caller should exclude the document from the page.
   virtual std::optional<int> GetGroupResultLimitsIndex(
       const ScoredDocumentHit& scored_document_hit,
-      const std::unordered_map<int32_t, int>& entry_id_group_id_map,
+      const std::unordered_map<result_utils::ResultGroupingEntryId, int>&
+          entry_id_group_index_map,
       const DocumentStore& document_store,
       ResultSpecProto::ResultGroupingType result_group_type,
       int64_t current_time_ms) const;

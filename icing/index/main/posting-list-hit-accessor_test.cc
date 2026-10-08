@@ -221,9 +221,11 @@ TEST_F(PostingListHitAccessorTest, MultiBlockChainsBlocksProperly) {
       std::unique_ptr<PostingListHitAccessor> pl_accessor,
       PostingListHitAccessor::Create(flash_index_storage_.get(),
                                      serializer_.get()));
-  // Add some hits! Any hits!
-  std::vector<Hit> hits1 =
-      CreateHits(/*num_hits=*/5000, /*desired_byte_length=*/1);
+
+  // Add some hits. This should fit onto the 2nd block.
+  int desired_byte_length = 1;
+  int num_hits = FlashIndexStorage::SelectBlockSize() / desired_byte_length + 1;
+  std::vector<Hit> hits1 = CreateHits(num_hits, desired_byte_length);
   for (const Hit& hit : hits1) {
     ICING_ASSERT_OK(pl_accessor->PrependHit(hit));
   }
@@ -270,9 +272,10 @@ TEST_F(PostingListHitAccessorTest, PreexistingMultiBlockReusesBlocksProperly) {
       std::unique_ptr<PostingListHitAccessor> pl_accessor,
       PostingListHitAccessor::Create(flash_index_storage_.get(),
                                      serializer_.get()));
-  // Add some hits! Any hits!
-  std::vector<Hit> hits1 =
-      CreateHits(/*num_hits=*/5000, /*desired_byte_length=*/1);
+  // Add some hits. This should fit onto the 2nd block.
+  int desired_byte_length = 1;
+  int num_hits = FlashIndexStorage::SelectBlockSize() / desired_byte_length + 1;
+  std::vector<Hit> hits1 = CreateHits(num_hits, desired_byte_length);
   for (const Hit& hit : hits1) {
     ICING_ASSERT_OK(pl_accessor->PrependHit(hit));
   }
@@ -303,7 +306,7 @@ TEST_F(PostingListHitAccessorTest, PreexistingMultiBlockReusesBlocksProperly) {
   PostingListIdentifier second_add_id = result2.id;
   EXPECT_THAT(second_add_id, Eq(first_add_id));
 
-  // We should be able to retrieve all 5050 hits.
+  // We should be able to retrieve all hits.
   for (const Hit& hit : hits2) {
     hits1.push_back(hit);
   }

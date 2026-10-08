@@ -37,18 +37,20 @@ namespace lib {
 // properties, the iterator will traverse down to the next nested level of
 // schema.
 //
-// REQUIRED: The schema in which this SchemaTypeConfigProto is defined must have
-// already passed the validation step during SetSchema.
+// REQUIRED:
+//   - The schema in which this SchemaTypeConfigProto is defined must have
+//     already passed the validation step during SetSchema.
 class SchemaPropertyIterator {
  public:
   explicit SchemaPropertyIterator(
-      const SchemaTypeConfigProto& base_schema_type_config,
-      const SchemaUtil::TypeConfigMap& type_config_map)
-      : type_config_map_(type_config_map) {
-    levels_.push_back(LevelInfo(base_schema_type_config,
+      const SchemaUtil::TypeConfigInfoCache::TypeConfigHolder& base_type_holder,
+      const SchemaUtil::TypeConfigInfoCache& type_config_info_cache)
+      : type_config_info_cache_(type_config_info_cache) {
+    levels_.push_back(LevelInfo(base_type_holder,
                                 /*base_property_path=*/"",
                                 /*all_nested_properties_indexable=*/true));
-    parent_type_config_names_.insert(base_schema_type_config.schema_type());
+    parent_type_config_names_.insert(
+        base_type_holder.base_type_config().schema_type());
   }
 
   // Gets the current property config.
@@ -100,7 +102,7 @@ class SchemaPropertyIterator {
   //   - INVALID_ARGUMENT_ERROR if cycle dependency is detected in the nested
   //     schema
   //   - NOT_FOUND_ERROR if any nested schema name is not found in
-  //     type_config_map
+  //     type_config_info_cache
   libtextclassifier3::Status Advance();
 
  private:
@@ -109,25 +111,29 @@ class SchemaPropertyIterator {
   // recursively to all leaf properties.
   class LevelInfo {
    public:
-    explicit LevelInfo(const SchemaTypeConfigProto& schema_type_config,
-                       std::string base_property_path,
-                       bool all_nested_properties_indexable)
-        : schema_type_config_(schema_type_config),
+    explicit LevelInfo(
+        SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder,
+        std::string base_property_path, bool all_nested_properties_indexable)
+        : schema_type_config_holder_(std::move(type_config_holder)),
           base_property_path_(std::move(base_property_path)),
-          sorted_property_indices_(schema_type_config.properties_size()),
+          sorted_property_indices_(
+              schema_type_config_holder_.properties().size()),
           current_vec_idx_(-1),
-          sorted_property_indexable_(schema_type_config.properties_size()),
+          sorted_property_indexable_(
+              schema_type_config_holder_.properties().size()),
           all_nested_properties_indexable_(all_nested_properties_indexable) {
       // Index sort property by lexicographical order.
       std::iota(sorted_property_indices_.begin(),
                 sorted_property_indices_.end(),
                 /*value=*/0);
-      std::sort(
-          sorted_property_indices_.begin(), sorted_property_indices_.end(),
-          [&schema_type_config](int lhs_idx, int rhs_idx) -> bool {
-            return schema_type_config.properties(lhs_idx).property_name() <
-                   schema_type_config.properties(rhs_idx).property_name();
-          });
+      const google::protobuf::RepeatedPtrField<PropertyConfigProto>& properties =
+          schema_type_config_holder_.properties();
+      std::sort(sorted_property_indices_.begin(),
+                sorted_property_indices_.end(),
+                [&properties](int lhs_idx, int rhs_idx) -> bool {
+                  return properties.Get(lhs_idx).property_name() <
+                         properties.Get(rhs_idx).property_name();
+                });
     }
 
     bool Advance() {
@@ -135,7 +141,7 @@ class SchemaPropertyIterator {
     }
 
     const PropertyConfigProto& GetCurrentPropertyConfig() const {
-      return schema_type_config_.properties(
+      return schema_type_config_holder_.properties().Get(
           sorted_property_indices_[current_vec_idx_]);
     }
 
@@ -157,11 +163,12 @@ class SchemaPropertyIterator {
     }
 
     std::string_view GetSchemaTypeName() const {
-      return schema_type_config_.schema_type();
+      return schema_type_config_holder_.base_type_config().schema_type();
     }
 
    private:
-    const SchemaTypeConfigProto& schema_type_config_;  // Does not own
+    SchemaUtil::TypeConfigInfoCache::TypeConfigHolder
+        schema_type_config_holder_;
 
     // Concatenated property path of all parent levels.
     std::string base_property_path_;
@@ -188,7 +195,8 @@ class SchemaPropertyIterator {
     bool all_nested_properties_indexable_;
   };
 
-  const SchemaUtil::TypeConfigMap& type_config_map_;  // Does not own
+  const SchemaUtil::TypeConfigInfoCache&
+      type_config_info_cache_;  // Does not own
 
   // For maintaining the stack of recursive nested schema type traversal. We use
   // std::vector instead of std::stack to avoid memory allocate and free too

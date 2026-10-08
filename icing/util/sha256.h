@@ -18,19 +18,23 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 
 namespace icing {
 namespace lib {
 
+using Sha256Digest = std::array<uint8_t, 32>;
+const size_t kSha256DigestBytes = 32;
+
 class Sha256 {
  public:
   Sha256();
-  
+
   // Update the SHA256 context with additional data
   void Update(const uint8_t* data, size_t length);
 
   // Finalize the SHA256 computation and obtain the 32-byte hash.
-  std::array<uint8_t, 32> Finalize() &&;
+  Sha256Digest Finalize() &&;
 
  private:
   // Array to hold the current hash state
@@ -48,5 +52,30 @@ class Sha256 {
 
 }  // namespace lib
 }  // namespace icing
+
+namespace std {
+
+template <>
+struct hash<icing::lib::Sha256Digest> {
+  // FNV-1a constants for 64-bits. Please see
+  // https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function
+  // for more details.
+  static constexpr uint64_t FNV_PRIME = 0x100000001b3ULL;
+  static constexpr uint64_t FNV_OFFSET_BASIS = 0xcbf29ce484222325ULL;
+
+  uint64_t operator()(const icing::lib::Sha256Digest& digest) const {
+    uint64_t hash = FNV_OFFSET_BASIS;
+
+    // Process all 32 bytes using FNV-1a
+    for (uint8_t byte : digest) {
+      hash ^= static_cast<uint64_t>(byte);
+      hash *= FNV_PRIME;
+    }
+
+    return hash;
+  }
+};
+
+}  // namespace std
 
 #endif  // ICING_UTIL_SHA256_H_

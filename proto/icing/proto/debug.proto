@@ -122,7 +122,7 @@ message DebugInfoProto {
   optional SchemaDebugInfoProto schema_info = 3;
 }
 
-// Next tag: 3
+// Next tag: 4
 message DebugInfoResultProto {
   // Status code can be one of:
   //   OK
@@ -134,4 +134,9 @@ message DebugInfoResultProto {
 
   // Debug information for Icing.
   optional DebugInfoProto debug_info = 2;
+
+  // Size of the DebugInfoResultProto response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 3;
 }

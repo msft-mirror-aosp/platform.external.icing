@@ -58,7 +58,7 @@ class ScorablePropertyManager {
   //   - INVALID_ARGUMENT if |schema_type_id| is invalid
   libtextclassifier3::StatusOr<std::optional<int>> GetScorablePropertyIndex(
       SchemaTypeId schema_type_id, std::string_view property_path,
-      const SchemaUtil::TypeConfigMap& type_config_map,
+      const SchemaUtil::TypeConfigInfoCache& type_config_info_cache,
       const std::unordered_map<SchemaTypeId, std::string>&
           schema_id_to_type_map);
 
@@ -73,7 +73,7 @@ class ScorablePropertyManager {
   libtextclassifier3::StatusOr<const std::vector<ScorablePropertyInfo>*>
   GetOrderedScorablePropertyInfo(
       SchemaTypeId schema_type_id,
-      const SchemaUtil::TypeConfigMap& type_config_map,
+      const SchemaUtil::TypeConfigInfoCache& type_config_info_cache,
       const std::unordered_map<SchemaTypeId, std::string>&
           schema_id_to_type_map);
 
@@ -102,19 +102,21 @@ class ScorablePropertyManager {
   //   - INVALID_ARGUMENT if |schema_type_id| is not found from the schema.
   libtextclassifier3::StatusOr<
       std::unordered_map<SchemaTypeId, DerivedScorablePropertySchema>::iterator>
-  LookupAndMaybeUpdateCache(SchemaTypeId schema_type_id,
-                            const SchemaUtil::TypeConfigMap& type_config_map,
-                            const std::unordered_map<SchemaTypeId, std::string>&
-                                schema_id_to_type_map);
+  LookupAndMaybeUpdateCache(
+      SchemaTypeId schema_type_id,
+      const SchemaUtil::TypeConfigInfoCache& type_config_info_cache,
+      const std::unordered_map<SchemaTypeId, std::string>&
+          schema_id_to_type_map);
 
   // Updates the entry in |scorable_property_schema_cache_| for the key
   // |schema_type_id|.
   //
   // Returns true if an entry is successfully inserted to the cache.
-  bool UpdateCache(SchemaTypeId schema_type_id,
-                   const SchemaUtil::TypeConfigMap& type_config_map,
-                   const std::unordered_map<SchemaTypeId, std::string>&
-                       schema_id_to_type_map);
+  bool UpdateCache(
+      SchemaTypeId schema_type_id,
+      const SchemaUtil::TypeConfigInfoCache& type_config_info_cache,
+      const std::unordered_map<SchemaTypeId, std::string>&
+          schema_id_to_type_map);
 
   std::unordered_map<SchemaTypeId, DerivedScorablePropertySchema>
       scorable_property_schema_cache_;

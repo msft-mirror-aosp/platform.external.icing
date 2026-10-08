@@ -14,8 +14,10 @@
 
 #include "icing/join/qualified-id.h"
 
+#include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
@@ -31,6 +33,19 @@ namespace {
 bool IsSpecialCharacter(char c) {
   return c == QualifiedId::kEscapeChar ||
          c == QualifiedId::kNamespaceUriSeparator;
+}
+
+// Helper function to escape the content.
+std::string Escape(std::string_view content) {
+  std::string escaped_content;
+  escaped_content.reserve(content.length());
+  for (char c : content) {
+    if (IsSpecialCharacter(c)) {
+      escaped_content += QualifiedId::kEscapeChar;
+    }
+    escaped_content += c;
+  }
+  return escaped_content;
 }
 
 // Helper function to verify the format (check the escape format and make sure
@@ -104,6 +119,10 @@ libtextclassifier3::StatusOr<std::string> Unescape(std::string_view content) {
   ICING_ASSIGN_OR_RETURN(std::string uri,
                          Unescape(qualified_id_str.substr(separator_pos + 1)));
   return QualifiedId(std::move(name_space), std::move(uri));
+}
+
+std::string QualifiedId::ToString() const {
+  return Escape(name_space_) + kNamespaceUriSeparator + Escape(uri_);
 }
 
 }  // namespace lib

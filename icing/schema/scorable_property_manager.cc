@@ -36,12 +36,13 @@ namespace lib {
 libtextclassifier3::StatusOr<std::optional<int>>
 ScorablePropertyManager::GetScorablePropertyIndex(
     SchemaTypeId schema_type_id, std::string_view property_path,
-    const SchemaUtil::TypeConfigMap& type_config_map,
+    const SchemaUtil::TypeConfigInfoCache& type_config_info_cache,
     const std::unordered_map<SchemaTypeId, std::string>&
         schema_id_to_type_map) {
-  ICING_ASSIGN_OR_RETURN(auto cache_iter, LookupAndMaybeUpdateCache(
-                                              schema_type_id, type_config_map,
-                                              schema_id_to_type_map));
+  ICING_ASSIGN_OR_RETURN(
+      auto cache_iter,
+      LookupAndMaybeUpdateCache(schema_type_id, type_config_info_cache,
+                                schema_id_to_type_map));
   auto iter =
       cache_iter->second.property_path_to_index_map.find(property_path.data());
   if (iter == cache_iter->second.property_path_to_index_map.end()) {
@@ -54,12 +55,13 @@ libtextclassifier3::StatusOr<
     const std::vector<ScorablePropertyManager::ScorablePropertyInfo>*>
 ScorablePropertyManager::GetOrderedScorablePropertyInfo(
     SchemaTypeId schema_type_id,
-    const SchemaUtil::TypeConfigMap& type_config_map,
+    const SchemaUtil::TypeConfigInfoCache& type_config_info_cache,
     const std::unordered_map<SchemaTypeId, std::string>&
         schema_id_to_type_map) {
-  ICING_ASSIGN_OR_RETURN(auto cache_iter, LookupAndMaybeUpdateCache(
-                                              schema_type_id, type_config_map,
-                                              schema_id_to_type_map));
+  ICING_ASSIGN_OR_RETURN(
+      auto cache_iter,
+      LookupAndMaybeUpdateCache(schema_type_id, type_config_info_cache,
+                                schema_id_to_type_map));
   return &cache_iter->second.ordered_scorable_property_info;
 }
 
@@ -68,12 +70,13 @@ libtextclassifier3::StatusOr<std::unordered_map<
     ScorablePropertyManager::DerivedScorablePropertySchema>::iterator>
 ScorablePropertyManager::LookupAndMaybeUpdateCache(
     SchemaTypeId schema_type_id,
-    const SchemaUtil::TypeConfigMap& type_config_map,
+    const SchemaUtil::TypeConfigInfoCache& type_config_info_cache,
     const std::unordered_map<SchemaTypeId, std::string>&
         schema_id_to_type_map) {
   auto cache_iter = scorable_property_schema_cache_.find(schema_type_id);
   if (cache_iter == scorable_property_schema_cache_.end()) {
-    if (UpdateCache(schema_type_id, type_config_map, schema_id_to_type_map)) {
+    if (UpdateCache(schema_type_id, type_config_info_cache,
+                    schema_id_to_type_map)) {
       cache_iter = scorable_property_schema_cache_.find(schema_type_id);
     } else {
       // schema type id not found neither in the cache nor in the schema
@@ -88,21 +91,28 @@ ScorablePropertyManager::LookupAndMaybeUpdateCache(
 
 bool ScorablePropertyManager::UpdateCache(
     SchemaTypeId schema_type_id,
-    const SchemaUtil::TypeConfigMap& type_config_map,
+    const SchemaUtil::TypeConfigInfoCache& type_config_info_cache,
     const std::unordered_map<SchemaTypeId, std::string>&
         schema_id_to_type_map) {
   auto schema_id_iter = schema_id_to_type_map.find(schema_type_id);
   if (schema_id_iter == schema_id_to_type_map.end()) {
     return false;
   }
-  auto schema_config_iter = type_config_map.find(schema_id_iter->second);
-  if (schema_config_iter == type_config_map.end()) {
+  libtextclassifier3::StatusOr<
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder>
+      type_config_holder_or =
+          type_config_info_cache.GetFullSchemaTypeConfigHolder(
+              schema_id_iter->second);
+  if (!type_config_holder_or.ok()) {
+    // Swallow errors, which should not happen if the schema_id_to_type_map and
+    // type_config_info_cache is built from the schema.
     return false;
   }
   std::vector<ScorablePropertyInfo> property_info_vector;
   std::unordered_map<std::string, int> index_map;
 
-  SchemaPropertyIterator iterator(schema_config_iter->second, type_config_map);
+  SchemaPropertyIterator iterator(type_config_holder_or.ValueOrDie(),
+                                  type_config_info_cache);
   while (true) {
     libtextclassifier3::Status status = iterator.Advance();
     if (!status.ok()) {

@@ -24,7 +24,7 @@ option java_multiple_files = true;
 option objc_class_prefix = "ICNG";
 
 // Result of a call to IcingSearchEngine.Optimize
-// Next tag: 5
+// Next tag: 7
 message OptimizeResultProto {
   // Status code can be one of:
   //   OK
@@ -47,10 +47,19 @@ message OptimizeResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 4;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 5;
+
+  // Size of the OptimizeResultProto response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 6;
 }
 
 // Result of a call to IcingSearchEngine.GetOptimizeInfo
-// Next tag: 8
+// Next tag: 10
 message GetOptimizeInfoResultProto {
   // Status code can be one of:
   //   OK
@@ -85,6 +94,15 @@ message GetOptimizeInfoResultProto {
 
   // The latency of the GetVm call.
   optional int32 get_vm_latency_ms = 7;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 8;
+
+  // Size of the GetOptimizeInfoResultProto response in bytes.
+  // This field is not populated by libicing and is populated by the
+  // IcingSearchEngine java class.
+  optional int32 response_bytes = 9;
 }
 
 // Next tag: 16

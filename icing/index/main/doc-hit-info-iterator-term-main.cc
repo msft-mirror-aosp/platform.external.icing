@@ -14,6 +14,7 @@
 
 #include "icing/index/main/doc-hit-info-iterator-term-main.h"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -77,11 +78,22 @@ void MergeNewHitIntoCachedDocHitInfos(
 libtextclassifier3::Status DocHitInfoIteratorTermMain::Advance() {
   ++cached_doc_hit_infos_idx_;
   while (posting_list_accessor_ == nullptr ||
-         (!all_pages_consumed_ && cached_doc_hit_info_count() == 1)) {
+         (!all_pages_consumed_ && cached_doc_hit_info_count() <= 1)) {
     // If we haven't retrieved any hits before or we've already returned all but
     // the last cached hit, then go get some more!
-    // We hold back the last cached hit because it could have more hits on the
-    // next posting list in the chain.
+    // We hold back the last cached hit because it could have more hits (with
+    // the same document id as the last cached hit but different sections or
+    // flags) on the next posting list in the chain.
+    //
+    // In RetrieveMoreHits(), it is possible that:
+    // - All hits in the next batch are skipped (due to not belonging to the
+    //   desired sections or being prefix-only hits when exact match is
+    //   requested).
+    // - All hits in the next batch contain the same document id as the last
+    //   hit.
+    //
+    // In either case, we need to continue retrieving the next batch, until we
+    // find a hit of a new document or we've consumed all posting lists.
     libtextclassifier3::Status status = RetrieveMoreHits();
     if (!status.ok()) {
       if (!absl_ports::IsNotFound(status)) {
@@ -91,8 +103,7 @@ libtextclassifier3::Status DocHitInfoIteratorTermMain::Advance() {
             << "Encountered unexpected failure while retrieving  hits "
             << status.error_message();
       }
-      return absl_ports::ResourceExhaustedError(
-          "No more DocHitInfos in iterator");
+      return absl_ports::ResourceExhaustedError("");
     }
   }
   if (cached_doc_hit_infos_idx_ == -1 ||
@@ -100,8 +111,7 @@ libtextclassifier3::Status DocHitInfoIteratorTermMain::Advance() {
     // Nothing more for the iterator to return. Set these members to invalid
     // values.
     doc_hit_info_ = DocHitInfo();
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
   ++num_advance_calls_;
   doc_hit_info_ =
@@ -142,7 +152,9 @@ libtextclassifier3::Status DocHitInfoIteratorTermMainExact::RetrieveMoreHits() {
   }
 
   ++num_blocks_inspected_;
-  cached_doc_hit_infos_.reserve(cached_doc_hit_infos_.size() + hits.size());
+  // Don't call cached_doc_hit_infos_.reserve(cached_doc_hit_infos_.size() +
+  // hits.size()) here because hits may be skipped and we don't want to over
+  // allocate heap memory.
   for (const Hit& hit : hits) {
     // Check sections.
     if (((UINT64_C(1) << hit.section_id()) & section_restrict_mask_) == 0) {

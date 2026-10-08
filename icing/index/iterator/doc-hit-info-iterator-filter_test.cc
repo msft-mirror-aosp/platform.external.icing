@@ -173,8 +173,7 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, EmptyOriginalIterator) {
 
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator_empty), predicate_.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator_empty), predicate_.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()), IsEmpty());
 }
@@ -209,8 +208,7 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, DeletedDocumentsAreFiltered) {
 
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate_.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate_.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()),
               ElementsAre(document_id1, document_id3));
@@ -245,8 +243,7 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, NonExistingDocumentsAreFiltered) {
 
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate_.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate_.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()),
               ElementsAre(document_id1, document_id2, document_id3));
@@ -259,8 +256,7 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, NegativeDocumentIdIsIgnored) {
 
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate_.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate_.get());
 
   EXPECT_THAT(filtered_iterator->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
@@ -274,8 +270,7 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, InvalidDocumentIdIsIgnored) {
 
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate_.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate_.get());
 
   EXPECT_THAT(filtered_iterator->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
@@ -292,8 +287,7 @@ TEST_F(DocHitInfoIteratorDeletedFilterTest, GreaterThanMaxDocumentIdIsIgnored) {
 
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate_.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate_.get());
 
   EXPECT_THAT(filtered_iterator->Advance(),
               StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED));
@@ -375,8 +369,7 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest, EmptyOriginalIterator) {
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator_empty), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator_empty), predicate.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()), IsEmpty());
 }
@@ -401,8 +394,7 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest,
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()), IsEmpty());
 }
@@ -426,8 +418,7 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest, NoNamespacesReturnsAll) {
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()),
               ElementsAre(document_id1));
@@ -466,8 +457,7 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest,
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()),
               ElementsAre(document_id1, document_id2));
@@ -511,8 +501,7 @@ TEST_F(DocHitInfoIteratorNamespaceFilterTest, FilterForMultipleNamespacesOk) {
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()),
               ElementsAre(document_id1, document_id2, document_id4));
@@ -605,8 +594,7 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, EmptyOriginalIterator) {
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator_empty), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator_empty), predicate.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()), IsEmpty());
 }
@@ -631,8 +619,7 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()), IsEmpty());
 }
@@ -656,8 +643,7 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, NoSchemaTypesReturnsAll) {
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()),
               ElementsAre(document_id1));
@@ -690,8 +676,7 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()),
               ElementsAre(document_id1));
@@ -729,8 +714,7 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest, FilterForMultipleSchemaTypesOk) {
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()),
               ElementsAre(document_id2, document_id3));
@@ -785,8 +769,7 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator_1 =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
   EXPECT_THAT(GetDocumentIds(filtered_iterator_1.get()),
               ElementsAre(person_document_id));
 
@@ -799,8 +782,7 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
       fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator_2 =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
   EXPECT_THAT(GetDocumentIds(filtered_iterator_2.get()),
               ElementsAre(artist_document_id));
 }
@@ -853,8 +835,7 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator_1 =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
   EXPECT_THAT(GetDocumentIds(filtered_iterator_1.get()),
               ElementsAre(email_document_id));
 
@@ -868,8 +849,7 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
       fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator_2 =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
   EXPECT_THAT(GetDocumentIds(filtered_iterator_2.get()),
               ElementsAre(message_document_id));
 
@@ -882,8 +862,7 @@ TEST_F(DocHitInfoIteratorSchemaTypeFilterTest,
       fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator_3 =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
   EXPECT_THAT(GetDocumentIds(filtered_iterator_3.get()), IsEmpty());
 }
 
@@ -967,8 +946,7 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, TtlZeroIsntFilteredOut) {
 
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate_.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate_.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()),
               ElementsAre(document_id1));
@@ -1006,8 +984,7 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, BeforeTtlNotFilteredOut) {
 
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate_.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate_.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()),
               ElementsAre(document_id1));
@@ -1045,8 +1022,7 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, EqualTtlFilteredOut) {
 
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate_.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate_.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()), IsEmpty());
 }
@@ -1084,8 +1060,7 @@ TEST_F(DocHitInfoIteratorExpirationFilterTest, PastTtlFilteredOut) {
 
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate_.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate_.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()), IsEmpty());
 }
@@ -1234,8 +1209,7 @@ TEST_F(DocHitInfoIteratorFilterTest, CombineAllFiltersOk) {
 
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
 
   EXPECT_THAT(GetDocumentIds(filtered_iterator.get()),
               ElementsAre(document_id1));
@@ -1278,8 +1252,7 @@ TEST_F(DocHitInfoIteratorFilterTest, SectionIdMasksArePopulatedCorrectly) {
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
 
   EXPECT_THAT(GetDocHitInfos(filtered_iterator.get()),
               ElementsAre(EqualsDocHitInfo(document_id1, section_ids1),
@@ -1308,8 +1281,7 @@ TEST_F(DocHitInfoIteratorFilterTest, GetCallStats) {
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
 
   EXPECT_THAT(filtered_iterator->GetCallStats(), Eq(original_call_stats));
 }
@@ -1359,8 +1331,7 @@ TEST_F(DocHitInfoIteratorFilterTest, TrimFilterIterator) {
           fake_clock_.GetSystemTimeMilliseconds());
   std::unique_ptr<DocHitInfoIterator> filtered_iterator =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_iterator), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_iterator), predicate.get());
 
   // The trimmed tree.
   //          Filter
@@ -1398,8 +1369,7 @@ TEST_F(DocHitInfoIteratorFilterTest,
       original_root.get();
   std::unique_ptr<DocHitInfoIterator> new_root =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_root), predicate_1.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_root), predicate_1.get());
   // The filter is applied internally, so the pointer should not change.
   EXPECT_THAT(new_root.get(), Eq(original_root_ptr));
   // new_root is not a DocHitInfoIteratorFilter.
@@ -1411,8 +1381,7 @@ TEST_F(DocHitInfoIteratorFilterTest,
 
   // Apply predicate_2 to the same iterator.
   new_root = DocHitInfoIteratorFilter::ApplyFilter(
-      std::move(new_root), predicate_2.get(),
-      feature_flags_->enable_passing_filter_to_children());
+      std::move(new_root), predicate_2.get());
   // The pointer should not change for the same reason.
   EXPECT_THAT(new_root.get(), Eq(original_root_ptr));
   // new_root is not a DocHitInfoIteratorFilter.
@@ -1455,8 +1424,7 @@ TEST_F(DocHitInfoIteratorFilterTest,
   //       DummyHandlingFilter    DummyHandlingFilter
   std::unique_ptr<DocHitInfoIterator> new_root =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_root), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_root), predicate.get());
 
   // The filter should be handled by children, returning the original iterator.
   EXPECT_THAT(new_root.get(), Eq(original_root_ptr));
@@ -1506,8 +1474,7 @@ TEST_F(DocHitInfoIteratorFilterTest,
   //       DummyHandlingFilter   Dummy
   std::unique_ptr<DocHitInfoIterator> new_root =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_root), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_root), predicate.get());
 
   // The filter should be applied at the top level, so the pointer should
   // change and be of type DocHitInfoIteratorFilter.
@@ -1555,8 +1522,7 @@ TEST_F(DocHitInfoIteratorFilterTest,
   //                     Dummy   Dummy
   std::unique_ptr<DocHitInfoIterator> new_root =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_root), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_root), predicate.get());
 
   // The filter should be applied at the top level, so the pointer should
   // change and be of type DocHitInfoIteratorFilter.
@@ -1592,8 +1558,7 @@ TEST_F(DocHitInfoIteratorFilterTest,
   //                         Dummy
   std::unique_ptr<DocHitInfoIterator> new_root =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_root), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_root), predicate.get());
 
   // The filter should be applied at the top level, so the pointer should
   // change and be of type DocHitInfoIteratorFilter.
@@ -1639,8 +1604,7 @@ TEST_F(DocHitInfoIteratorFilterTest,
   //         DummyHandlingFilter
   std::unique_ptr<DocHitInfoIterator> new_root =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_root), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_root), predicate.get());
 
   // The filter should be applied at the top level, so the pointer should
   // change and is type of DocHitInfoIteratorFilter.
@@ -1702,8 +1666,7 @@ TEST_F(DocHitInfoIteratorFilterTest, ApplyFilterDeepTreeMixedHandling) {
   //                           Dummy  DummyHandlingFilter
   std::unique_ptr<DocHitInfoIterator> new_root =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_root), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_root), predicate.get());
 
   // The filter should be applied at the top level.
   EXPECT_THAT(new_root.get(), Ne(original_root_ptr));
@@ -1764,8 +1727,7 @@ TEST_F(DocHitInfoIteratorFilterTest, ApplyFilterNestedNonPassingIterator) {
   //                       DummyHandlingFilter
   std::unique_ptr<DocHitInfoIterator> new_root =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_root), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_root), predicate.get());
 
   // The filter should be applied at the top level.
   EXPECT_THAT(new_root.get(), Ne(original_root_ptr));
@@ -1816,8 +1778,7 @@ TEST_F(DocHitInfoIteratorFilterTest, ApplyFilterComplexTreeAllHandling) {
   // Apply the filter.
   std::unique_ptr<DocHitInfoIterator> new_root =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_root), predicate.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_root), predicate.get());
 
   // Since all leaf nodes can handle the filter, the original root should be
   // returned without a Filter wrapper.
@@ -1869,8 +1830,7 @@ TEST_F(DocHitInfoIteratorFilterTest, ApplyMultipleFiltersSequentially) {
   // Tree: Filter1(AND(DummyHandlingFilter, Dummy))
   std::unique_ptr<DocHitInfoIterator> current_root =
       DocHitInfoIteratorFilter::ApplyFilter(
-          std::move(original_root), predicate_1.get(),
-          feature_flags_->enable_passing_filter_to_children());
+          std::move(original_root), predicate_1.get());
   DocHitInfoIterator* filter1_ptr = current_root.get();
   ASSERT_THAT(filter1_ptr,
               WhenDynamicCastTo<DocHitInfoIteratorFilter*>(Ne(nullptr)));
@@ -1880,8 +1840,7 @@ TEST_F(DocHitInfoIteratorFilterTest, ApplyMultipleFiltersSequentially) {
   // Apply the second filter. A new Filter2 iterator is added on top. child1
   // gets predicate_2. Tree: Filter2(Filter1(AND(DummyHandlingFilter, Dummy)))
   current_root = DocHitInfoIteratorFilter::ApplyFilter(
-      std::move(current_root), predicate_2.get(),
-      feature_flags_->enable_passing_filter_to_children());
+      std::move(current_root), predicate_2.get());
   DocHitInfoIterator* filter2_ptr = current_root.get();
   ASSERT_THAT(filter2_ptr,
               WhenDynamicCastTo<DocHitInfoIteratorFilter*>(Ne(nullptr)));

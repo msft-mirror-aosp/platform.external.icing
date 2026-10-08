@@ -71,11 +71,9 @@ IcingDynamicTrie::Options CalculateTrieOptions(uint32_t hit_buffer_size) {
 
 LiteIndexOptions::LiteIndexOptions(const std::string& filename_base,
                                    uint32_t hit_buffer_want_merge_bytes,
-                                   bool hit_buffer_sort_at_indexing,
                                    uint32_t hit_buffer_sort_threshold_bytes)
     : filename_base(filename_base),
       hit_buffer_want_merge_bytes(hit_buffer_want_merge_bytes),
-      hit_buffer_sort_at_indexing(hit_buffer_sort_at_indexing),
       hit_buffer_sort_threshold_bytes(hit_buffer_sort_threshold_bytes) {
   hit_buffer_size = CalculateHitBufferSize(hit_buffer_want_merge_bytes);
   lexicon_options = CalculateTrieOptions(hit_buffer_size);

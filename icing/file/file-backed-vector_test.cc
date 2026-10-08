@@ -39,6 +39,7 @@
 using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::IsTrue;
+using ::testing::Le;
 using ::testing::Lt;
 using ::testing::Not;
 using ::testing::Pointee;
@@ -996,10 +997,18 @@ TEST_F(FileBackedVectorTest, GrowsInChunks) {
 
   // Our initial file size should just be the size of the header. Disk usage
   // will indicate that one block has been allocated, which contains the header.
+  //
+  // The logical file size should exactly match the header.
+  // However, physical disk usage (st_blocks * 512) is determined by the
+  // File System's allocation unit, not the CPU's memory page size.
+  //
+  // On iOS ARM64, the memory page is 16KB, but the disk cluster is often 4KB.
+  // We use Le(page_size) to ensure compatibility across architectures where
+  // disk allocation may be more granular than memory mapping.
   int header_size = sizeof(FileBackedVector<char>::Header);
   int page_size = getpagesize();
   EXPECT_THAT(filesystem_.GetFileSize(fd_), Eq(header_size));
-  EXPECT_THAT(filesystem_.GetDiskUsage(fd_), Eq(page_size));
+  EXPECT_THAT(filesystem_.GetDiskUsage(fd_), Le(page_size));
 
   // Once we add something though, we'll grow to be kGrowElements big. From this
   // point on, file size and disk usage should be the same because Growing will

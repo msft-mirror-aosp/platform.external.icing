@@ -16,6 +16,7 @@
 #define ICING_ICING_SEARCH_ENGINE_H_
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -28,11 +29,13 @@
 #include "icing/absl_ports/mutex.h"
 #include "icing/absl_ports/thread_annotations.h"
 #include "icing/feature-flags.h"
+#include "icing/file/database-stableness-log.h"
 #include "icing/file/derived-file-util.h"
 #include "icing/file/filesystem.h"
 #include "icing/index/data-indexing-handler.h"
 #include "icing/index/embed/embedding-index.h"
 #include "icing/index/embed/embedding-query-results.h"
+#include "icing/index/index-processor.h"
 #include "icing/index/index.h"
 #include "icing/index/numeric/numeric-index.h"
 #include "icing/jni/jni-cache.h"
@@ -58,12 +61,14 @@
 #include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hit.h"
 #include "icing/store/blob-store.h"
+#include "icing/store/document-group-info.h"
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
-#include "icing/util/icu-data-file-helper.h"
+#include "icing/util/simple-task-scheduler.h"
+#include "icing/util/tokenized-document.h"
 
 namespace icing {
 namespace lib {
@@ -458,6 +463,28 @@ class IcingSearchEngine {
   void InvalidateNextPageToken(uint64_t next_page_token)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Handles expired documents.
+  // - Purges expired documents from the document store. Note: it also purges
+  //   documents that expire before
+  //   current_time_ms + options_.expired_document_purge_threshold_ms().
+  // - Propagates the deletion to their child documents.
+  // - Reschedules another (background) task to handle the next expired
+  //   document(s).
+  //
+  // This method is called by:
+  // - (Icing lib direct client only) Icing's internal task scheduler.
+  // - AppSearch task scheduler.
+  // - In the last step of Initialize(), to purge documents that expire during
+  //   Icing was off. Note: Initialize() calls the locked version of this
+  //   method.
+  //
+  // Returns a HandleExpiredDocumentsResultProto with status:
+  // - OK with results on success
+  // - FAILED_PRECONDITION_ERROR IcingSearchEngine has not been initialized yet
+  // - INTERNAL_ERROR on any other errors
+  HandleExpiredDocumentsResultProto HandleExpiredDocuments()
+      ICING_LOCKS_EXCLUDED(mutex_);
+
   // Gets or creates a file for write only purpose for the given blob handle.
   // To mark the blob is completed written, CommitBlob must be called. Once
   // CommitBlob is called, the blob is sealed and rewrite is not allowed.
@@ -578,6 +605,16 @@ class IcingSearchEngine {
   PersistToDiskResultProto PersistToDisk(PersistType::Code persist_type)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Triggers the maintenance process for all IVF based embedding search
+  // indexes.
+  //
+  // Returns:
+  //   OK on success
+  //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
+  //   INTERNAL on I/O error
+  MaintainAnnIndexResultProto MaintainAnnIndex(
+      const MaintainAnnIndexOptions& options) ICING_LOCKS_EXCLUDED(mutex_);
+
   // Allows Icing to run tasks that are too expensive and/or unnecessary to be
   // executed in real-time, but are useful to keep it fast and be
   // resource-efficient. This method purely optimizes the internal files and
@@ -643,11 +680,12 @@ class IcingSearchEngine {
   IcingSearchEngine& operator=(const IcingSearchEngine&) = delete;
 
  protected:
-  IcingSearchEngine(IcingSearchEngineOptions options,
-                    std::unique_ptr<const Filesystem> filesystem,
-                    std::unique_ptr<const IcingFilesystem> icing_filesystem,
-                    std::unique_ptr<Clock> clock,
-                    std::unique_ptr<const JniCache> jni_cache = nullptr);
+  explicit IcingSearchEngine(
+      IcingSearchEngineOptions options,
+      std::unique_ptr<const Filesystem> filesystem,
+      std::unique_ptr<const IcingFilesystem> icing_filesystem,
+      std::unique_ptr<Clock> clock,
+      std::unique_ptr<const JniCache> jni_cache = nullptr);
 
  private:
   const IcingSearchEngineOptions options_;
@@ -706,11 +744,75 @@ class IcingSearchEngine {
   // Storage for all hits of embedding contents from the document store.
   std::unique_ptr<EmbeddingIndex> embedding_index_ ICING_GUARDED_BY(mutex_);
 
+  // Simple task scheduler for background tasks. Currently, it is used for:
+  // - Handle (purge) expired documents.
+  //
+  // Note: after acquiring the global lock, checking task_scheduler_ is nullptr
+  //   or not before accessing it **is ESSENTIAL**.
+  // - task_scheduler_ may be always nullptr if
+  //   options_.enable_background_task_scheduler() is false.
+  // - Race condition during destruction. Consider an example:
+  //   - Task scheduler thread: wakes up and ready to run
+  //     HandleExpiredDocuments()
+  //   - Main thread (which holds IcingSearchEngine object): destructs
+  //     IcingSearchEngine instance. IcingSearchEngine destructor destructs
+  //     task_scheduler_ via DestroyTaskScheduler() and wait to join the task
+  //     scheduler thread. At this point, task_scheduler_ is nullptr.
+  //   - Task scheduler thread: start to run HandleExpiredDocuments() and
+  //     reaches the point to reschedule the task.
+  //   - If task_scheduler_ is not checked, then the code will crash at runtime
+  //     because task_scheduler_ is already set to nullptr.
+  std::unique_ptr<SimpleTaskScheduler> task_scheduler_ ICING_GUARDED_BY(mutex_);
+
+  // For logging database stableness information.
+  std::unique_ptr<DatabaseStablenessLog> database_stableness_log_
+      ICING_GUARDED_BY(mutex_);
+
   // Pointer to JNI class references
   const std::unique_ptr<const JniCache> jni_cache_;
 
+  struct ReplayDocumentsResult {
+    libtextclassifier3::Status overall_status;
+    int num_failed_reindexed_documents = 0;
+    int num_deleted_documents = 0;
+  };
+
+  // Prepares documents (tokenization and dependency evaluation) for indexing.
+  static libtextclassifier3::StatusOr<TokenizedDocument>
+  PrepareDocumentsForIndexing(const DocumentStore* document_store,
+                              const SchemaStore* schema_store,
+                              const LanguageSegmenter* language_segmenter,
+                              bool enable_delete_propagation_from,
+                              DocumentProto&& document,
+                              int64_t current_time_ms);
+
+  // Replays documents in [start_document_id, end_document_id] into the
+  // index_processor, deletes failing documents from document_store, and
+  // optionally propagates deletion to child documents.
+  static libtextclassifier3::StatusOr<ReplayDocumentsResult>
+  ReplayDocumentsForIndexRestoration(
+      const IcingSearchEngineOptions& options, DocumentStore* document_store,
+      const SchemaStore* schema_store,
+      const LanguageSegmenter* language_segmenter,
+      const QualifiedIdJoinIndex* qualified_id_join_index,
+      IndexProcessor* index_processor, DocumentId start_document_id,
+      DocumentId end_document_id, int64_t current_time_ms);
+
+  // Deletes documents propagated from the given deleted document ids via
+  // joinable properties with delete propagation enabled.
+  static libtextclassifier3::StatusOr<DocumentGroupInfo> PropagateDelete(
+      const SchemaStore* schema_store,
+      const QualifiedIdJoinIndex* qualified_id_join_index,
+      DocumentStore* document_store,
+      const std::unordered_set<DocumentId>& deleted_document_ids,
+      int64_t current_time_ms, bool enable_delete_propagation_from);
+
   // Resets all members that are created during Initialize.
-  void ResetMembers() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+  //
+  // Note: this method DOES NOT reset task_scheduler_. task_scheduler_ should be
+  //   reset only if we want to destroy IcingSearchEngine, and in this case,
+  //   DestroyTaskScheduler should be called.
+  void ResetMembersLocked() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Resets all members that are created during Initialize, deletes all
   // underlying files and initializes a fresh index.
@@ -721,7 +823,7 @@ class IcingSearchEngine {
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Assumes mutex_ is already held.
-  PutResultProto PutLocked(DocumentProto&& document)
+  PutResultProto PutLocked(DocumentProto&& document, int64_t current_time_ms)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Assumes mutex_ is already held.
@@ -747,16 +849,48 @@ class IcingSearchEngine {
   // issues.
   //
   // @param persist_type: The type of persistence guarantee that PersistToDisk
-  // should provide.
+  //                      should provide.
   // @param persist_stats: The NON-null stats about the PersistToDisk call.
   libtextclassifier3::Status PersistToDiskLocked(
       PersistType::Code persist_type, PersistToDiskStatsProto* persist_stats)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to persist all data, compile the latency, and transform the
+  // status into the result proto.
+  //
+  // @param persist_type: The type of persistence guarantee that PersistToDisk
+  //                      should provide.
+  // @param persist_to_disk_result: The NON-null object to populate status and
+  //                                stats.
+  void PersistToDiskAndTransformStatusLocked(
+      PersistType::Code persist_type,
+      PersistToDiskResultProto* persist_to_disk_result)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to persist derived data (excluding document store) with
+  // RECOVERY_PROOF mode.
+  //
+  // @param persist_stats: The NON-null stats about the PersistToDisk call.
+  libtextclassifier3::Status PersistDerivedDataRecoveryProofLocked(
+      PersistToDiskStatsProto* persist_stats)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to persist derived data (excluding document store) with FULL
+  // mode.
+  //
+  // @param persist_stats: The NON-null stats about the PersistToDisk call.
+  libtextclassifier3::Status PersistDerivedDataFullLocked(
+      PersistToDiskStatsProto* persist_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to the actual work to Initialize. We need this separate
   // method so that other public methods don't need to call Initialize(). Public
   // methods calling each other may cause deadlock issues.
   InitializeResultProto InitializeLocked()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to the actual work to handle expired documents.
+  HandleExpiredDocumentsResultProto HandleExpiredDocumentsLocked()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to initialize member variables.
@@ -848,6 +982,19 @@ class IcingSearchEngine {
                                    const ResultSpecProto& result_spec)
       ICING_SHARED_LOCKS_REQUIRED(mutex_);
 
+  // Helper method to prepare a document for indexing. This includes
+  // tokenization and dependency evaluation.
+  //
+  // TODO(b/397769319): change the input and output to a vector of documents to
+  //   support batch indexing.
+  //
+  // Returns:
+  //   On success, TokenizedDocument.
+  //   Any errors from tokenization or dependency evaluation.
+  libtextclassifier3::StatusOr<TokenizedDocument> PrepareDocumentsForIndexing(
+      DocumentProto&& document, int64_t current_time_ms)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
   // Processes query and scores according to the specs. It is a helper function
   // (called by Search) to process and score normal query and the nested child
   // query for join search.
@@ -887,9 +1034,9 @@ class IcingSearchEngine {
   // joinable properties with delete propagation enabled.
   //
   // Returns:
-  //   Number of propagated documents deleted on success
+  //   A DocumentGroupInfo of the propagated documents deleted on success
   //   INTERNAL_ERROR on any I/O errors
-  libtextclassifier3::StatusOr<int> PropagateDelete(
+  libtextclassifier3::StatusOr<DocumentGroupInfo> PropagateDelete(
       const std::unordered_set<DocumentId>& deleted_document_ids,
       int64_t current_time_ms) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
@@ -952,6 +1099,16 @@ class IcingSearchEngine {
   libtextclassifier3::StatusOr<
       std::vector<std::unique_ptr<DataIndexingHandler>>>
   CreateDataIndexingHandlers() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Destroys the task scheduler.
+  //
+  // Task scheduler should be destroyed ONLY IF we want to destroy
+  // IcingSearchEngine (e.g. destructor, ClearAndDestroy API, etc).
+  void DestroyTaskScheduler() ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Helper method to write database stableness log for the given API call type.
+  void WriteDatabaseStablenessLog(IcingApiCallType::Code call_type)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to discard parts of (term, integer, qualified id join,
   // embedding) indices if they contain data for document ids greater than
@@ -1028,7 +1185,10 @@ class IcingSearchEngine {
   //   - INTERNAL_ERROR on any IO errors
   struct IndexRestorationResult {
     libtextclassifier3::Status status;
-    int num_failed_reindexed_documents;
+    int num_failed_reindexed_documents;  // Only contains documents that failed
+                                         // to be reindexed.
+    int num_deleted_documents;  // Contains both documents that failed to be
+                                // reindexed and propagated deleted documents.
     bool has_index_restored;
     bool has_integer_index_restored;
     bool has_qualified_id_join_index_restored;
@@ -1037,6 +1197,7 @@ class IcingSearchEngine {
     explicit IndexRestorationResult(libtextclassifier3::Status status_in)
         : status(std::move(status_in)),
           num_failed_reindexed_documents(0),
+          num_deleted_documents(0),
           has_index_restored(false),
           has_integer_index_restored(false),
           has_qualified_id_join_index_restored(false),
@@ -1044,9 +1205,11 @@ class IcingSearchEngine {
 
     explicit IndexRestorationResult(libtextclassifier3::Status status_in,
                                     int num_failed_reindexed_documents_in,
+                                    int num_deleted_documents_in,
                                     const TruncateIndexResult& truncate_result)
         : status(std::move(status_in)),
           num_failed_reindexed_documents(num_failed_reindexed_documents_in),
+          num_deleted_documents(num_deleted_documents_in),
           has_index_restored(truncate_result.index_needed_restoration),
           has_integer_index_restored(
               truncate_result.integer_index_needed_restoration),
@@ -1058,7 +1221,7 @@ class IcingSearchEngine {
   IndexRestorationResult RestoreIndexIfNeeded()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Helper method to discard search (term, integer) indices.
+  // Helper method to discard all search indices (term, integer, embedding).
   //
   // Returns:
   //   OK on success
@@ -1081,6 +1244,22 @@ class IcingSearchEngine {
   //   INTERNAL_ERROR on any I/O errors
   libtextclassifier3::Status ClearAllIndices()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to create a lambda function for handling expired documents
+  // task. This is used to schedule the task with the task scheduler.
+  std::function<void()> CreateHandleExpiredDocumentsTask()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to create a lambda function for MaintainAnnIndex task.
+  // This is used to schedule the task with the task scheduler.
+  std::function<void()> CreateMaintainAnnIndexTask(int retry_count = 0)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Helper method to run MaintainAnnIndex with shared lock.
+  void MaintainAnnIndexLocked(const MaintainAnnIndexOptions& options,
+                              Timer* maintain_timer, StatusProto* result_status,
+                              MaintainAnnIndexResultProto& result_proto)
+      ICING_SHARED_LOCKS_REQUIRED(mutex_);
 };
 
 }  // namespace lib

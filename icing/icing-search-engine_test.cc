@@ -629,6 +629,175 @@ TEST_F(IcingSearchEngineTest, BatchPutNotInitialized) {
   }
 }
 
+TEST_F(IcingSearchEngineTest, BatchPutAutoFlushTrueFlushesToDisk) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_auto_flush(true);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  PutDocumentRequest put_document_request;
+  *put_document_request.mutable_documents()->Add() =
+      CreateMessageDocument("namespace", "uri");
+
+  BatchPutResultProto result = icing.BatchPut(std::move(put_document_request));
+  EXPECT_THAT(result.status(), ProtoIsOk());
+  EXPECT_TRUE(result.has_persist_to_disk_result_proto());
+  EXPECT_THAT(result.persist_to_disk_result_proto().status(), ProtoIsOk());
+}
+
+TEST_F(IcingSearchEngineTest, BatchPutAutoFlushFalseDoesNotFlushToDisk) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_auto_flush(false);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+
+  PutDocumentRequest put_document_request;
+  *put_document_request.mutable_documents()->Add() =
+      CreateMessageDocument("namespace", "uri");
+
+  BatchPutResultProto result = icing.BatchPut(std::move(put_document_request));
+  EXPECT_THAT(result.status(), ProtoIsOk());
+  EXPECT_FALSE(result.has_persist_to_disk_result_proto());
+}
+
+TEST_F(IcingSearchEngineTest, DeleteAutoFlushTrueFlushesToDisk) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_auto_flush(true);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
+              ProtoIsOk());
+
+  DeleteResultProto result = icing.Delete("namespace", "uri");
+  EXPECT_THAT(result.status(), ProtoIsOk());
+  EXPECT_TRUE(result.has_persist_to_disk_result_proto());
+  EXPECT_THAT(result.persist_to_disk_result_proto().status(), ProtoIsOk());
+}
+
+TEST_F(IcingSearchEngineTest, DeleteAutoFlushFalseDoesNotFlushToDisk) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_auto_flush(false);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
+              ProtoIsOk());
+
+  DeleteResultProto result = icing.Delete("namespace", "uri");
+  EXPECT_THAT(result.status(), ProtoIsOk());
+  EXPECT_FALSE(result.has_persist_to_disk_result_proto());
+}
+
+TEST_F(IcingSearchEngineTest, DeleteByNamespaceAutoFlushTrueFlushesToDisk) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_auto_flush(true);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
+              ProtoIsOk());
+
+  DeleteByNamespaceResultProto result = icing.DeleteByNamespace("namespace");
+  EXPECT_THAT(result.status(), ProtoIsOk());
+  EXPECT_TRUE(result.has_persist_to_disk_result_proto());
+  EXPECT_THAT(result.persist_to_disk_result_proto().status(), ProtoIsOk());
+}
+
+TEST_F(IcingSearchEngineTest,
+       DeleteByNamespaceAutoFlushFalseDoesNotFlushToDisk) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_auto_flush(false);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
+              ProtoIsOk());
+
+  DeleteByNamespaceResultProto result = icing.DeleteByNamespace("namespace");
+  EXPECT_THAT(result.status(), ProtoIsOk());
+  EXPECT_FALSE(result.has_persist_to_disk_result_proto());
+}
+
+TEST_F(IcingSearchEngineTest, DeleteBySchemaTypeAutoFlushTrueFlushesToDisk) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_auto_flush(true);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
+              ProtoIsOk());
+
+  DeleteBySchemaTypeResultProto result = icing.DeleteBySchemaType("Message");
+  EXPECT_THAT(result.status(), ProtoIsOk());
+  EXPECT_TRUE(result.has_persist_to_disk_result_proto());
+  EXPECT_THAT(result.persist_to_disk_result_proto().status(), ProtoIsOk());
+}
+
+TEST_F(IcingSearchEngineTest,
+       DeleteBySchemaTypeAutoFlushFalseDoesNotFlushToDisk) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_auto_flush(false);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
+              ProtoIsOk());
+
+  DeleteBySchemaTypeResultProto result = icing.DeleteBySchemaType("Message");
+  EXPECT_THAT(result.status(), ProtoIsOk());
+  EXPECT_FALSE(result.has_persist_to_disk_result_proto());
+}
+
+TEST_F(IcingSearchEngineTest, DeleteByQueryAutoFlushTrueFlushesToDisk) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_auto_flush(true);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
+              ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("message");
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+
+  DeleteByQueryResultProto result = icing.DeleteByQuery(search_spec);
+  EXPECT_THAT(result.status(), ProtoIsOk());
+  EXPECT_TRUE(result.has_persist_to_disk_result_proto());
+  EXPECT_THAT(result.persist_to_disk_result_proto().status(), ProtoIsOk());
+}
+
+TEST_F(IcingSearchEngineTest, DeleteByQueryAutoFlushFalseDoesNotFlushToDisk) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  options.set_auto_flush(false);
+
+  IcingSearchEngine icing(options, GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(CreateMessageDocument("namespace", "uri")).status(),
+              ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("message");
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+
+  DeleteByQueryResultProto result = icing.DeleteByQuery(search_spec);
+  EXPECT_THAT(result.status(), ProtoIsOk());
+  EXPECT_FALSE(result.has_persist_to_disk_result_proto());
+}
+
 TEST_F(IcingSearchEngineTest, GetDocumentWithBadString) {
   IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
   ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
@@ -1462,8 +1631,6 @@ TEST_F(IcingSearchEngineTest, PersistToDiskLogging) {
 
   IcingSearchEngineOptions icing_options;
   icing_options.set_base_dir(GetTestBaseDir());
-  icing_options.set_enable_blob_store(true);
-  icing_options.set_enable_marker_file_for_optimize(true);
 
   TestIcingSearchEngine icing(icing_options, std::make_unique<Filesystem>(),
                               std::make_unique<IcingFilesystem>(),
@@ -1494,65 +1661,12 @@ TEST_F(IcingSearchEngineTest, PersistToDiskLogging) {
   EXPECT_THAT(persist_stats.embedding_index_persist_latency_ms(), Eq(10));
 }
 
-TEST_F(
-    IcingSearchEngineTest,
-    NoPersistToDisk_protoLogNewHeaderFormatFlagOffLosesAllDocumentsAndIndex) {
-  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
-  icing_options.set_enable_proto_log_new_header_format(false);
-  IcingSearchEngine icing1(icing_options, GetTestJniCache());
 
-  EXPECT_THAT(icing1.Initialize().status(), ProtoIsOk());
-  EXPECT_THAT(icing1.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
-  DocumentProto document = CreateMessageDocument("namespace", "uri");
-  EXPECT_THAT(icing1.Put(document).status(), ProtoIsOk());
-  EXPECT_THAT(
-      icing1.Get("namespace", "uri", GetResultSpecProto::default_instance())
-          .document(),
-      EqualsProto(document));
-
-  // It's intentional that no PersistToDisk call is made before initializing a
-  // second instance of icing.
-
-  IcingSearchEngine icing2(GetDefaultIcingOptions(), GetTestJniCache());
-  InitializeResultProto init_result = icing2.Initialize();
-  EXPECT_THAT(init_result.status(), ProtoIsOk());
-  EXPECT_THAT(init_result.initialize_stats().document_store_data_status(),
-              Eq(InitializeStatsProto::PARTIAL_LOSS));
-  EXPECT_THAT(init_result.initialize_stats().document_store_recovery_cause(),
-              Eq(InitializeStatsProto::DATA_LOSS));
-  EXPECT_THAT(init_result.initialize_stats().schema_store_recovery_cause(),
-              Eq(InitializeStatsProto::NONE));
-  EXPECT_THAT(init_result.initialize_stats().index_restoration_cause(),
-              Eq(InitializeStatsProto::NONE));
-
-  // The document shouldn't be found because we forgot to call
-  // PersistToDisk(LITE)!
-  EXPECT_THAT(
-      icing2.Get("namespace", "uri", GetResultSpecProto::default_instance())
-          .status(),
-      ProtoStatusIs(StatusProto::NOT_FOUND));
-
-  // Searching also shouldn't get us anything because the index wasn't
-  // recovered.
-  SearchSpecProto search_spec;
-  search_spec.set_term_match_type(TermMatchType::PREFIX);
-  search_spec.set_query("message");  // Content in the Message document.
-
-  SearchResultProto expected_search_result_proto;
-  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
-
-  SearchResultProto actual_results =
-      icing2.Search(search_spec, GetDefaultScoringSpec(),
-                    ResultSpecProto::default_instance());
-  EXPECT_THAT(actual_results, EqualsSearchResultIgnoreStatsAndScores(
-                                  expected_search_result_proto));
-}
 
 TEST_F(
     IcingSearchEngineTest,
-    NoPersistToDisk_protoLogNewHeaderFormatFlagOnWithImplicitFlushKeepsDocumentsAndRebuildIndex) {
+    NoPersistToDisk_protoLogWithImplicitFlushKeepsDocumentsAndRebuildIndex) {
   IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
-  icing_options.set_enable_proto_log_new_header_format(true);
   IcingSearchEngine icing1(icing_options, GetTestJniCache());
 
   EXPECT_THAT(icing1.Initialize().status(), ProtoIsOk());
@@ -1713,7 +1827,6 @@ TEST_F(
       });
 
   IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
-  icing_options.set_enable_proto_log_new_header_format(true);
   TestIcingSearchEngine icing1(icing_options, std::move(mock_filesystem),
                                std::make_unique<IcingFilesystem>(),
                                std::make_unique<FakeClock>(),

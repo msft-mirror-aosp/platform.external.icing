@@ -233,13 +233,15 @@ TEST_F(PostingListJoinDataAccessorTest, MultiBlockChainsBlocksProperly) {
       std::unique_ptr<PostingListJoinDataAccessor<JoinDataType>> pl_accessor,
       PostingListJoinDataAccessor<JoinDataType>::Create(
           flash_index_storage_.get(), serializer_.get()));
-  // Block size is 4096, sizeof(BlockHeader) is 12 and sizeof(JoinDataType)
-  // is 14, so the max size posting list can store (4096 - 12) / 14 = 291 data.
-  // Adding 292 data should cause:
+  // Approximate number of data that can fit onto a block =
+  // block size / sizeof(JoinDataType).
+  // Adding 1 more data should cause:
   // - 2 max size posting lists being allocated to block 1 and block 2.
   // - Chaining: block 2 -> block 1
+  int num_data =
+      FlashIndexStorage::SelectBlockSize() / sizeof(JoinDataType) + 1;
   std::vector<JoinDataType> data_vec = CreateData(
-      /*num_data=*/292, /*start_document_id=*/0,
+      num_data, /*start_document_id=*/0,
       /*ref_namespace_id=*/kDefaultNamespaceId, /*start_ref_hash_uri=*/819);
   for (const JoinDataType& data : data_vec) {
     ICING_ASSERT_OK(pl_accessor->PrependData(data));
@@ -285,13 +287,15 @@ TEST_F(PostingListJoinDataAccessorTest,
       std::unique_ptr<PostingListJoinDataAccessor<JoinDataType>> pl_accessor,
       PostingListJoinDataAccessor<JoinDataType>::Create(
           flash_index_storage_.get(), serializer_.get()));
-  // Block size is 4096, sizeof(BlockHeader) is 12 and sizeof(JoinDataType)
-  // is 14, so the max size posting list can store (4096 - 12) / 14 = 291 data.
-  // Adding 292 data will cause:
+  // Approximate number of data that can fit onto a block =
+  // block size / sizeof(JoinDataType).
+  // Adding 1 more data should cause:
   // - 2 max size posting lists being allocated to block 1 and block 2.
   // - Chaining: block 2 -> block 1
+  int num_data =
+      FlashIndexStorage::SelectBlockSize() / sizeof(JoinDataType) + 1;
   std::vector<JoinDataType> data_vec1 = CreateData(
-      /*num_data=*/292, /*start_document_id=*/0,
+      num_data, /*start_document_id=*/0,
       /*ref_namespace_id=*/kDefaultNamespaceId, /*start_ref_hash_uri=*/819);
   for (const JoinDataType& data : data_vec1) {
     ICING_ASSERT_OK(pl_accessor->PrependData(data));

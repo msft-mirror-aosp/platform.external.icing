@@ -43,6 +43,7 @@ namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::ElementsAre;
+using ::testing::Eq;
 using ::testing::IsEmpty;
 using ::testing::Pointee;
 using ::testing::SizeIs;
@@ -227,16 +228,18 @@ SchemaTypeConfigProto CreateGroupTypeConfig() {
 
 class SectionManagerTest : public ::testing::Test {
  protected:
+  SectionManagerTest()
+      : type_config_info_cache_(/*enable_schema_definition_deduping=*/true) {}
+
   void SetUp() override {
     test_dir_ = GetTestTempDir() + "/icing";
 
     auto email_type = CreateEmailTypeConfig();
     auto conversation_type = CreateConversationTypeConfig();
     auto group_type = CreateGroupTypeConfig();
-    type_config_map_.emplace(email_type.schema_type(), email_type);
-    type_config_map_.emplace(conversation_type.schema_type(),
-                             conversation_type);
-    type_config_map_.emplace(group_type.schema_type(), group_type);
+    type_config_info_cache_.AddTypeConfig(email_type);
+    type_config_info_cache_.AddTypeConfig(conversation_type);
+    type_config_info_cache_.AddTypeConfig(group_type);
 
     // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each
     // one 128KiB so the total DynamicTrieKeyMapper should get 384KiB
@@ -300,7 +303,7 @@ class SectionManagerTest : public ::testing::Test {
 
   Filesystem filesystem_;
   std::string test_dir_;
-  SchemaUtil::TypeConfigMap type_config_map_;
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache_;
   std::unique_ptr<KeyMapper<SchemaTypeId>> schema_type_mapper_;
 
   PropertyProto::VectorProto email_subject_embedding_;
@@ -313,7 +316,8 @@ TEST_F(SectionManagerTest, ExtractSections) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Extracts all sections from 'Email' document
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -375,7 +379,8 @@ TEST_F(SectionManagerTest, ExtractSectionsNested) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Extracts all sections from 'Conversation' document
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -445,7 +450,8 @@ TEST_F(SectionManagerTest, ExtractSectionsIndexableNestedPropertiesList) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Extracts all sections from 'Group' document
   ICING_ASSERT_OK_AND_ASSIGN(
@@ -530,7 +536,8 @@ TEST_F(SectionManagerTest, GetSectionMetadata) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Email (section id -> section property path):
   //   0 -> recipientIds
@@ -707,8 +714,9 @@ TEST_F(SectionManagerTest, GetSectionMetadataInvalidSchemaTypeId) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
-  ASSERT_THAT(type_config_map_, SizeIs(3));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
+  ASSERT_THAT(type_config_info_cache_.size(), Eq(3));
 
   EXPECT_THAT(schema_type_manager->section_manager().GetSectionMetadata(
                   /*schema_type_id=*/-1, /*section_id=*/0),
@@ -722,7 +730,8 @@ TEST_F(SectionManagerTest, GetSectionMetadataInvalidSectionId) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map_, schema_type_mapper_.get()));
+      SchemaTypeManager::Create(type_config_info_cache_,
+                                schema_type_mapper_.get()));
 
   // Email (section id -> section property path):
   //   0 -> recipientIds
@@ -816,10 +825,11 @@ TEST_F(SectionManagerTest,
       TOKENIZER_PLAIN);
 
   // Setup classes to create the section manager
-  SchemaUtil::TypeConfigMap type_config_map;
-  type_config_map.emplace(type_with_non_string_properties.schema_type(),
-                          type_with_non_string_properties);
-  type_config_map.emplace(empty_type.schema_type(), empty_type);
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  type_config_info_cache.AddTypeConfig(type_with_non_string_properties);
+  type_config_info_cache.AddTypeConfig(empty_type);
 
   // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each one
   // 128KiB so the total DynamicTrieKeyMapper should get 384KiB
@@ -837,7 +847,8 @@ TEST_F(SectionManagerTest,
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, schema_type_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache,
+                                schema_type_mapper.get()));
 
   // Create an empty document to be nested
   DocumentProto empty_document = DocumentBuilder()
@@ -917,10 +928,11 @@ TEST_F(SectionManagerTest,
       NUMERIC_MATCH_RANGE);
 
   // Setup classes to create the section manager
-  SchemaUtil::TypeConfigMap type_config_map;
-  type_config_map.emplace(type_with_non_integer_properties.schema_type(),
-                          type_with_non_integer_properties);
-  type_config_map.emplace(empty_type.schema_type(), empty_type);
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  type_config_info_cache.AddTypeConfig(type_with_non_integer_properties);
+  type_config_info_cache.AddTypeConfig(empty_type);
 
   // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each one
   // 128KiB so the total DynamicTrieKeyMapper should get 384KiB
@@ -938,7 +950,8 @@ TEST_F(SectionManagerTest,
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, schema_type_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache,
+                                schema_type_mapper.get()));
 
   // Create an empty document to be nested
   DocumentProto empty_document = DocumentBuilder()
@@ -1018,9 +1031,11 @@ TEST_F(SectionManagerTest, AssignSectionsRecursivelyForDocumentFields) {
           .Build();
 
   // Setup classes to create the section manager
-  SchemaUtil::TypeConfigMap type_config_map;
-  type_config_map.emplace(type.schema_type(), type);
-  type_config_map.emplace(document_type.schema_type(), document_type);
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  type_config_info_cache.AddTypeConfig(type);
+  type_config_info_cache.AddTypeConfig(document_type);
 
   // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each one
   // 128KiB so the total DynamicTrieKeyMapper should get 384KiB
@@ -1040,7 +1055,8 @@ TEST_F(SectionManagerTest, AssignSectionsRecursivelyForDocumentFields) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, schema_type_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache,
+                                schema_type_mapper.get()));
 
   // Extracts sections from 'Schema' document; there should be the 1 string
   // property and 1 integer property inside the document.
@@ -1103,9 +1119,11 @@ TEST_F(SectionManagerTest, DontAssignSectionsRecursivelyForDocumentFields) {
           .Build();
 
   // Setup classes to create the section manager
-  SchemaUtil::TypeConfigMap type_config_map;
-  type_config_map.emplace(type.schema_type(), type);
-  type_config_map.emplace(document_type.schema_type(), document_type);
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  type_config_info_cache.AddTypeConfig(type);
+  type_config_info_cache.AddTypeConfig(document_type);
 
   // DynamicTrieKeyMapper uses 3 internal arrays for bookkeeping. Give each one
   // 128KiB so the total DynamicTrieKeyMapper should get 384KiB
@@ -1125,7 +1143,8 @@ TEST_F(SectionManagerTest, DontAssignSectionsRecursivelyForDocumentFields) {
   // Use SchemaTypeManager factory method to instantiate SectionManager.
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<SchemaTypeManager> schema_type_manager,
-      SchemaTypeManager::Create(type_config_map, schema_type_mapper.get()));
+      SchemaTypeManager::Create(type_config_info_cache,
+                                schema_type_mapper.get()));
 
   // Extracts sections from 'Schema' document; there won't be any since we
   // didn't recurse into the document to see the inner string property

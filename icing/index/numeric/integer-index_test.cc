@@ -144,6 +144,28 @@ class NumericIndexIntegerTest : public ::testing::Test {
         /*pre_mapping_fbv=*/false);
   }
 
+  template <typename UnknownIntegerIndexType>
+  libtextclassifier3::StatusOr<std::unique_ptr<NumericIndex<int64_t>>>
+  CreateIntegerIndex(const std::string& /*working_path*/) {
+    return absl_ports::InvalidArgumentError("Unknown type");
+  }
+
+  template <>
+  libtextclassifier3::StatusOr<std::unique_ptr<NumericIndex<int64_t>>>
+  CreateIntegerIndex<DummyNumericIndex<int64_t>>(
+      const std::string& working_path) {
+    return DummyNumericIndex<int64_t>::Create(filesystem_, working_path);
+  }
+
+  template <>
+  libtextclassifier3::StatusOr<std::unique_ptr<NumericIndex<int64_t>>>
+  CreateIntegerIndex<IntegerIndex>(const std::string& working_path) {
+    return IntegerIndex::Create(
+        filesystem_, working_path, /*num_data_threshold_for_bucket_split=*/
+        IntegerIndexStorage::kDefaultNumDataThresholdForBucketSplit,
+        /*pre_mapping_fbv=*/false);
+  }
+
   template <typename NotIntegerIndexType>
   bool is_integer_index() const {
     return false;
@@ -1099,6 +1121,95 @@ TYPED_TEST(NumericIndexIntegerTest, OptimizeDeleteAll) {
               IsOkAndHolds(IsEmpty()));
 }
 
+TYPED_TEST(NumericIndexIntegerTest,
+           OptimizeIntoSameWorkingPathShouldReturnInvalidArgumentError) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumericIndex<int64_t>> integer_index,
+      this->template CreateIntegerIndex<TypeParam>());
+
+  std::vector<DocumentId> document_id_old_to_new(1, 0);
+  EXPECT_THAT(
+      integer_index->OptimizeInto(this->working_path_, document_id_old_to_new,
+                                  /*new_last_added_document_id=*/0),
+      StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+TYPED_TEST(NumericIndexIntegerTest, OptimizeInto) {
+  // DummyNumericIndex is an in-memory mock without disk persistence, so it
+  // cannot be tested via Create(new_working_path) reloading.
+  if (!this->template is_integer_index<TypeParam>()) {
+    return;
+  }
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumericIndex<int64_t>> integer_index,
+      this->template CreateIntegerIndex<TypeParam>());
+
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/1,
+        kDefaultSectionId, /*keys=*/{1});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/2,
+        kDefaultSectionId, /*keys=*/{3});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/3,
+        kDefaultSectionId, /*keys=*/{2});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/5,
+        kDefaultSectionId, /*keys=*/{0});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/8,
+        kDefaultSectionId, /*keys=*/{4});
+  Index(integer_index.get(), kDefaultTestPropertyPath, /*document_id=*/13,
+        kDefaultSectionId, /*keys=*/{2});
+  integer_index->set_last_added_document_id(13);
+
+  std::vector<DocumentId> document_id_old_to_new(14, kInvalidDocumentId);
+  document_id_old_to_new[1] = 0;
+  document_id_old_to_new[2] = 1;
+  document_id_old_to_new[8] = 2;
+  document_id_old_to_new[13] = 3;
+
+  std::string new_working_path = this->working_path_ + "_optimized";
+  DocumentId new_last_added_document_id = 3;
+
+  // Successfully optimize into new working path
+  EXPECT_THAT(
+      integer_index->OptimizeInto(new_working_path, document_id_old_to_new,
+                                  new_last_added_document_id),
+      IsOk());
+
+  // Original index remains unchanged
+  EXPECT_THAT(integer_index->last_added_document_id(), Eq(13));
+
+  // Create new index from new_working_path and verify
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<NumericIndex<int64_t>> new_integer_index,
+      this->template CreateIntegerIndex<TypeParam>(new_working_path));
+  EXPECT_THAT(new_integer_index->last_added_document_id(),
+              Eq(new_last_added_document_id));
+
+  std::vector<SectionId> expected_sections = {kDefaultSectionId};
+  EXPECT_THAT(this->Query(new_integer_index.get(), kDefaultTestPropertyPath,
+                          /*key_lower=*/1, /*key_upper=*/1),
+              IsOkAndHolds(ElementsAre(
+                  EqualsDocHitInfo(/*document_id=*/0, expected_sections))));
+  EXPECT_THAT(this->Query(new_integer_index.get(), kDefaultTestPropertyPath,
+                          /*key_lower=*/3, /*key_upper=*/3),
+              IsOkAndHolds(ElementsAre(
+                  EqualsDocHitInfo(/*document_id=*/1, expected_sections))));
+  EXPECT_THAT(this->Query(new_integer_index.get(), kDefaultTestPropertyPath,
+                          /*key_lower=*/0, /*key_upper=*/0),
+              IsOkAndHolds(IsEmpty()));
+  EXPECT_THAT(this->Query(new_integer_index.get(), kDefaultTestPropertyPath,
+                          /*key_lower=*/4, /*key_upper=*/4),
+              IsOkAndHolds(ElementsAre(
+                  EqualsDocHitInfo(/*document_id=*/2, expected_sections))));
+  EXPECT_THAT(this->Query(new_integer_index.get(), kDefaultTestPropertyPath,
+                          /*key_lower=*/2, /*key_upper=*/2),
+              IsOkAndHolds(ElementsAre(
+                  EqualsDocHitInfo(/*document_id=*/3, expected_sections))));
+
+  // Clean up
+  new_integer_index.reset();
+  this->filesystem_.DeleteDirectoryRecursively(new_working_path.c_str());
+}
+
 TYPED_TEST(NumericIndexIntegerTest, Clear) {
   ICING_ASSERT_OK_AND_ASSIGN(
       std::unique_ptr<NumericIndex<int64_t>> integer_index,
@@ -1824,6 +1935,434 @@ TEST_P(IntegerIndexTest, WildcardStoragePersistenceQuery) {
           EqualsDocHitInfo(/*document_id=*/2, expected_sections_typea),
           EqualsDocHitInfo(/*document_id=*/1, expected_sections_typea),
           EqualsDocHitInfo(/*document_id=*/0, expected_sections_typea))));
+}
+
+TEST_P(IntegerIndexTest, WildcardStoragePropertyStorageProtoPersistence) {
+  // This test sets its schema assuming that max property storages == 32.
+  ASSERT_THAT(IntegerIndex::kMaxPropertyStorages, Eq(32));
+
+  PropertyConfigProto int_property_config =
+      PropertyConfigBuilder()
+          .SetName("otherProperty1")
+          .SetCardinality(CARDINALITY_REPEATED)
+          .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+          .Build();
+  // Create a schema with two types:
+  // - TypeA has 34 properties:
+  //     'desiredProperty', 'otherProperty'*, 'undesiredProperty'
+  // - TypeB has 2 properties: 'anotherProperty', 'desiredProperty'
+  // 1. The 32 'otherProperty's will consume all of the individual storages
+  // 2. TypeA.desiredProperty and TypeB.anotherProperty will both be assigned
+  //    SectionId = 0 for their respective types.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("TypeA")
+                       .AddProperty(int_property_config)
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty2"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty3"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty4"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty5"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty6"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty7"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty8"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty9"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty10"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty11"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty12"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty13"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty14"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty15"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty16"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty17"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty18"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty19"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty20"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty21"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty22"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty23"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty24"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty25"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty26"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty27"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty28"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty29"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty30"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty31"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty32"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("desiredProperty"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("undesiredProperty")))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("TypeB")
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("anotherProperty"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("desiredProperty")))
+          .Build();
+  ICING_ASSERT_OK(this->schema_store_->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false));
+
+  // Ids are assigned alphabetically, so the property ids are:
+  // TypeA.desiredProperty = 0
+  // TypeA.otherPropertyN = N
+  // TypeA.undesiredProperty = 33
+  // TypeB.anotherProperty = 0
+  // TypeB.desiredProperty = 1
+  SectionId typea_desired_prop_id = 0;
+  std::string desired_property = "desiredProperty";
+
+  // Put a doc of "TypeA" into the document store.
+  DocumentProto doc =
+      DocumentBuilder().SetKey("ns1", "uri0").SetSchema("TypeA").Build();
+  ICING_ASSERT_OK(
+      this->doc_store_->Put(document_util::CreateDocumentWrapper(doc)));
+
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<IntegerIndex> integer_index,
+        IntegerIndex::Create(filesystem_, working_path_,
+                             GetParam().num_data_threshold_for_bucket_split,
+                             GetParam().pre_mapping_fbv));
+
+    // Index numeric content for other properties to force our property into the
+    // wildcard storage.
+    std::string other_property_path = "otherProperty";
+    for (int i = 1; i <= IntegerIndex::kMaxPropertyStorages; ++i) {
+      Index(integer_index.get(),
+            absl_ports::StrCat(other_property_path, std::to_string(i)),
+            /*document_id=*/0, /*section_id=*/i, /*keys=*/{i});
+    }
+
+    // Index numeric content for TypeA.desiredProperty
+    Index(integer_index.get(), desired_property, /*document_id=*/0,
+          typea_desired_prop_id, /*keys=*/{1});
+  }
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
+
+  EXPECT_THAT(integer_index->num_property_indices(), Eq(33));
+
+  // Only the hits for 'desired_prop_id' should be returned.
+  std::vector<SectionId> expected_sections_typea = {typea_desired_prop_id};
+  EXPECT_THAT(Query(integer_index.get(), desired_property,
+                    /*key_lower=*/0, /*key_upper=*/2),
+              IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
+                  /*document_id=*/0, expected_sections_typea))));
+}
+
+TEST_P(IntegerIndexTest, WildcardStorageAfterClear) {
+  // This test sets its schema assuming that max property storages == 32.
+  ASSERT_THAT(IntegerIndex::kMaxPropertyStorages, Eq(32));
+
+  PropertyConfigProto int_property_config =
+      PropertyConfigBuilder()
+          .SetName("otherProperty1")
+          .SetCardinality(CARDINALITY_REPEATED)
+          .SetDataTypeInt64(NUMERIC_MATCH_RANGE)
+          .Build();
+  // Create a schema with two types:
+  // - TypeA has 34 properties:
+  //     'desiredProperty', 'otherProperty'*, 'undesiredProperty'
+  // - TypeB has 2 properties: 'anotherProperty', 'desiredProperty'
+  // 1. The 32 'otherProperty's will consume all of the individual storages
+  // 2. TypeA.desiredProperty and TypeB.anotherProperty will both be assigned
+  //    SectionId = 0 for their respective types.
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("TypeA")
+                       .AddProperty(int_property_config)
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty2"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty3"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty4"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty5"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty6"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty7"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty8"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty9"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty10"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty11"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty12"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty13"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty14"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty15"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty16"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty17"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty18"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty19"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty20"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty21"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty22"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty23"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty24"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty25"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty26"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty27"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty28"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty29"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty30"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty31"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("otherProperty32"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("desiredProperty"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("undesiredProperty")))
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("TypeB")
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("anotherProperty"))
+                       .AddProperty(PropertyConfigBuilder(int_property_config)
+                                        .SetName("desiredProperty")))
+          .Build();
+  ICING_ASSERT_OK(this->schema_store_->SetSchema(
+      schema, /*ignore_errors_and_delete_documents=*/false));
+
+  // Ids are assigned alphabetically, so the property ids are:
+  // TypeA.desiredProperty = 0
+  // TypeA.otherPropertyN = N
+  // TypeA.undesiredProperty = 33
+  // TypeB.anotherProperty = 0
+  // TypeB.desiredProperty = 1
+  SectionId typea_desired_prop_id = 0;
+  SectionId typea_undesired_prop_id = 33;
+  SectionId typeb_another_prop_id = 0;
+  SectionId typeb_desired_prop_id = 1;
+  std::string desired_property = "desiredProperty";
+  std::string undesired_property = "undesiredProperty";
+  std::string another_property = "anotherProperty";
+
+  // Put 11 docs of "TypeA" into the document store.
+  DocumentProto doc =
+      DocumentBuilder().SetKey("ns1", "uri0").SetSchema("TypeA").Build();
+  ICING_ASSERT_OK(
+      this->doc_store_->Put(document_util::CreateDocumentWrapper(doc)));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri1").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri2").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri3").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri4").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri5").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri6").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri7").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri8").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri9").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri10").Build())));
+
+  // Put 10 docs of "TypeB" into the document store.
+  doc = DocumentBuilder(doc).SetUri("uri11").SetSchema("TypeB").Build();
+  ICING_ASSERT_OK(
+      this->doc_store_->Put(document_util::CreateDocumentWrapper(doc)));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri12").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri13").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri14").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri15").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri16").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri17").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri18").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri19").Build())));
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder(doc).SetUri("uri20").Build())));
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<IntegerIndex> integer_index,
+      IntegerIndex::Create(filesystem_, working_path_,
+                           GetParam().num_data_threshold_for_bucket_split,
+                           GetParam().pre_mapping_fbv));
+
+  // Index numeric content for other properties to force our property into the
+  // wildcard storage.
+  std::string other_property_path = "otherProperty";
+  for (int i = 1; i <= IntegerIndex::kMaxPropertyStorages; ++i) {
+    Index(integer_index.get(),
+          absl_ports::StrCat(other_property_path, std::to_string(i)),
+          /*document_id=*/0, /*section_id=*/i, /*keys=*/{i});
+  }
+
+  // Index numeric content for TypeA.desiredProperty
+  Index(integer_index.get(), desired_property, /*document_id=*/0,
+        typea_desired_prop_id, /*keys=*/{1});
+  Index(integer_index.get(), desired_property, /*document_id=*/1,
+        typea_desired_prop_id, /*keys=*/{3});
+  Index(integer_index.get(), desired_property, /*document_id=*/2,
+        typea_desired_prop_id, /*keys=*/{2});
+  Index(integer_index.get(), desired_property, /*document_id=*/3,
+        typea_desired_prop_id, /*keys=*/{0});
+  Index(integer_index.get(), desired_property, /*document_id=*/4,
+        typea_desired_prop_id, /*keys=*/{4});
+  Index(integer_index.get(), desired_property, /*document_id=*/5,
+        typea_desired_prop_id, /*keys=*/{2});
+
+  // Index the same numeric content for TypeA.undesiredProperty
+  Index(integer_index.get(), undesired_property, /*document_id=*/6,
+        typea_undesired_prop_id, /*keys=*/{3});
+  Index(integer_index.get(), undesired_property, /*document_id=*/7,
+        typea_undesired_prop_id, /*keys=*/{2});
+  Index(integer_index.get(), undesired_property, /*document_id=*/8,
+        typea_undesired_prop_id, /*keys=*/{0});
+  Index(integer_index.get(), undesired_property, /*document_id=*/9,
+        typea_undesired_prop_id, /*keys=*/{4});
+  Index(integer_index.get(), undesired_property, /*document_id=*/10,
+        typea_undesired_prop_id, /*keys=*/{2});
+
+  // Index the same numeric content for TypeB.undesiredProperty
+  Index(integer_index.get(), another_property, /*document_id=*/11,
+        typeb_another_prop_id, /*keys=*/{3});
+  Index(integer_index.get(), another_property, /*document_id=*/12,
+        typeb_another_prop_id, /*keys=*/{2});
+  Index(integer_index.get(), another_property, /*document_id=*/13,
+        typeb_another_prop_id, /*keys=*/{0});
+  Index(integer_index.get(), another_property, /*document_id=*/14,
+        typeb_another_prop_id, /*keys=*/{4});
+  Index(integer_index.get(), another_property, /*document_id=*/15,
+        typeb_another_prop_id, /*keys=*/{2});
+
+  // Finally, index the same numeric content for TypeB.desiredProperty
+  Index(integer_index.get(), desired_property, /*document_id=*/16,
+        typeb_desired_prop_id, /*keys=*/{3});
+  Index(integer_index.get(), desired_property, /*document_id=*/17,
+        typeb_desired_prop_id, /*keys=*/{2});
+  Index(integer_index.get(), desired_property, /*document_id=*/18,
+        typeb_desired_prop_id, /*keys=*/{0});
+  Index(integer_index.get(), desired_property, /*document_id=*/19,
+        typeb_desired_prop_id, /*keys=*/{4});
+  Index(integer_index.get(), desired_property, /*document_id=*/20,
+        typeb_desired_prop_id, /*keys=*/{2});
+
+  EXPECT_THAT(integer_index->num_property_indices(), Eq(33));
+
+  // Only the hits for 'desired_prop_id' should be returned.
+  std::vector<SectionId> expected_sections_typea = {typea_desired_prop_id};
+  std::vector<SectionId> expected_sections_typeb = {typeb_desired_prop_id};
+  EXPECT_THAT(
+      Query(integer_index.get(), desired_property,
+            /*key_lower=*/2, /*key_upper=*/2),
+      IsOkAndHolds(ElementsAre(
+          EqualsDocHitInfo(/*document_id=*/20, expected_sections_typeb),
+          EqualsDocHitInfo(/*document_id=*/17, expected_sections_typeb),
+          EqualsDocHitInfo(/*document_id=*/5, expected_sections_typea),
+          EqualsDocHitInfo(/*document_id=*/2, expected_sections_typea))));
+
+  EXPECT_THAT(
+      Query(integer_index.get(), desired_property,
+            /*key_lower=*/1, /*key_upper=*/3),
+      IsOkAndHolds(ElementsAre(
+          EqualsDocHitInfo(/*document_id=*/20, expected_sections_typeb),
+          EqualsDocHitInfo(/*document_id=*/17, expected_sections_typeb),
+          EqualsDocHitInfo(/*document_id=*/16, expected_sections_typeb),
+          EqualsDocHitInfo(/*document_id=*/5, expected_sections_typea),
+          EqualsDocHitInfo(/*document_id=*/2, expected_sections_typea),
+          EqualsDocHitInfo(/*document_id=*/1, expected_sections_typea),
+          EqualsDocHitInfo(/*document_id=*/0, expected_sections_typea))));
+
+  // Clear the index and verify that it's empty.
+  EXPECT_THAT(integer_index->Clear(), IsOk());
+  EXPECT_THAT(Query(integer_index.get(), desired_property, /*key_lower=*/1,
+                    /*key_upper=*/3),
+              IsOkAndHolds(IsEmpty()));
+
+  // Index other properties again to trigger the usage of wildcard storage.
+  for (int i = 1; i <= IntegerIndex::kMaxPropertyStorages; ++i) {
+    Index(integer_index.get(),
+          absl_ports::StrCat(other_property_path, std::to_string(i)),
+          /*document_id=*/0, /*section_id=*/i, /*keys=*/{i});
+  }
+  // Put a new document (doc id = 21) and add a new numeric content for
+  // TypeA.desiredProperty.
+  ICING_ASSERT_OK(this->doc_store_->Put(document_util::CreateDocumentWrapper(
+      DocumentBuilder().SetKey("ns1", "uri21").SetSchema("TypeA").Build())));
+  Index(integer_index.get(), desired_property, /*document_id=*/21,
+        typea_desired_prop_id, /*keys=*/{1});
+  // Query the wildcard storage and verify that it does not read old data of
+  // wildcard storage.
+  EXPECT_THAT(Query(integer_index.get(), desired_property, /*key_lower=*/1,
+                    /*key_upper=*/3),
+              IsOkAndHolds(ElementsAre(EqualsDocHitInfo(
+                  /*document_id=*/21, expected_sections_typea))));
 }
 
 TEST_P(IntegerIndexTest,

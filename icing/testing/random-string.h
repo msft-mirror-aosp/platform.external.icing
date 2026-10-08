@@ -16,6 +16,7 @@
 #define ICING_TESTING_RANDOM_STRING_H_
 
 #include <algorithm>
+#include <cmath>
 #include <random>
 #include <string>
 

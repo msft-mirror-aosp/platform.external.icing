@@ -137,7 +137,8 @@ class ExpirationTimestampUtilTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         qualified_id_join_indexing_handler_,
         QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
-                                               qualified_id_join_index_.get()));
+                                               qualified_id_join_index_.get(),
+                                               feature_flags_.get()));
   }
 
   void TearDown() override {

@@ -61,7 +61,7 @@ libtextclassifier3::Status DocHitInfoIteratorNot::Advance() {
 
   // Didn't find a hit, return with error
   doc_hit_info_ = DocHitInfo(kInvalidDocumentId);
-  return absl_ports::ResourceExhaustedError("No more DocHitInfos in iterator");
+  return absl_ports::ResourceExhaustedError("");
 }
 
 libtextclassifier3::StatusOr<DocHitInfoIterator::TrimmedNode>

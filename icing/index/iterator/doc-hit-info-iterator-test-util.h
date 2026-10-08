@@ -112,8 +112,7 @@ class DocHitInfoIteratorDummy : public DocHitInfoIterator {
       return libtextclassifier3::Status::OK;
     }
 
-    return absl_ports::ResourceExhaustedError(
-        "No more DocHitInfos in iterator");
+    return absl_ports::ResourceExhaustedError("");
   }
 
   libtextclassifier3::StatusOr<TrimmedNode> TrimRightMostNode() && override {

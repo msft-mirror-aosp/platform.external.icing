@@ -15,9 +15,11 @@
 #include "icing/util/document-util.h"
 
 #include <utility>
+#include <vector>
 
 #include "icing/proto/document.pb.h"
 #include "icing/proto/document_wrapper.pb.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -28,6 +30,15 @@ DocumentWrapper CreateDocumentWrapper(DocumentProto document) {
   DocumentWrapper document_wrapper;
   *document_wrapper.mutable_document() = std::move(document);
   return document_wrapper;
+}
+
+DocumentId GetOptimizedDocumentId(
+    DocumentId document_id,
+    const std::vector<DocumentId>& document_id_old_to_new) {
+  if (document_id < 0 || document_id >= document_id_old_to_new.size()) {
+    return kInvalidDocumentId;
+  }
+  return document_id_old_to_new[document_id];
 }
 
 }  // namespace document_util

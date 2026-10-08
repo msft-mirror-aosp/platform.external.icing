@@ -33,6 +33,7 @@
 #include "icing/result/result-adjustment-info.h"
 #include "icing/result/result-retriever-v2.h"
 #include "icing/result/result-state-v2.h"
+#include "icing/schema/schema-store.h"
 #include "icing/scoring/scored-document-hits-ranker.h"
 #include "icing/store/document-store.h"
 
@@ -50,8 +51,24 @@ inline constexpr int64_t kDefaultResultStateTtlInMs = 1LL * 60 * 60 * 1000;
 // Used to store and manage ResultState.
 class ResultStateManager {
  public:
-  explicit ResultStateManager(int max_total_hits,
-                              const DocumentStore& document_store);
+  // A struct for reporting the types of removed result states corresponding to
+  // the removed tokens.
+  struct TokenRemovalStats {
+    // Active token: exists in result_state_map_ with a valid ResultState.
+    int num_active_tokens_removed = 0;
+
+    // Invalidated token: exists in invalidated_token_set_, which means the
+    // corresponding ResultState has already been invalidated and destroyed.
+    int num_invalidated_tokens_removed = 0;
+
+    TokenRemovalStats& operator+=(const TokenRemovalStats& other) {
+      num_active_tokens_removed += other.num_active_tokens_removed;
+      num_invalidated_tokens_removed += other.num_invalidated_tokens_removed;
+      return *this;
+    }
+  };
+
+  explicit ResultStateManager(int max_total_hits);
 
   ResultStateManager(const ResultStateManager&) = delete;
   ResultStateManager& operator=(const ResultStateManager&) = delete;
@@ -80,7 +97,8 @@ class ResultStateManager {
       std::unique_ptr<ScoredDocumentHitsRanker> ranker,
       std::unique_ptr<ResultAdjustmentInfo> parent_adjustment_info,
       std::unique_ptr<ResultAdjustmentInfo> child_adjustment_info,
-      const ResultSpecProto& result_spec, const DocumentStore& document_store,
+      const ResultSpecProto& result_spec, const SchemaStore& schema_store,
+      const DocumentStore& document_store,
       const ResultRetrieverV2& result_retriever, int64_t current_time_ms,
       QueryStatsProto* query_stats = nullptr) ICING_LOCKS_EXCLUDED(mutex_);
 
@@ -102,8 +120,21 @@ class ResultStateManager {
       const ResultRetrieverV2& result_retriever, int64_t current_time_ms)
       ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Optimizes the result states by converting the ids from old to new,
+  // according to the doc_store_optimize_result.
+  //
+  // If there is any error during converting the ids, then invalidate the result
+  // state without failing the whole process.
+  struct OptimizeResult {
+    int num_result_states_optimized;
+    int num_result_states_invalidated;
+  };
+  OptimizeResult Optimize(
+      const DocumentStore::OptimizeResult& doc_store_optimize_result)
+      ICING_LOCKS_EXCLUDED(mutex_);
+
   // Returns the number of active result states currently in ResultStateManager.
-  // Note that this will invalidate expired result states before counting the
+  // Note that this will remove expired result states before counting the
   // number.
   int GetNumActiveResultStates(int64_t current_time_ms)
       ICING_LOCKS_EXCLUDED(mutex_);
@@ -112,15 +143,21 @@ class ResultStateManager {
   void InvalidateResultState(uint64_t next_page_token)
       ICING_LOCKS_EXCLUDED(mutex_);
 
-  // Invalidates all result states / tokens currently in ResultStateManager.
-  void InvalidateAllResultStates() ICING_LOCKS_EXCLUDED(mutex_);
+  // Removes all result states / tokens currently in ResultStateManager.
+  TokenRemovalStats RemoveAllResultStates() ICING_LOCKS_EXCLUDED(mutex_);
 
   int num_total_hits() const { return num_total_hits_; }
 
  private:
-  absl_ports::shared_mutex mutex_;
+  struct TokenInfo {
+    uint64_t token;
+    int64_t creation_timestamp_ms;
 
-  const DocumentStore& document_store_;
+    explicit TokenInfo(uint64_t token_in, int64_t creation_timestamp_ms_in)
+        : token(token_in), creation_timestamp_ms(creation_timestamp_ms_in) {}
+  };
+
+  absl_ports::shared_mutex mutex_;
 
   // The maximum number of scored document hits that all result states may
   // have. When a new result state is added such that num_total_hits_ would
@@ -137,8 +174,7 @@ class ResultStateManager {
       ICING_GUARDED_BY(mutex_);
 
   // A queue used to track the insertion order of tokens with pushed timestamps.
-  std::queue<std::pair<uint64_t, int64_t>> token_queue_
-      ICING_GUARDED_BY(mutex_);
+  std::queue<TokenInfo> token_queue_ ICING_GUARDED_BY(mutex_);
 
   // A set to temporarily store the invalidated tokens before they're finally
   // removed from token_queue_. We store the invalidated tokens to ensure the
@@ -160,9 +196,13 @@ class ResultStateManager {
   // existing tokens in token_queue_.
   uint64_t GetUniqueToken() ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Helper method to remove old states to make room for incoming states with
-  // size num_hits_to_add.
-  void RemoveStatesIfNeeded(int num_hits_to_add, QueryStatsProto* query_stats)
+  // Helper method to remove old states until num_total_hits_ is not greater
+  // than max_total_hits_.
+  //
+  // REQUIRES: if adding a new state,it must register num_total_hits_ BEFORE
+  //   calling this method, i.e. num_total_hits_ has already been incremented by
+  //   the caller.
+  void RemoveStatesIfNeeded(QueryStatsProto* query_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Helper method to remove a result state from result_state_map_, the token
@@ -171,18 +211,25 @@ class ResultStateManager {
   void InternalInvalidateResultState(uint64_t token)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Internal method to invalidate all result states / tokens currently in
-  // ResultStateManager. We need this separate method so that other public
-  // methods don't need to call InvalidateAllResultStates(). Public methods
-  // calling each other may cause deadlock issues.
-  void InternalInvalidateAllResultStates()
+  // Internal method to pop the front token from token_queue_, and also remove
+  // the corresponding entry from either result_state_map_ or
+  // invalidated_token_set_.
+  TokenRemovalStats InternalRemoveFrontToken()
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Internal method to invalidate and remove expired result states / tokens
-  // currently in ResultStateManager that were created before
-  // current_time - result_state_ttl.
-  void InternalInvalidateExpiredResultStates(int64_t result_state_ttl,
-                                             int64_t current_time_ms)
+  // Internal method to remove all result states / tokens currently in
+  // ResultStateManager.
+  TokenRemovalStats InternalRemoveAllResultStates()
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
+  // Internal method to remove expired result states / tokens currently in
+  // ResultStateManager that were created before current_time -
+  // result_state_ttl.
+  //
+  // NOTE: all expired result states will be removed from token_queue_ and
+  //   either result_state_map_ or invalidated_token_set_.
+  TokenRemovalStats InternalRemoveExpiredResultStates(int64_t result_state_ttl,
+                                                      int64_t current_time_ms)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 };
 
