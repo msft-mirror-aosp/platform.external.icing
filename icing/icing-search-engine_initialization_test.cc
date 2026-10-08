@@ -7221,6 +7221,89 @@ TEST_F(IcingSearchEngineInitializationTest,
 }
 
 TEST_F(IcingSearchEngineInitializationTest,
+       Initialize_shouldResetDatabaseStablenessLogAfterReporting) {
+  auto fake_clock = std::make_unique<FakeClock>();
+  FakeClock* fake_clock_ptr = fake_clock.get();
+  IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
+
+  TestIcingSearchEngine icing(icing_options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::move(fake_clock), GetTestJniCache());
+
+  fake_clock_ptr->SetSystemTimeMilliseconds(1000);
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  fake_clock_ptr->SetSystemTimeMilliseconds(2000);
+  // Call SetSchema with PersistToDisk.
+  fake_clock_ptr->SetSystemTimeMilliseconds(3000);
+  ASSERT_THAT(icing.SetSchema(CreateMessageSchema()).status(), ProtoIsOk());
+  fake_clock_ptr->SetSystemTimeMilliseconds(4000);
+  ASSERT_THAT(icing.PersistToDisk(PersistType::LITE).status(), ProtoIsOk());
+
+  // Call several write APIs without PersistToDisk.
+  fake_clock_ptr->SetSystemTimeMilliseconds(5000);
+  DocumentProto document =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/0")
+          .SetSchema("Message")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .AddStringProperty("body", "message body")
+          .AddInt64Property("indexableInteger", 123)
+          .Build();
+  ASSERT_THAT(icing.Put(document).status(), ProtoIsOk());
+
+  fake_clock_ptr->SetSystemTimeMilliseconds(6000);
+  UsageReport usage_report;
+  usage_report.set_document_namespace("icing");
+  usage_report.set_document_uri("fake_type/0");
+  usage_report.set_usage_timestamp_ms(
+      fake_clock_ptr->GetSystemTimeMilliseconds());
+  usage_report.set_usage_type(UsageReport::USAGE_TYPE1);
+  ASSERT_THAT(icing.ReportUsage(usage_report).status(), ProtoIsOk());
+
+  // Initialize the 2nd Icing instance. Database stableness info should be
+  // reported.
+  IcingSearchEngine icing2(icing_options, GetTestJniCache());
+  InitializeResultProto initialize_result_google::protobuf = icing2.Initialize();
+  EXPECT_THAT(initialize_result_google::protobuf.status(), ProtoIsOk());
+  EXPECT_THAT(
+      initialize_result_google::protobuf.initialize_stats().last_persist_to_disk_type(),
+      Eq(PersistType::LITE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .after_last_flush_full_call_types(),
+              UnorderedElementsAre(
+                  IcingApiCallType::INITIALIZE, IcingApiCallType::SET_SCHEMA,
+                  IcingApiCallType::PUT, IcingApiCallType::REPORT_USAGE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .after_last_flush_recovery_proof_call_types(),
+              UnorderedElementsAre(
+                  IcingApiCallType::INITIALIZE, IcingApiCallType::SET_SCHEMA,
+                  IcingApiCallType::PUT, IcingApiCallType::REPORT_USAGE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .after_last_flush_lite_call_types(),
+              UnorderedElementsAre(IcingApiCallType::PUT,
+                                   IcingApiCallType::REPORT_USAGE));
+
+  // Initialize the 3rd Icing instance again. Database stableness info should
+  // be reset after reporting, so there should be no previous persist type
+  // and no previous API calls (except for INITIALIZE).
+  IcingSearchEngine icing3(icing_options, GetTestJniCache());
+  InitializeResultProto initialize_result_proto3 = icing3.Initialize();
+  EXPECT_THAT(initialize_result_proto3.status(), ProtoIsOk());
+  EXPECT_THAT(
+      initialize_result_proto3.initialize_stats().last_persist_to_disk_type(),
+      Eq(PersistType::UNKNOWN));
+  EXPECT_THAT(initialize_result_proto3.initialize_stats()
+                  .after_last_flush_full_call_types(),
+              UnorderedElementsAre(IcingApiCallType::INITIALIZE));
+  EXPECT_THAT(initialize_result_proto3.initialize_stats()
+                  .after_last_flush_recovery_proof_call_types(),
+              UnorderedElementsAre(IcingApiCallType::INITIALIZE));
+  EXPECT_THAT(initialize_result_proto3.initialize_stats()
+                  .after_last_flush_lite_call_types(),
+              UnorderedElementsAre(IcingApiCallType::INITIALIZE));
+}
+
+TEST_F(IcingSearchEngineInitializationTest,
        Initialize_corruptedDatabaseStablenessLogShouldIgnoreError) {
   IcingSearchEngineOptions icing_options = GetDefaultIcingOptions();
 

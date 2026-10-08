@@ -23,6 +23,7 @@
 #define ICING_FILE_FILE_BACKED_PROTO_H_
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -38,7 +39,6 @@
 #include "icing/legacy/core/icing-string-util.h"
 #include "icing/util/crc32.h"
 #include "icing/util/logging.h"
-#include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
@@ -58,6 +58,13 @@ class FileBackedProto {
     // corruption.
     uint32_t proto_checksum;
   };
+
+  // Upper bound of file-size that is supported. This includes the header and
+  // the proto size.
+  static constexpr int32_t kMaxFileSize = 1 * 1024 * 1024;  // 1 MiB.
+
+  // Upper bound of the proto size that is supported.
+  static constexpr int32_t kMaxProtoSize = kMaxFileSize - sizeof(Header);
 
   // Used the specified file to read older version of the proto and store
   // newer versions of the proto.
@@ -117,9 +124,6 @@ class FileBackedProto {
   libtextclassifier3::StatusOr<const ProtoT*> ReadInternal() const
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  // Upper bound of file-size that is supported.
-  static constexpr int32_t kMaxFileSize = 1 * 1024 * 1024;  // 1 MiB.
-
   // Used to provide reader and writer locks
   mutable absl_ports::shared_mutex mutex_;
 
@@ -133,6 +137,9 @@ class FileBackedProto {
 
 template <typename ProtoT>
 constexpr int32_t FileBackedProto<ProtoT>::kMaxFileSize;
+
+template <typename ProtoT>
+constexpr int32_t FileBackedProto<ProtoT>::kMaxProtoSize;
 
 template <typename ProtoT>
 FileBackedProto<ProtoT>::FileBackedProto(const Filesystem& filesystem,
@@ -247,10 +254,10 @@ libtextclassifier3::Status FileBackedProto<ProtoT>::Write(
   absl_ports::unique_lock l(&mutex_);
 
   const std::string new_proto_str = new_proto->SerializeAsString();
-  if (new_proto_str.size() >= kMaxFileSize) {
+  if (new_proto_str.size() > kMaxProtoSize) {
     return absl_ports::InvalidArgumentError(IcingStringUtil::StringPrintf(
-        "New proto too large. size: %d; limit: %d.",
-        static_cast<int>(new_proto_str.size()), kMaxFileSize));
+        "New proto too large. size: %d; limit: %" PRId32 ".",
+        static_cast<int>(new_proto_str.size()), kMaxProtoSize));
   }
 
   if (cached_proto_ != nullptr &&

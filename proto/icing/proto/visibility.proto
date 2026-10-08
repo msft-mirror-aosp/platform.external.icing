@@ -33,7 +33,9 @@ message AndroidVOverlayProto {
 
   // OPTIONAL: the operating system UID of the package that owns/wrote this
   // schema.
-  optional int32 writer_uid = 3;
+  //
+  // Default value is -1, which is the value for android.os.Process.INVALID_UID.
+  optional int32 writer_uid = 3 [default = -1];
 }
 
 // Defines proto contains all required requirements of a nested
