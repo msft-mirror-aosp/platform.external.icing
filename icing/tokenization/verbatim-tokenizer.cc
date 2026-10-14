@@ -44,14 +44,11 @@ class VerbatimTokenIterator : public Tokenizer::Iterator {
     return true;
   }
 
-  std::vector<Token> GetTokens() const override {
-    std::vector<Token> result;
-
+  void GetTokens(std::vector<Token>* out_tokens) const override {
+    out_tokens->clear();
     if (!term_.empty() && has_advanced_to_end_) {
-      result.push_back(Token(Token::Type::VERBATIM, term_));
+      out_tokens->emplace_back(Token::Type::VERBATIM, term_);
     }
-
-    return result;
   }
 
   libtextclassifier3::StatusOr<CharacterIterator> CalculateTokenStart()
@@ -148,9 +145,10 @@ libtextclassifier3::StatusOr<std::vector<Token>> VerbatimTokenizer::TokenizeAll(
   ICING_ASSIGN_OR_RETURN(std::unique_ptr<Tokenizer::Iterator> iterator,
                          Tokenize(text));
   std::vector<Token> tokens;
+  std::vector<Token> batch_tokens;
   while (iterator->Advance()) {
-    std::vector<Token> batch = iterator->GetTokens();
-    tokens.insert(tokens.end(), batch.begin(), batch.end());
+    iterator->GetTokens(&batch_tokens);
+    tokens.insert(tokens.end(), batch_tokens.begin(), batch_tokens.end());
   }
   return tokens;
 }

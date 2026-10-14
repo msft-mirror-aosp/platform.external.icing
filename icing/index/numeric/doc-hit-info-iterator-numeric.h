@@ -20,16 +20,18 @@
 #include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
 #include "icing/index/numeric/numeric-index.h"
+#include "icing/schema/section.h"
 #include "icing/util/status-macros.h"
 
 namespace icing {
 namespace lib {
 
 template <typename T>
-class DocHitInfoIteratorNumeric : public DocHitInfoLeafIterator {
+class DocHitInfoIteratorNumeric : public DocHitInfoIterator {
  public:
   explicit DocHitInfoIteratorNumeric(
       std::unique_ptr<typename NumericIndex<T>::Iterator> numeric_index_iter)
@@ -53,6 +55,10 @@ class DocHitInfoIteratorNumeric : public DocHitInfoLeafIterator {
         "Cannot generate suggestion if the last term is numeric operator.");
   }
 
+  std::vector<std::unique_ptr<DocHitInfoIterator>*> GetChildren() override {
+    return {};
+  }
+
   CallStats GetCallStats() const override {
     if (numeric_index_iter_ == nullptr) {
       return CallStats();
@@ -64,7 +70,8 @@ class DocHitInfoIteratorNumeric : public DocHitInfoLeafIterator {
                      numeric_index_iter_->GetNumAdvanceCalls(),
                      /*num_leaf_advance_calls_no_index_in=*/0,
                      /*num_blocks_inspected_in=*/
-                     numeric_index_iter_->GetNumBlocksInspected());
+                     numeric_index_iter_->GetNumBlocksInspected(),
+                     /*embedding_stats_in=*/{});
   }
 
   std::string ToString() const override { return "test"; }

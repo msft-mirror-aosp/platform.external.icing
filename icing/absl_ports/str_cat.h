@@ -17,13 +17,44 @@
 
 #include <cstdarg>
 #include <cstring>
+#include <cassert>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#if !(defined(__cpp_lib_string_resize_and_overwrite) && \
+    __cpp_lib_string_resize_and_overwrite >= 202110L)
+#include "third_party/absl/strings/resize_and_overwrite.h"
+#endif
+
 namespace icing {
 namespace lib {
 namespace absl_ports {
+
+// ResizeAndOverwrite is a helper function that allows us to allocate room for
+// the content we're about to copy while avoiding unnecessary
+// zero-initialization.
+//
+// Recently, libc++ has removed __resize_default_init and pushed everyone to use
+// resize_and_overwrite but resize_and_overwrite is only available for C++23.
+// In internal Google code, the libc++ was patched to keep __resize_default_init
+// around until they make the upgrade to C++23 but downstream users like Android
+// are upgrading to C++23.
+//
+// This function uses resize_and_overwrite for Android and falls back to
+// absl::StringResizeAndOverwrite otherwise. This ensures that the correct
+// resize function is called based on the C++ version and avoids
+// issues on Android where absl::StringResizeAndOverwrite might not be
+// available.
+template <typename T, typename Op>
+void ResizeAndOverwrite(T& str, typename T::size_type n, Op op) {
+#if defined(__cpp_lib_string_resize_and_overwrite) && \
+    __cpp_lib_string_resize_and_overwrite >= 202110L
+  str.resize_and_overwrite(n, std::move(op));
+#else
+  absl::StringResizeAndOverwrite(str, n, std::move(op));
+#endif
+}
 
 // Appends the content of s to the char buffer starting at out and returns the
 // address of the first character after the content copied from s.

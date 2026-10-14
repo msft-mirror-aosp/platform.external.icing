@@ -15,12 +15,16 @@
 #ifndef ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_OR_H_
 #define ICING_INDEX_ITERATOR_DOC_HIT_INFO_ITERATOR_OR_H_
 
-#include <cstdint>
+#include <cstddef>
 #include <memory>
 #include <string>
-#include <utility>
+#include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "icing/text_classifier/lib3/utils/base/statusor.h"
 #include "icing/index/iterator/doc-hit-info-iterator.h"
+#include "icing/schema/section.h"
+#include "icing/store/document-id.h"
 
 namespace icing {
 namespace lib {
@@ -31,7 +35,8 @@ std::unique_ptr<DocHitInfoIterator> CreateOrIterator(
     std::vector<std::unique_ptr<DocHitInfoIterator>> iterators);
 
 // Iterate over a logical OR of two child iterators.
-class DocHitInfoIteratorOr : public DocHitInfoIterator {
+class DocHitInfoIteratorOr
+    : public DocHitInfoIteratorSectionRestrictionApplyToChildren {
  public:
   explicit DocHitInfoIteratorOr(std::unique_ptr<DocHitInfoIterator> left_it,
                                 std::unique_ptr<DocHitInfoIterator> right_it);
@@ -46,9 +51,8 @@ class DocHitInfoIteratorOr : public DocHitInfoIterator {
 
   std::string ToString() const override;
 
-  void MapChildren(const ChildrenMapper &mapper) override {
-    left_ = mapper(std::move(left_));
-    right_ = mapper(std::move(right_));
+  std::vector<std::unique_ptr<DocHitInfoIterator> *> GetChildren() override {
+    return {&left_, &right_};
   }
 
   void PopulateMatchedTermsStats(
@@ -81,7 +85,8 @@ class DocHitInfoIteratorOr : public DocHitInfoIterator {
 // Iterate over a logical OR of multiple child iterators.
 //
 // NOTE: DocHitInfoIteratorOr is a faster alternative to OR exactly 2 iterators.
-class DocHitInfoIteratorOrNary : public DocHitInfoIterator {
+class DocHitInfoIteratorOrNary
+    : public DocHitInfoIteratorSectionRestrictionApplyToChildren {
  public:
   explicit DocHitInfoIteratorOrNary(
       std::vector<std::unique_ptr<DocHitInfoIterator>> iterators);
@@ -94,10 +99,13 @@ class DocHitInfoIteratorOrNary : public DocHitInfoIterator {
 
   std::string ToString() const override;
 
-  void MapChildren(const ChildrenMapper &mapper) override {
+  std::vector<std::unique_ptr<DocHitInfoIterator> *> GetChildren() override {
+    std::vector<std::unique_ptr<DocHitInfoIterator> *> children;
+    children.reserve(iterators_.size());
     for (int i = 0; i < iterators_.size(); ++i) {
-      iterators_[i] = mapper(std::move(iterators_[i]));
+      children.push_back(&iterators_[i]);
     }
+    return children;
   }
 
   void PopulateMatchedTermsStats(

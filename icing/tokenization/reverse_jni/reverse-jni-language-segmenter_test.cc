@@ -317,34 +317,6 @@ TEST_P(ReverseJniLanguageSegmenterTest, FullWidthNumbers) {
                                        "７", "８", "９")));
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest, ContinuousWhitespaces) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto language_segmenter,
-      language_segmenter_factory::Create(
-          language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
-  // Multiple continuous whitespaces are treated as one.
-  const int kNumSeparators = 256;
-  std::string text_with_spaces =
-      absl_ports::StrCat("Hello", std::string(kNumSeparators, ' '), "World");
-  EXPECT_THAT(language_segmenter->GetAllTerms(text_with_spaces),
-              IsOkAndHolds(ElementsAre("Hello", " ", "World")));
-
-  // Multiple continuous whitespaces are treated as one. Whitespace at the
-  // beginning of the text doesn't affect the results of GetTerm() after the
-  // iterator is done.
-  text_with_spaces = absl_ports::StrCat(std::string(kNumSeparators, ' '),
-                                        "Hello", " ", "World");
-  ICING_ASSERT_OK_AND_ASSIGN(auto itr,
-                             language_segmenter->Segment(text_with_spaces));
-  std::vector<std::string_view> terms;
-  while (itr->Advance()) {
-    terms.push_back(itr->GetTerm());
-  }
-  EXPECT_THAT(terms, ElementsAre(" ", "Hello", " ", "World"));
-  EXPECT_THAT(itr->GetTerm(), IsEmpty());
-}
-
 TEST_P(ReverseJniLanguageSegmenterTest, CJKT) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
@@ -775,47 +747,6 @@ TEST_P(ReverseJniLanguageSegmenterTest, MixedLanguagesResetToTermAfterUtf32) {
   EXPECT_THAT(itr->GetTerm(), IsEmpty());
 }
 
-TEST_P(ReverseJniLanguageSegmenterTest,
-       ContinuousWhitespacesResetToTermAfterUtf32) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto language_segmenter,
-      language_segmenter_factory::Create(
-          language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
-  // Multiple continuous whitespaces are treated as one.
-  constexpr std::string_view kTextWithSpace = "Hello          World";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
-                             language_segmenter->Segment(kTextWithSpace));
-
-  // String:      "Hello          World"
-  //               ^    ^         ^
-  // UTF-8 idx:    0    5         15
-  // UTF-32 idx:   0    5         15
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(0), IsOkAndHolds(Eq(5)));
-  EXPECT_THAT(itr->GetTerm(), Eq(" "));
-
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(2), IsOkAndHolds(Eq(5)));
-  EXPECT_THAT(itr->GetTerm(), Eq(" "));
-
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(10), IsOkAndHolds(Eq(15)));
-  EXPECT_THAT(itr->GetTerm(), Eq("World"));
-
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(5), IsOkAndHolds(Eq(15)));
-  EXPECT_THAT(itr->GetTerm(), Eq("World"));
-
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(15),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(itr->GetTerm(), IsEmpty());
-
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(17),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(itr->GetTerm(), IsEmpty());
-
-  EXPECT_THAT(itr->ResetToTermStartingAfterUtf32(19),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(itr->GetTerm(), IsEmpty());
-}
-
 TEST_P(ReverseJniLanguageSegmenterTest, ChineseResetToTermAfterUtf32) {
   ICING_ASSERT_OK_AND_ASSIGN(
       auto language_segmenter,
@@ -1095,46 +1026,6 @@ TEST_P(ReverseJniLanguageSegmenterTest, MixedLanguagesResetToTermBeforeUtf32) {
 
   EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(19), IsOkAndHolds(Eq(17)));
   EXPECT_THAT(itr->GetTerm(), Eq("です"));
-}
-
-TEST_P(ReverseJniLanguageSegmenterTest,
-       ContinuousWhitespacesResetToTermBeforeUtf32) {
-  ICING_ASSERT_OK_AND_ASSIGN(
-      auto language_segmenter,
-      language_segmenter_factory::Create(
-          language_segmenter_factory::SegmenterOptions(
-              GetLocale(), jni_cache_.get())));
-  // Multiple continuous whitespaces are treated as one.
-  constexpr std::string_view kTextWithSpace = "Hello          World";
-  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<LanguageSegmenter::Iterator> itr,
-                             language_segmenter->Segment(kTextWithSpace));
-
-  // String:      "Hello          World"
-  //               ^    ^         ^
-  // UTF-8 idx:    0    5         15
-  // UTF-32 idx:   0    5         15
-  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(0),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(itr->GetTerm(), IsEmpty());
-
-  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(2),
-              StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
-  EXPECT_THAT(itr->GetTerm(), IsEmpty());
-
-  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(10), IsOkAndHolds(Eq(0)));
-  EXPECT_THAT(itr->GetTerm(), Eq("Hello"));
-
-  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(5), IsOkAndHolds(Eq(0)));
-  EXPECT_THAT(itr->GetTerm(), Eq("Hello"));
-
-  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(15), IsOkAndHolds(Eq(5)));
-  EXPECT_THAT(itr->GetTerm(), Eq(" "));
-
-  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(17), IsOkAndHolds(Eq(5)));
-  EXPECT_THAT(itr->GetTerm(), Eq(" "));
-
-  EXPECT_THAT(itr->ResetToTermEndingBeforeUtf32(19), IsOkAndHolds(Eq(5)));
-  EXPECT_THAT(itr->GetTerm(), Eq(" "));
 }
 
 TEST_P(ReverseJniLanguageSegmenterTest, ChineseResetToTermBeforeUtf32) {

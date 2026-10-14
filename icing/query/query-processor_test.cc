@@ -55,6 +55,7 @@
 #include "icing/store/document-id.h"
 #include "icing/store/document-store.h"
 #include "icing/testing/common-matchers.h"
+#include "icing/testing/embedding-test-utils.h"
 #include "icing/testing/fake-clock.h"
 #include "icing/testing/jni-test-helpers.h"
 #include "icing/testing/test-data.h"
@@ -138,10 +139,10 @@ class QueryProcessorTest : public ::testing::Test {
 
     Index::Options options(index_dir_,
                            /*index_merge_size=*/1024 * 1024,
-                           /*lite_index_sort_at_indexing=*/true,
                            /*lite_index_sort_size=*/1024 * 8);
     ICING_ASSERT_OK_AND_ASSIGN(
-        index_, Index::Create(options, &filesystem_, &icing_filesystem_));
+        index_, Index::Create(options, &filesystem_, &icing_filesystem_,
+                              feature_flags_.get()));
     // TODO(b/249829533): switch to use persistent numeric index.
     ICING_ASSERT_OK_AND_ASSIGN(
         numeric_index_,
@@ -149,7 +150,8 @@ class QueryProcessorTest : public ::testing::Test {
     ICING_ASSERT_OK_AND_ASSIGN(
         embedding_index_,
         EmbeddingIndex::Create(&filesystem_, embedding_index_dir_, &fake_clock_,
-                               feature_flags_.get()));
+                               feature_flags_.get(),
+                               /*num_shards=*/32));
 
     language_segmenter_factory::SegmenterOptions segmenter_options(
         ULOC_US, jni_cache_.get());
@@ -3078,6 +3080,308 @@ TEST_F(QueryProcessorTest, TypePropertyFilterWithSectionRestrict) {
 
   EXPECT_THAT(results.query_terms, SizeIs(1));
   EXPECT_THAT(results.query_terms["foo"], UnorderedElementsAre("animal"));
+}
+
+TEST_F(QueryProcessorTest, TypePropertyFilterHybridSearchRestrictTerm) {
+  // Create the schema and document store
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("foo")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("bar")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("propEmbed0")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("propEmbed1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  // SectionIds are assigned in ascending order per schema type,
+  // alphabetically.
+  int email_bar_section_id = 0;
+  int email_foo_section_id = 1;
+  int email_prop_embed0_section_id = 2;
+  int email_prop_embed1_section_id = 3;
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false),
+              IsOk());
+
+  // These documents don't actually match to the tokens in the index. We're
+  // inserting the documents to get the appropriate number of documents and
+  // schema types populated.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result0,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
+  DocumentId email_document_id0 = put_result0.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
+  DocumentId email_document_id1 = put_result1.new_document_id;
+
+  // Poplate the index
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
+  // Email1 has content "animal" in section foo
+  ASSERT_THAT(AddTokenToIndex(email_document_id0, email_foo_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+
+  // Email2 has content "animal" in section bar
+  ASSERT_THAT(AddTokenToIndex(email_document_id1, email_bar_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+
+  // Add embedding vectors into different sections for the two documents.
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed0_section_id, email_document_id0),
+      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed1_section_id, email_document_id0),
+      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed0_section_id, email_document_id1),
+      CreateVector("my_model1", {-1, 2, 3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed1_section_id, email_document_id1),
+      CreateVector("my_model1", {1, 2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+
+  // Create an embedding query with semantic scores:
+  // - document 0: -2 (section 0), 6 (section 1)
+  // - document 1: 2 (section 0), -6 (section 1)
+  PropertyProto::VectorProto embedding_query_vector =
+      CreateVector("my_model1", {-1, -1, 1});
+
+  SearchSpecProto search_spec;
+  std::string query = "semanticSearch(getEmbeddingParameter(0), 0) AND animal";
+  search_spec.set_query(query);
+  search_spec.set_term_match_type(term_match_type);
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(kListFilterQueryLanguageFeature);
+  *search_spec.add_embedding_query_vectors() =
+      std::move(embedding_query_vector);
+
+  // Add property filters to match both text sections but only the first
+  // embedding section. Therefore, only the second document should be returned.
+  TypePropertyMask* email_mask = search_spec.add_type_property_filters();
+  email_mask->set_schema_type("email");
+  email_mask->add_paths("foo");
+  email_mask->add_paths("bar");
+  email_mask->add_paths("propEmbed0");
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults results,
+      query_processor_->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
+          fake_clock_.GetSystemTimeMilliseconds()));
+
+  // Ordered by descending DocumentId, so message comes first since it was
+  // inserted last
+  DocHitInfo expected_doc_hit_info1(email_document_id1);
+  expected_doc_hit_info1.UpdateSection(email_bar_section_id);
+  expected_doc_hit_info1.UpdateSection(email_prop_embed0_section_id);
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(expected_doc_hit_info1));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
+
+  // The results should be the same even if the order is flipped.
+  query = "animal AND semanticSearch(getEmbeddingParameter(0), 0)";
+  search_spec.set_query(query);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      results,
+      query_processor_->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
+          fake_clock_.GetSystemTimeMilliseconds()));
+
+  // Ordered by descending DocumentId, so message comes first since it was
+  // inserted last
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(expected_doc_hit_info1));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
+}
+
+TEST_F(QueryProcessorTest, TypePropertyFilterHybridSearchRestrictEmbedding) {
+  // Create the schema and document store
+  // Create the schema and document store
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder()
+                       .SetType("email")
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("foo")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("bar")
+                                        .SetDataTypeString(TERM_MATCH_EXACT,
+                                                           TOKENIZER_PLAIN)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("propEmbed0")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL))
+                       .AddProperty(PropertyConfigBuilder()
+                                        .SetName("propEmbed1")
+                                        .SetDataTypeVector(
+                                            EMBEDDING_INDEXING_LINEAR_SEARCH)
+                                        .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  // SectionIds are assigned in ascending order per schema type,
+  // alphabetically.
+  int email_bar_section_id = 0;
+  int email_foo_section_id = 1;
+  int email_prop_embed0_section_id = 2;
+  int email_prop_embed1_section_id = 3;
+  ASSERT_THAT(schema_store_->SetSchema(
+                  schema, /*ignore_errors_and_delete_documents=*/false),
+              IsOk());
+
+  // These documents don't actually match to the tokens in the index. We're
+  // inserting the documents to get the appropriate number of documents and
+  // schema types populated.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result0,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "1")
+                                                   .SetSchema("email")
+                                                   .Build())));
+  DocumentId email_document_id0 = put_result0.new_document_id;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::PutResult put_result1,
+      document_store_->Put(
+          document_util::CreateDocumentWrapper(DocumentBuilder()
+                                                   .SetKey("namespace", "2")
+                                                   .SetSchema("email")
+                                                   .Build())));
+  DocumentId email_document_id1 = put_result1.new_document_id;
+
+  // Poplate the index
+  TermMatchType::Code term_match_type = TermMatchType::EXACT_ONLY;
+
+  // Email1 has content "animal" in section foo
+  ASSERT_THAT(AddTokenToIndex(email_document_id0, email_foo_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+
+  // Email2 has content "animal" in section bar
+  ASSERT_THAT(AddTokenToIndex(email_document_id1, email_bar_section_id,
+                              term_match_type, "animal"),
+              IsOk());
+
+  // Add embedding vectors into different sections for the two documents.
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed0_section_id, email_document_id0),
+      CreateVector("my_model1", {1, -2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed1_section_id, email_document_id0),
+      CreateVector("my_model1", {-1, -2, 3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed0_section_id, email_document_id1),
+      CreateVector("my_model1", {-1, 2, 3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(email_prop_embed1_section_id, email_document_id1),
+      CreateVector("my_model1", {1, 2, -3}), QUANTIZATION_TYPE_NONE,
+      /*schema_name=*/"email"));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+
+  // Create an embedding query with semantic scores:
+  // - document 0: -2 (section 0), 6 (section 1)
+  // - document 1: 2 (section 0), -6 (section 1)
+  PropertyProto::VectorProto embedding_query_vector =
+      CreateVector("my_model1", {-1, -1, 1});
+
+  SearchSpecProto search_spec;
+  std::string query = "semanticSearch(getEmbeddingParameter(0), 0) AND animal";
+  search_spec.set_query(query);
+  search_spec.set_term_match_type(term_match_type);
+  search_spec.set_embedding_query_metric_type(
+      SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT);
+  search_spec.add_enabled_features(kListFilterQueryLanguageFeature);
+  *search_spec.add_embedding_query_vectors() =
+      std::move(embedding_query_vector);
+
+  // Add property filters to match both embeddings sections but only the first
+  // text section. Therefore, only the first document should be returned.
+  TypePropertyMask* email_mask = search_spec.add_type_property_filters();
+  email_mask->set_schema_type("email");
+  email_mask->add_paths("foo");
+  email_mask->add_paths("propEmbed0");
+  email_mask->add_paths("propEmbed1");
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      QueryResults results,
+      query_processor_->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
+          fake_clock_.GetSystemTimeMilliseconds()));
+
+  // Ordered by descending DocumentId, so message comes first since it was
+  // inserted last
+  DocHitInfo expected_doc_hit_info1(email_document_id0);
+  expected_doc_hit_info1.UpdateSection(email_foo_section_id);
+  expected_doc_hit_info1.UpdateSection(email_prop_embed1_section_id);
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(expected_doc_hit_info1));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
+
+  // The results should be the same even if the order is flipped.
+  query = "animal AND semanticSearch(getEmbeddingParameter(0), 0)";
+  search_spec.set_query(query);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      results,
+      query_processor_->ParseSearch(
+          search_spec, ScoringSpecProto::RankingStrategy::RELEVANCE_SCORE,
+          /*get_embedding_match_info=*/false,
+          fake_clock_.GetSystemTimeMilliseconds()));
+  EXPECT_THAT(GetDocHitInfos(results.root_iterator.get()),
+              ElementsAre(expected_doc_hit_info1));
+  EXPECT_THAT(results.query_term_iterators, SizeIs(1));
+
+  EXPECT_THAT(results.query_terms, SizeIs(1));
+  EXPECT_THAT(results.query_terms[""], UnorderedElementsAre("animal"));
 }
 
 TEST_F(QueryProcessorTest, DocumentBeforeTtlNotFilteredOut) {

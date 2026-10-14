@@ -72,7 +72,7 @@ TEST_F(PlainTokenizerTest, NoTokensBeforeAdvancing) {
                              plain_tokenizer->Tokenize(kText));
 
   // We should get no tokens if we get the token before advancing.
-  EXPECT_THAT(token_iterator->GetTokens(), IsEmpty());
+  EXPECT_THAT(token_iterator->GetTokensForTest(), IsEmpty());
 }
 
 TEST_F(PlainTokenizerTest, LastTokenAfterFullyAdvanced) {
@@ -93,7 +93,7 @@ TEST_F(PlainTokenizerTest, LastTokenAfterFullyAdvanced) {
   while (token_iterator->Advance()) {}
 
   // After advance returns false, GetTokens will stay on the last token.
-  EXPECT_THAT(token_iterator->GetTokens(),
+  EXPECT_THAT(token_iterator->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::REGULAR, "!")));
 }
 
@@ -160,6 +160,27 @@ TEST_F(PlainTokenizerTest, Whitespace) {
       absl_ports::StrCat("Hello", UCharToString(0x000B), "World");
   EXPECT_THAT(
       plain_tokenizer->TokenizeAll(text_with_vertical_tab),
+      IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "Hello"),
+                               EqualsToken(Token::Type::REGULAR, "World"))));
+}
+
+TEST_F(PlainTokenizerTest, ContinuousWhitespace) {
+  language_segmenter_factory::SegmenterOptions options(ULOC_US,
+                                                       jni_cache_.get());
+  ICING_ASSERT_OK_AND_ASSIGN(
+      auto language_segmenter,
+      language_segmenter_factory::Create(std::move(options)));
+  ICING_ASSERT_OK_AND_ASSIGN(std::unique_ptr<Tokenizer> plain_tokenizer,
+                             tokenizer_factory::CreateIndexingTokenizer(
+                                 StringIndexingConfig::TokenizerType::PLAIN,
+                                 language_segmenter.get()));
+
+  // Multiple continuous whitespaces will be ignored.
+  const int kNumSeparators = 256;
+  std::string text_with_spaces =
+      absl_ports::StrCat("Hello", std::string(kNumSeparators, ' '), "World");
+  EXPECT_THAT(
+      plain_tokenizer->TokenizeAll(text_with_spaces),
       IsOkAndHolds(ElementsAre(EqualsToken(Token::Type::REGULAR, "Hello"),
                                EqualsToken(Token::Type::REGULAR, "World"))));
 }
@@ -374,7 +395,7 @@ TEST_F(PlainTokenizerTest, ResetToTokenStartingAfterSimple) {
   auto iterator = plain_tokenizer->Tokenize(kText).ValueOrDie();
 
   EXPECT_TRUE(iterator->ResetToTokenStartingAfter(0));
-  EXPECT_THAT(iterator->GetTokens(),
+  EXPECT_THAT(iterator->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::REGULAR, "b")));
 
   EXPECT_FALSE(iterator->ResetToTokenStartingAfter(2));
@@ -395,7 +416,7 @@ TEST_F(PlainTokenizerTest, ResetToTokenEndingBeforeSimple) {
   auto iterator = plain_tokenizer->Tokenize(kText).ValueOrDie();
 
   EXPECT_TRUE(iterator->ResetToTokenEndingBefore(2));
-  EXPECT_THAT(iterator->GetTokens(),
+  EXPECT_THAT(iterator->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::REGULAR, "f")));
 
   EXPECT_FALSE(iterator->ResetToTokenEndingBefore(0));
@@ -441,13 +462,13 @@ TEST_F(PlainTokenizerTest, ResetToTokenStartingAfter) {
 
   auto iterator = plain_tokenizer->Tokenize(kText).ValueOrDie();
   EXPECT_TRUE(iterator->Advance());
-  EXPECT_THAT(iterator->GetTokens(),
+  EXPECT_THAT(iterator->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::REGULAR, "foo")));
   for (int i = 0; i < kText.length(); ++i) {
     if (i < expected_text.size()) {
       EXPECT_TRUE(iterator->ResetToTokenStartingAfter(i));
       EXPECT_THAT(
-          iterator->GetTokens(),
+          iterator->GetTokensForTest(),
           ElementsAre(EqualsToken(Token::Type::REGULAR, expected_text[i])));
     } else {
       EXPECT_FALSE(iterator->ResetToTokenStartingAfter(i));
@@ -495,13 +516,13 @@ TEST_F(PlainTokenizerTest, ResetToTokenEndingBefore) {
 
   auto iterator = plain_tokenizer->Tokenize(kText).ValueOrDie();
   EXPECT_TRUE(iterator->Advance());
-  EXPECT_THAT(iterator->GetTokens(),
+  EXPECT_THAT(iterator->GetTokensForTest(),
               ElementsAre(EqualsToken(Token::Type::REGULAR, "foo")));
   for (int i = kText.length() - 1; i >= 0; --i) {
     int expected_index = kText.length() - 1 - i;
     if (expected_index < expected_text.size()) {
       EXPECT_TRUE(iterator->ResetToTokenEndingBefore(i));
-      EXPECT_THAT(iterator->GetTokens(),
+      EXPECT_THAT(iterator->GetTokensForTest(),
                   ElementsAre(EqualsToken(Token::Type::REGULAR,
                                           expected_text[expected_index])));
     } else {

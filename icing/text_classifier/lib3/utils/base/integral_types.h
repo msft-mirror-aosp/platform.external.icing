@@ -17,7 +17,6 @@
 #ifndef ICING_TEXT_CLASSIFIER_LIB3_UTILS_BASE_INTEGRAL_TYPES_H_
 #define ICING_TEXT_CLASSIFIER_LIB3_UTILS_BASE_INTEGRAL_TYPES_H_
 
-#include "icing/text_classifier/lib3/utils/base/config.h"
 
 namespace libtextclassifier3 {
 
@@ -46,8 +45,6 @@ typedef long long int64;  // NOLINT
 #endif  // COMPILER_MSVC
 
 // Some compile-time assertions that our new types have the intended size.
-// static_assert exists only since C++11, so we need an ifdef.
-#ifdef LANG_CXX11
 static_assert(sizeof(int) == 4, "Our typedefs depend on int being 32 bits");
 static_assert(sizeof(uint32) == 4, "wrong size");
 static_assert(sizeof(int32) == 4, "wrong size");
@@ -57,7 +54,6 @@ static_assert(sizeof(uint16) == 2, "wrong size");
 static_assert(sizeof(int16) == 2, "wrong size");
 static_assert(sizeof(char32) == 4, "wrong size");
 static_assert(sizeof(int64) == 8, "wrong size");
-#endif  // LANG_CXX11
 
 // There are still some requirements that we build these headers in
 // C-compatibility mode. Unfortunately, -Wall doesn't like c-style

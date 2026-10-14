@@ -15,8 +15,11 @@
 #ifndef ICING_JOIN_QUALIFIED_ID_H_
 #define ICING_JOIN_QUALIFIED_ID_H_
 
+#include <cstddef>
+#include <functional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "icing/text_classifier/lib3/utils/base/statusor.h"
 
@@ -34,6 +37,13 @@ namespace lib {
 // - Raw namespace and uri cannot be empty.
 class QualifiedId {
  public:
+  struct Hasher {
+    std::size_t operator()(const QualifiedId& qualified_id) const {
+      return std::hash<std::string>()(qualified_id.name_space_) ^
+             std::hash<std::string>()(qualified_id.uri_);
+    }
+  };
+
   static constexpr char kEscapeChar = '\\';
   static constexpr char kNamespaceUriSeparator = '#';
 
@@ -51,8 +61,23 @@ class QualifiedId {
   explicit QualifiedId(std::string name_space, std::string uri)
       : name_space_(std::move(name_space)), uri_(std::move(uri)) {}
 
+  bool operator==(const QualifiedId& other) const {
+    return name_space_ == other.name_space_ && uri_ == other.uri_;
+  }
+
+  bool operator<(const QualifiedId& other) const {
+    if (name_space_ != other.name_space_) {
+      return name_space_ < other.name_space_;
+    }
+    return uri_ < other.uri_;
+  }
+
   const std::string& name_space() const { return name_space_; }
   const std::string& uri() const { return uri_; }
+
+  // Unparses the QualifiedId to its string representation:
+  // "<escaped(namespace)>#<escaped(uri)>".
+  std::string ToString() const;
 
  private:
   std::string name_space_;

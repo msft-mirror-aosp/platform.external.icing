@@ -15,7 +15,10 @@
 #ifndef ICING_QUERY_QUERY_UTILS_H_
 #define ICING_QUERY_QUERY_UTILS_H_
 
-#include "icing/index/iterator/doc-hit-info-iterator-filter.h"
+#include <cstdint>
+#include <memory>
+
+#include "icing/index/iterator/document-filter-predicate.h"
 #include "icing/proto/search.pb.h"
 #include "icing/schema/schema-store.h"
 #include "icing/store/document-store.h"
@@ -23,9 +26,9 @@
 namespace icing {
 namespace lib {
 
-DocHitInfoIteratorFilter::Options GetFilterOptions(
+std::unique_ptr<DocumentFilterPredicate> GetFilterPredicateBySchemaAndNamespace(
     const SearchSpecProto& search_spec, const DocumentStore& document_store,
-    const SchemaStore& schema_store);
+    const SchemaStore& schema_store, int64_t current_time_ms);
 
 }  // namespace lib
 }  // namespace icing

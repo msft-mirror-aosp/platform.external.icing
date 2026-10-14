@@ -80,8 +80,8 @@ class KeyMapper {
   // Returns any encountered IO errors.
   virtual libtextclassifier3::StatusOr<T> Get(std::string_view key) const = 0;
 
-  // Deletes data related to the given key. Returns true on success.
-  virtual bool Delete(std::string_view key) = 0;
+  // Deletes data related to the given key. Returns OK on success.
+  virtual libtextclassifier3::Status Delete(std::string_view key) = 0;
 
   // Returns an iterator of the key mapper.
   //

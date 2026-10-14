@@ -53,10 +53,14 @@ TEST(SchemaPropertyIteratorTest,
                            .SetName("Alphabet")
                            .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN))
           .Build();
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name, schema_type_config}};
-
-  SchemaPropertyIterator iterator(schema_type_config, type_config_map);
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name));
+  SchemaPropertyIterator iterator(type_config_holder, type_config_info_cache);
   EXPECT_THAT(iterator.Advance(), IsOk());
   EXPECT_THAT(iterator.GetCurrentPropertyPath(), Eq("Alphabet"));
   EXPECT_THAT(iterator.GetCurrentPropertyConfig(),
@@ -121,10 +125,12 @@ TEST(SchemaPropertyIteratorTest,
               PropertyConfigBuilder().SetName("Icing").SetDataTypeDocument(
                   schema_type_name2, /*index_nested_properties=*/true))
           .Build();
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name1, schema_type_config1},
-      {schema_type_name2, schema_type_config2},
-      {schema_type_name3, schema_type_config3}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config1));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config2));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config3));
 
   // SchemaThree: {
   //   "Hello": TYPE_STRING,
@@ -142,7 +148,129 @@ TEST(SchemaPropertyIteratorTest,
   //     },
   //   },
   // }
-  SchemaPropertyIterator iterator(schema_type_config3, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name3));
+  SchemaPropertyIterator iterator(type_config_holder, type_config_info_cache);
+  EXPECT_THAT(iterator.Advance(), IsOk());
+  EXPECT_THAT(iterator.GetCurrentPropertyPath(), Eq("Hello"));
+  EXPECT_THAT(iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config3.properties(0)));
+  EXPECT_THAT(iterator.GetCurrentPropertyIndexable(), IsTrue());
+
+  EXPECT_THAT(iterator.Advance(), IsOk());
+  EXPECT_THAT(iterator.GetCurrentPropertyPath(), Eq("Icing.Bar.Alphabet"));
+  EXPECT_THAT(iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config1.properties(2)));
+  EXPECT_THAT(iterator.GetCurrentPropertyIndexable(), IsTrue());
+
+  EXPECT_THAT(iterator.Advance(), IsOk());
+  EXPECT_THAT(iterator.GetCurrentPropertyPath(), Eq("Icing.Bar.Google"));
+  EXPECT_THAT(iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config1.properties(0)));
+  EXPECT_THAT(iterator.GetCurrentPropertyIndexable(), IsTrue());
+
+  EXPECT_THAT(iterator.Advance(), IsOk());
+  EXPECT_THAT(iterator.GetCurrentPropertyPath(), Eq("Icing.Bar.Youtube"));
+  EXPECT_THAT(iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config1.properties(1)));
+  EXPECT_THAT(iterator.GetCurrentPropertyIndexable(), IsFalse());
+
+  EXPECT_THAT(iterator.Advance(), IsOk());
+  EXPECT_THAT(iterator.GetCurrentPropertyPath(), Eq("Icing.Foo"));
+  EXPECT_THAT(iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config2.properties(0)));
+  EXPECT_THAT(iterator.GetCurrentPropertyIndexable(), IsFalse());
+
+  EXPECT_THAT(iterator.Advance(), IsOk());
+  EXPECT_THAT(iterator.GetCurrentPropertyPath(), Eq("World.Alphabet"));
+  EXPECT_THAT(iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config1.properties(2)));
+  EXPECT_THAT(iterator.GetCurrentPropertyIndexable(), IsTrue());
+
+  EXPECT_THAT(iterator.Advance(), IsOk());
+  EXPECT_THAT(iterator.GetCurrentPropertyPath(), Eq("World.Google"));
+  EXPECT_THAT(iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config1.properties(0)));
+  EXPECT_THAT(iterator.GetCurrentPropertyIndexable(), IsTrue());
+
+  EXPECT_THAT(iterator.Advance(), IsOk());
+  EXPECT_THAT(iterator.GetCurrentPropertyPath(), Eq("World.Youtube"));
+  EXPECT_THAT(iterator.GetCurrentPropertyConfig(),
+              EqualsProto(schema_type_config1.properties(1)));
+  EXPECT_THAT(iterator.GetCurrentPropertyIndexable(), IsFalse());
+
+  EXPECT_THAT(iterator.Advance(),
+              StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
+
+  EXPECT_THAT(iterator.unknown_indexable_nested_property_paths(), IsEmpty());
+}
+
+TEST(SchemaPropertyIteratorTest,
+     NestedDedupedSchemaTypeConfigShouldIterateInCorrectOrder) {
+  std::string schema_type_name1 = "SchemaOne";
+  std::string schema_type_name2 = "SchemaTwo";
+  std::string schema_type_name3 = "SchemaThree";
+  std::string schema_type_name3_copy = "SchemaThreeDedupedCopy";
+
+  SchemaTypeConfigProto schema_type_config1 =
+      SchemaTypeConfigBuilder()
+          .SetType(schema_type_name1)
+          .AddProperty(
+              PropertyConfigBuilder().SetName("Google").SetDataTypeString(
+                  TERM_MATCH_EXACT, TOKENIZER_PLAIN))
+          .AddProperty(PropertyConfigBuilder().SetName("Youtube").SetDataType(
+              TYPE_BYTES))
+          .AddProperty(PropertyConfigBuilder()
+                           .SetName("Alphabet")
+                           .SetDataTypeInt64(NUMERIC_MATCH_RANGE))
+          .Build();
+  SchemaTypeConfigProto schema_type_config2 =
+      SchemaTypeConfigBuilder()
+          .SetType(schema_type_name2)
+          .AddProperty(PropertyConfigBuilder().SetName("Foo").SetDataTypeString(
+              TERM_MATCH_UNKNOWN, TOKENIZER_NONE))
+          .AddProperty(
+              PropertyConfigBuilder().SetName("Bar").SetDataTypeDocument(
+                  schema_type_name1, /*index_nested_properties=*/true))
+          .Build();
+  SchemaTypeConfigProto schema_type_config3 =
+      SchemaTypeConfigBuilder()
+          .SetType(schema_type_name3)
+          .AddProperty(
+              PropertyConfigBuilder().SetName("Hello").SetDataTypeString(
+                  TERM_MATCH_EXACT, TOKENIZER_PLAIN))
+          .AddProperty(
+              PropertyConfigBuilder().SetName("World").SetDataTypeDocument(
+                  schema_type_name1, /*index_nested_properties=*/true))
+          .AddProperty(
+              PropertyConfigBuilder().SetName("Icing").SetDataTypeDocument(
+                  schema_type_name2, /*index_nested_properties=*/true))
+          .Build();
+  // Deduped copy of schema_type_config3 with property definitions removed.
+  SchemaTypeConfigProto schema_type_config3_copy =
+      SchemaTypeConfigBuilder(schema_type_config3)
+          .SetType("SchemaThreeDedupedCopy")
+          .BuildAndPopulatePropertiesDigest();
+  schema_type_config3_copy.clear_properties();
+
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config1));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config2));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config3));
+  ICING_ASSERT_OK(
+      type_config_info_cache.AddTypeConfig(schema_type_config3_copy));
+
+  // The property iteration order should be exactly the same as the base
+  // schema_type_config3.
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(
+          schema_type_name3_copy));
+  SchemaPropertyIterator iterator(type_config_holder, type_config_info_cache);
+
   EXPECT_THAT(iterator.Advance(), IsOk());
   EXPECT_THAT(iterator.GetCurrentPropertyPath(), Eq("Hello"));
   EXPECT_THAT(iterator.GetCurrentPropertyConfig(),
@@ -220,14 +348,19 @@ TEST(SchemaPropertyIteratorTest,
               PropertyConfigBuilder().SetName("Foo").SetDataTypeDocument(
                   schema_type_name1, /*index_nested_properties=*/true))
           .Build();
-  // Remove the second level (schema_type_config1) from type_config_map.
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name2, schema_type_config2}};
+  // Remove the second level (schema_type_config1) from type_config_info_cache.
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config2));
 
-  SchemaPropertyIterator iterator(schema_type_config2, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name2));
+  SchemaPropertyIterator iterator(type_config_holder, type_config_info_cache);
   // Since Foo is a document type property with schema type = "SchemaOne" and
-  // "SchemaOne" is not in type_config_map, Advance() should return NOT_FOUND
-  // error.
+  // "SchemaOne" is not in type_config_info_cache, Advance() should return
+  // NOT_FOUND error.
   EXPECT_THAT(iterator.Advance(),
               StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
 }
@@ -238,10 +371,15 @@ TEST(SchemaPropertyIteratorTest,
 
   SchemaTypeConfigProto schema_type_config =
       SchemaTypeConfigBuilder().SetType(schema_type_name).Build();
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name, schema_type_config}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config));
 
-  SchemaPropertyIterator iterator(schema_type_config, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name));
+  SchemaPropertyIterator iterator(type_config_holder, type_config_info_cache);
   EXPECT_THAT(iterator.Advance(),
               StatusIs(libtextclassifier3::StatusCode::OUT_OF_RANGE));
   EXPECT_THAT(iterator.unknown_indexable_nested_property_paths(), IsEmpty());
@@ -304,11 +442,13 @@ TEST(SchemaPropertyIteratorTest, NestedIndexable) {
               PropertyConfigBuilder().SetName("World").SetDataTypeString(
                   TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name1, schema_type_config1},
-      {schema_type_name2, schema_type_config2},
-      {schema_type_name3, schema_type_config3},
-      {schema_type_name4, schema_type_config4}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config1));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config2));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config3));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config4));
 
   // SchemaFour: {
   //   "Baz1": TYPE_DOCUMENT INDEX_NESTED_PROPERTIES=true SchemaTwo {
@@ -340,7 +480,10 @@ TEST(SchemaPropertyIteratorTest, NestedIndexable) {
   //   },
   //   "World": TYPE_STRING INDEXABLE,
   // }
-  SchemaPropertyIterator iterator(schema_type_config4, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name4));
+  SchemaPropertyIterator iterator(type_config_holder, type_config_info_cache);
 
   // Baz1 to Baz4: 2 levels of nested document type property.
   // For Baz1, all levels set index_nested_properties = true, so all leaf
@@ -473,9 +616,11 @@ TEST(SchemaPropertyIteratorTest,
                            .SetName("schema2prop3")
                            .SetDataTypeInt64(NUMERIC_MATCH_UNKNOWN))
           .Build();
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name1, schema_type_config1},
-      {schema_type_name2, schema_type_config2}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config1));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config2));
 
   // Order of iteration for Schema2:
   // {"schema2prop1.schema1prop1", "schema2prop1.schema1prop2",
@@ -495,7 +640,11 @@ TEST(SchemaPropertyIteratorTest,
   // "schema2prop1.schema1prop5" are non-indexable by its indexing-config.
   // However "schema2prop1.schema1prop3" and "schema2prop1.schema1prop5" are
   // indexed as it appears in the indexable_list.
-  SchemaPropertyIterator schema2_iterator(schema_type_config2, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder2,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name2));
+  SchemaPropertyIterator schema2_iterator(type_config_holder2,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema2_iterator.Advance(), IsOk());
   EXPECT_THAT(schema2_iterator.GetCurrentPropertyPath(),
@@ -553,7 +702,11 @@ TEST(SchemaPropertyIteratorTest,
   // Iterate through schema1 properties. Schema1 only has non-document type leaf
   // properties, so its properties will be assigned indexable or not according
   // to their indexing configs.
-  SchemaPropertyIterator schema1_iterator(schema_type_config1, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder1,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name1));
+  SchemaPropertyIterator schema1_iterator(type_config_holder1,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema1_iterator.Advance(), IsOk());
   EXPECT_THAT(schema1_iterator.GetCurrentPropertyPath(), Eq("schema1prop1"));
@@ -653,10 +806,12 @@ TEST(SchemaPropertyIteratorTest,
                   .SetName("schema3prop2")
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name1, schema_type_config1},
-      {schema_type_name2, schema_type_config2},
-      {schema_type_name3, schema_type_config3}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config1));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config2));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config3));
 
   // Order of iteration for Schema3:
   // {"schema3prop1.schema2prop1.schema1prop1",
@@ -674,7 +829,11 @@ TEST(SchemaPropertyIteratorTest,
   //
   // Schema2 setting index_nested_properties=true does not affect nested
   // properties indexing for Schema3.
-  SchemaPropertyIterator schema3_iterator(schema_type_config3, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder3,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name3));
+  SchemaPropertyIterator schema3_iterator(type_config_holder3,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema3_iterator.Advance(), IsOk());
   EXPECT_THAT(schema3_iterator.GetCurrentPropertyPath(),
@@ -755,7 +914,11 @@ TEST(SchemaPropertyIteratorTest,
   // All properties are indexed because index_nested_properties=true for
   // Schema2.schema2prop1. Schema3's indexable_nested_properties setting does
   // not affect this.
-  SchemaPropertyIterator schema2_iterator(schema_type_config2, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder2,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name2));
+  SchemaPropertyIterator schema2_iterator(type_config_holder2,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema2_iterator.Advance(), IsOk());
   EXPECT_THAT(schema2_iterator.GetCurrentPropertyPath(),
@@ -835,10 +998,12 @@ TEST(SchemaPropertyIteratorTest,
                                        std::initializer_list<std::string>{
                                            "schema2prop1.schema1prop2"}))
           .Build();
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name1, schema_type_config1},
-      {schema_type_name2, schema_type_config2},
-      {schema_type_name3, schema_type_config3}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config1));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config2));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config3));
 
   // Order of iteration for Schema3:
   // {"schema3prop1.schema2prop1.schema1prop1",
@@ -848,7 +1013,11 @@ TEST(SchemaPropertyIteratorTest,
   //
   // Schema2 setting index_nested_properties=false, does not affect Schema3's
   // indexable list.
-  SchemaPropertyIterator schema3_iterator(schema_type_config3, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder3,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name3));
+  SchemaPropertyIterator schema3_iterator(type_config_holder3,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema3_iterator.Advance(), IsOk());
   EXPECT_THAT(schema3_iterator.GetCurrentPropertyPath(),
@@ -876,7 +1045,11 @@ TEST(SchemaPropertyIteratorTest,
   // Indexable properties: None
   //
   // The indexable list for Schema3 does not propagate to Schema2.
-  SchemaPropertyIterator schema2_iterator(schema_type_config2, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder2,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name2));
+  SchemaPropertyIterator schema2_iterator(type_config_holder2,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema2_iterator.Advance(), IsOk());
   EXPECT_THAT(schema2_iterator.GetCurrentPropertyPath(),
@@ -962,10 +1135,11 @@ TEST(SchemaPropertyIteratorTest,
                   .SetName("schema3prop2")
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name1, schema_type_config1},
-      {schema_type_name2, schema_type_config2},
-      {schema_type_name3, schema_type_config3}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(/*enable_schema_type_config_cache=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config1));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config2));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config3));
 
   // Order of iteration for Schema3:
   // {"schema3prop1.schema2prop1.schema1prop1",
@@ -983,7 +1157,11 @@ TEST(SchemaPropertyIteratorTest,
   //
   // Schema2 setting indexable_nested_properties_list={schema1prop2} does not
   // affect nested properties indexing for Schema3.
-  SchemaPropertyIterator schema3_iterator(schema_type_config3, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder3,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name3));
+  SchemaPropertyIterator schema3_iterator(type_config_holder3,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema3_iterator.Advance(), IsOk());
   EXPECT_THAT(schema3_iterator.GetCurrentPropertyPath(),
@@ -1062,7 +1240,11 @@ TEST(SchemaPropertyIteratorTest,
   //
   // Indexable_nested_properties set for Schema3.schema3prop1 does not propagate
   // to Schema2.
-  SchemaPropertyIterator schema2_iterator(schema_type_config2, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder2,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name2));
+  SchemaPropertyIterator schema2_iterator(type_config_holder2,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema2_iterator.Advance(), IsOk());
   EXPECT_THAT(schema2_iterator.GetCurrentPropertyPath(),
@@ -1153,11 +1335,12 @@ TEST(
                   .SetDataTypeDocument(schema_type_name3,
                                        /*index_nested_properties=*/true))
           .Build();
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name1, schema_type_config1},
-      {schema_type_name2, schema_type_config2},
-      {schema_type_name3, schema_type_config3},
-      {schema_type_name4, schema_type_config4}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(/*enable_schema_type_config_cache=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config1));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config2));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config3));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config4));
 
   // Order of iteration for Schema4:
   // {"schema4prop1.schema3prop1.schema2prop1.schema1prop1",
@@ -1170,7 +1353,11 @@ TEST(
   // Schema2 is the first subtype to define an indexing config, so we index its
   // list for both Schema3 and Schema4 even though it sets
   // index_nested_properties=false.
-  SchemaPropertyIterator schema4_iterator(schema_type_config4, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder4,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name4));
+  SchemaPropertyIterator schema4_iterator(type_config_holder4,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema4_iterator.Advance(), IsOk());
   EXPECT_THAT(schema4_iterator.GetCurrentPropertyPath(),
@@ -1197,7 +1384,11 @@ TEST(
   // "schema3prop1.schema2prop1.schema1prop2"}.
   //
   // Indexable properties: {schema3prop1.schema2prop1.schema1prop2}
-  SchemaPropertyIterator schema3_iterator(schema_type_config3, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder3,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name3));
+  SchemaPropertyIterator schema3_iterator(type_config_holder3,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema3_iterator.Advance(), IsOk());
   EXPECT_THAT(schema3_iterator.GetCurrentPropertyPath(),
@@ -1226,7 +1417,11 @@ TEST(
   // {"schema2prop1.schema1prop2"}
   //
   // Schema3 setting index_nested_properties=true does not propagate to Schema2.
-  SchemaPropertyIterator schema2_iterator(schema_type_config2, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder2,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name2));
+  SchemaPropertyIterator schema2_iterator(type_config_holder2,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema2_iterator.Advance(), IsOk());
   EXPECT_THAT(schema2_iterator.GetCurrentPropertyPath(),
@@ -1307,11 +1502,12 @@ TEST(SchemaPropertyIteratorTest,
                   .SetDataTypeDocument(schema_type_name3,
                                        /*index_nested_properties=*/true))
           .Build();
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name1, schema_type_config1},
-      {schema_type_name2, schema_type_config2},
-      {schema_type_name3, schema_type_config3},
-      {schema_type_name4, schema_type_config4}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(/*enable_schema_type_config_cache=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config1));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config2));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config3));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config4));
 
   // Order of iteration for Schema4:
   // "schema4prop1.schema3prop1.schema2prop1.schema1prop1",
@@ -1323,7 +1519,11 @@ TEST(SchemaPropertyIteratorTest,
   // since schema4 sets index_nested_properties=true.
   // This includes everything in schema3prop1's list except
   // "schema2prop1.schema1prop2".
-  SchemaPropertyIterator schema4_iterator(schema_type_config4, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder4,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name4));
+  SchemaPropertyIterator schema4_iterator(type_config_holder4,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema4_iterator.Advance(), IsOk());
   EXPECT_THAT(schema4_iterator.GetCurrentPropertyPath(),
@@ -1373,7 +1573,11 @@ TEST(SchemaPropertyIteratorTest,
   // "schema3prop1.schema1prop2", "schema3prop1.schema2prop1" (not a leaf prop),
   // "schema3prop1.schema2prop1.zzz", "schema3prop1.schema3prop1",
   // "schema3prop1.zzz"
-  SchemaPropertyIterator schema3_iterator(schema_type_config3, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder3,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name3));
+  SchemaPropertyIterator schema3_iterator(type_config_holder3,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema3_iterator.Advance(), IsOk());
   EXPECT_THAT(schema3_iterator.GetCurrentPropertyPath(),
@@ -1422,7 +1626,11 @@ TEST(SchemaPropertyIteratorTest,
   // "schema2prop1.aaa.zzz", "schema2prop1.foo.bar",
   // "schema2prop1.schema1prop2.foo", "schema2prop1.zzz",
   // "schema2prop2.unknown.path"
-  SchemaPropertyIterator schema2_iterator(schema_type_config2, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder2,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name2));
+  SchemaPropertyIterator schema2_iterator(type_config_holder2,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema2_iterator.Advance(), IsOk());
   EXPECT_THAT(schema2_iterator.GetCurrentPropertyPath(),
@@ -1525,11 +1733,13 @@ TEST(SchemaPropertyIteratorTest,
                   .SetDataTypeDocument(schema_type_name3,
                                        /*index_nested_properties=*/true))
           .Build();
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name1, schema_type_config1},
-      {schema_type_name2, schema_type_config2},
-      {schema_type_name3, schema_type_config3},
-      {schema_type_name4, schema_type_config4}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config1));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config2));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config3));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config4));
 
   // The results of this test case is the same as the previous test case. This
   // is to test that the indexable-list is deduped correctly.
@@ -1544,7 +1754,11 @@ TEST(SchemaPropertyIteratorTest,
   // since schema4 sets index_nested_properties=true.
   // This includes everything in schema3prop1's list except
   // "schema2prop1.schema1prop2".
-  SchemaPropertyIterator schema4_iterator(schema_type_config4, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder4,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name4));
+  SchemaPropertyIterator schema4_iterator(type_config_holder4,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema4_iterator.Advance(), IsOk());
   EXPECT_THAT(schema4_iterator.GetCurrentPropertyPath(),
@@ -1594,7 +1808,11 @@ TEST(SchemaPropertyIteratorTest,
   // "schema2prop1.aaa.zzz", "schema2prop1.foo.bar",
   // "schema2prop1.schema1prop2.foo", "schema2prop1.zzz",
   // "schema2prop2.unknown.path"
-  SchemaPropertyIterator schema3_iterator(schema_type_config3, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder3,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name3));
+  SchemaPropertyIterator schema3_iterator(type_config_holder3,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema3_iterator.Advance(), IsOk());
   EXPECT_THAT(schema3_iterator.GetCurrentPropertyPath(),
@@ -1643,7 +1861,11 @@ TEST(SchemaPropertyIteratorTest,
   // "schema2prop1.aaa.zzz", "schema2prop1.foo.bar",
   // "schema2prop1.schema1prop2.foo", "schema2prop1.zzz",
   // "schema2prop2.unknown.path"
-  SchemaPropertyIterator schema2_iterator(schema_type_config2, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder2,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name2));
+  SchemaPropertyIterator schema2_iterator(type_config_holder2,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema2_iterator.Advance(), IsOk());
   EXPECT_THAT(schema2_iterator.GetCurrentPropertyPath(),
@@ -1739,10 +1961,12 @@ TEST(SchemaPropertyIteratorTest,
                   /*indexable_nested_properties_list=*/
                   {"prop2", "prop3"}))
           .Build();
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_type_name1, schema_type_config1},
-      {schema_type_name2, schema_type_config2},
-      {schema_type_name3, schema_type_config3}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config1));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config2));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config3));
 
   // Order of iteration for Schema3:
   // {"prop1.prop1.prop1", "prop1.prop1.prop2", "prop1.prop1.prop3",
@@ -1756,7 +1980,11 @@ TEST(SchemaPropertyIteratorTest,
   //
   // Properties do not affect other properties with the same name from different
   // properties.
-  SchemaPropertyIterator schema3_iterator(schema_type_config3, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder3,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name3));
+  SchemaPropertyIterator schema3_iterator(type_config_holder3,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema3_iterator.Advance(), IsOk());
   EXPECT_THAT(schema3_iterator.GetCurrentPropertyPath(),
@@ -1848,7 +2076,11 @@ TEST(SchemaPropertyIteratorTest,
   //
   // Indexable_nested_properties set for Schema3.prop1 does not propagate
   // to Schema2.
-  SchemaPropertyIterator schema2_iterator(schema_type_config2, type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder2,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_type_name2));
+  SchemaPropertyIterator schema2_iterator(type_config_holder2,
+                                          type_config_info_cache);
 
   EXPECT_THAT(schema2_iterator.Advance(), IsOk());
   EXPECT_THAT(schema2_iterator.GetCurrentPropertyPath(), Eq("prop1.prop1"));
@@ -1916,13 +2148,19 @@ TEST(SchemaPropertyIteratorTest, SingleLevelCycle) {
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
 
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_a, schema_type_config_a}, {schema_b, schema_type_config_b}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_a));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_b));
 
   // Order of iteration for schema A:
   // {"schemaAprop1.schemaBprop2", "schemaAprop2"}, both indexable
-  SchemaPropertyIterator schema_a_iterator(schema_type_config_a,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_a,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_a));
+  SchemaPropertyIterator schema_a_iterator(type_config_holder_a,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_a_iterator.GetCurrentPropertyPath(),
@@ -1945,8 +2183,11 @@ TEST(SchemaPropertyIteratorTest, SingleLevelCycle) {
 
   // Order of iteration for schema B:
   // {"schemaBprop2"}, indexable.
-  SchemaPropertyIterator schema_b_iterator(schema_type_config_b,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_b,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_b));
+  SchemaPropertyIterator schema_b_iterator(type_config_holder_b,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(), Eq("schemaBprop2"));
@@ -2004,16 +2245,21 @@ TEST(SchemaPropertyIteratorTest, MultipleLevelCycle) {
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
 
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_a, schema_type_config_a},
-      {schema_b, schema_type_config_b},
-      {schema_c, schema_type_config_c}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_a));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_b));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_c));
 
   // Order of iteration for schema A:
   // {"schemaAprop1.schemaBprop1.schemaCprop2", "schemaAprop1.schemaBprop2",
   // "schemaAprop2"}, all indexable
-  SchemaPropertyIterator schema_a_iterator(schema_type_config_a,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_a,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_a));
+  SchemaPropertyIterator schema_a_iterator(type_config_holder_a,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_a_iterator.GetCurrentPropertyPath(),
@@ -2046,8 +2292,11 @@ TEST(SchemaPropertyIteratorTest, MultipleLevelCycle) {
   // "schemaBprop2"}
   //
   // Indexable properties: {"schemaBprop1.schemaCprop2", "schemaBprop2"}
-  SchemaPropertyIterator schema_b_iterator(schema_type_config_b,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_b,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_b));
+  SchemaPropertyIterator schema_b_iterator(type_config_holder_b,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(),
@@ -2080,8 +2329,11 @@ TEST(SchemaPropertyIteratorTest, MultipleLevelCycle) {
   // "schemaCprop2"}
   //
   // Indexable properties: {"schemaCprop2"}
-  SchemaPropertyIterator schema_c_iterator(schema_type_config_c,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_c,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_c));
+  SchemaPropertyIterator schema_c_iterator(type_config_holder_c,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_c_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_c_iterator.GetCurrentPropertyPath(),
@@ -2147,8 +2399,11 @@ TEST(SchemaPropertyIteratorTest, SingleLevelCycleWithIndexableList) {
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
 
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_a, schema_type_config_a}, {schema_b, schema_type_config_b}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_a));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_b));
 
   // Order of iteration and whether each property is indexable for schema A:
   // {"schemaAprop1.schemaBprop1" (true),
@@ -2160,8 +2415,11 @@ TEST(SchemaPropertyIteratorTest, SingleLevelCycleWithIndexableList) {
   // "schemaAprop1.schemaBprop2.schemaBprop3" (false),
   // "schemaAprop1.schemaBprop3" (true),
   // "schemaAprop2" (true)}
-  SchemaPropertyIterator schema_a_iterator(schema_type_config_a,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_a,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_a));
+  SchemaPropertyIterator schema_a_iterator(type_config_holder_a,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_a_iterator.GetCurrentPropertyPath(),
@@ -2242,8 +2500,11 @@ TEST(SchemaPropertyIteratorTest, SingleLevelCycleWithIndexableList) {
   // "schemaBprop2.schemaBprop2.schemaBprop3" (true),
   // "schemaBprop2.schemaBprop3" (false),
   // "schemaBprop3" (true)}
-  SchemaPropertyIterator schema_b_iterator(schema_type_config_b,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_b,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_b));
+  SchemaPropertyIterator schema_b_iterator(type_config_holder_b,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(), Eq("schemaBprop1"));
@@ -2371,17 +2632,22 @@ TEST(SchemaPropertyIteratorTest, MultipleCycles) {
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
 
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_a, schema_type_config_a},
-      {schema_b, schema_type_config_b},
-      {schema_c, schema_type_config_c},
-      {schema_d, schema_type_config_d}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_a));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_b));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_c));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_d));
 
   // Order of iteration for schema A:
   // {"schemaAprop1.schemaBprop1.schemaCprop2", "schemaAprop1.schemaBprop2",
   // "schemaAprop2", "schemaAprop3.schemaDprop2"}, all indexable
-  SchemaPropertyIterator schema_a_iterator(schema_type_config_a,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_a,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_a));
+  SchemaPropertyIterator schema_a_iterator(type_config_holder_a,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_a_iterator.GetCurrentPropertyPath(),
@@ -2422,8 +2688,11 @@ TEST(SchemaPropertyIteratorTest, MultipleCycles) {
   // "schemaBprop1.schemaCprop2", "schemaBprop2"}
   //
   // Indexable properties: {"schemaBprop1.schemaCprop2", "schemaBprop2"}
-  SchemaPropertyIterator schema_b_iterator(schema_type_config_b,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_b,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_b));
+  SchemaPropertyIterator schema_b_iterator(type_config_holder_b,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(),
@@ -2463,8 +2732,11 @@ TEST(SchemaPropertyIteratorTest, MultipleCycles) {
   // "schemaCprop1.schemaAprop3.schemaDprop2", "schemaCprop2"}
   //
   // Indexable properties: {"schemaCprop2"}
-  SchemaPropertyIterator schema_c_iterator(schema_type_config_c,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_c,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_c));
+  SchemaPropertyIterator schema_c_iterator(type_config_holder_c,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_c_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_c_iterator.GetCurrentPropertyPath(),
@@ -2505,8 +2777,11 @@ TEST(SchemaPropertyIteratorTest, MultipleCycles) {
   // "schemaDprop2"}
   //
   // Indexable properties: {"schemaDprop2"}
-  SchemaPropertyIterator schema_d_iterator(schema_type_config_d,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_d,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_d));
+  SchemaPropertyIterator schema_d_iterator(type_config_holder_d,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_d_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_d_iterator.GetCurrentPropertyPath(),
@@ -2617,12 +2892,13 @@ TEST(SchemaPropertyIteratorTest, MultipleCyclesWithIndexableList) {
                   .SetName("schemaDprop2")
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
-
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_a, schema_type_config_a},
-      {schema_b, schema_type_config_b},
-      {schema_c, schema_type_config_c},
-      {schema_d, schema_type_config_d}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_a));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_b));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_c));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_d));
 
   // Order of iteration and whether each property is indexable for schema A:
   // "schemaAprop1.schemaBprop1.schemaCprop1.schemaAprop1.schemaBprop2" (true),
@@ -2637,8 +2913,11 @@ TEST(SchemaPropertyIteratorTest, MultipleCyclesWithIndexableList) {
   // "schemaAprop3.schemaDprop1.schemaAprop2" (true),
   // "schemaAprop3.schemaDprop1.schemaAprop3.schemaDprop2" (true),
   // "schemaAprop3.schemaDprop2" (true)
-  SchemaPropertyIterator schema_a_iterator(schema_type_config_a,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_a,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_a));
+  SchemaPropertyIterator schema_a_iterator(type_config_holder_a,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
   EXPECT_THAT(
@@ -2738,8 +3017,11 @@ TEST(SchemaPropertyIteratorTest, MultipleCyclesWithIndexableList) {
   // "schemaBprop1.schemaCprop1.schemaAprop3.schemaDprop2" (false),
   // "schemaBprop1.schemaCprop2" (true),
   // "schemaBprop2" (true)
-  SchemaPropertyIterator schema_b_iterator(schema_type_config_b,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_b,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_b));
+  SchemaPropertyIterator schema_b_iterator(type_config_holder_b,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(),
@@ -2779,8 +3061,11 @@ TEST(SchemaPropertyIteratorTest, MultipleCyclesWithIndexableList) {
   // "schemaCprop1.schemaAprop2" (false),
   // "schemaCprop1.schemaAprop3.schemaDprop2" (false),
   // "schemaCprop2" (true)
-  SchemaPropertyIterator schema_c_iterator(schema_type_config_c,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_c,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_c));
+  SchemaPropertyIterator schema_c_iterator(type_config_holder_c,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_c_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_c_iterator.GetCurrentPropertyPath(),
@@ -2820,8 +3105,11 @@ TEST(SchemaPropertyIteratorTest, MultipleCyclesWithIndexableList) {
   // "schemaDprop1.schemaAprop1.schemaBprop2" (false),
   // "schemaDprop1.schemaAprop2" (false),
   // "schemaDprop2" (true)
-  SchemaPropertyIterator schema_d_iterator(schema_type_config_d,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_d,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_d));
+  SchemaPropertyIterator schema_d_iterator(type_config_holder_d,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_d_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_d_iterator.GetCurrentPropertyPath(),
@@ -2933,11 +3221,13 @@ TEST(SchemaPropertyIteratorTest, MultipleCyclesWithIndexableList_allIndexTrue) {
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
 
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_a, schema_type_config_a},
-      {schema_b, schema_type_config_b},
-      {schema_c, schema_type_config_c},
-      {schema_d, schema_type_config_d}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_a));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_b));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_c));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_d));
 
   // Order of iteration and whether each property is indexable for schema A:
   // "schemaAprop1.schemaBprop1.schemaCprop1.schemaAprop1.schemaBprop2" (true),
@@ -2952,8 +3242,11 @@ TEST(SchemaPropertyIteratorTest, MultipleCyclesWithIndexableList_allIndexTrue) {
   // "schemaAprop3.schemaDprop1.schemaAprop2" (true),
   // "schemaAprop3.schemaDprop1.schemaAprop3.schemaDprop2" (true),
   // "schemaAprop3.schemaDprop2" (true)
-  SchemaPropertyIterator schema_a_iterator(schema_type_config_a,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_a,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_a));
+  SchemaPropertyIterator schema_a_iterator(type_config_holder_a,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
   EXPECT_THAT(
@@ -3069,8 +3362,11 @@ TEST(SchemaPropertyIteratorTest, MultipleCyclesWithIndexableList_allIndexTrue) {
   // "schemaBprop1.schemaCprop2" (true)
   // "schemaBprop2" (true)
 
-  SchemaPropertyIterator schema_b_iterator(schema_type_config_b,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_b,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_b));
+  SchemaPropertyIterator schema_b_iterator(type_config_holder_b,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(),
@@ -3202,8 +3498,11 @@ TEST(SchemaPropertyIteratorTest, MultipleCyclesWithIndexableList_allIndexTrue) {
   // "schemaCprop1.schemaAprop3.schemaDprop1.schemaAprop3.schemaDprop2" (true),
   // "schemaCprop1.schemaAprop3.schemaDprop2" (true)
   // "schemaCprop2" (true)
-  SchemaPropertyIterator schema_c_iterator(schema_type_config_c,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_c,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_c));
+  SchemaPropertyIterator schema_c_iterator(type_config_holder_c,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_c_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_c_iterator.GetCurrentPropertyPath(),
@@ -3324,8 +3623,11 @@ TEST(SchemaPropertyIteratorTest, MultipleCyclesWithIndexableList_allIndexTrue) {
   // "schemaDprop1.schemaAprop3.schemaDprop1.schemaAprop3.schemaDprop2" (true),
   // "schemaDprop1.schemaAprop3.schemaDprop2" (true),
   // "schemaDprop2" (true)
-  SchemaPropertyIterator schema_d_iterator(schema_type_config_d,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_d,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_d));
+  SchemaPropertyIterator schema_d_iterator(type_config_holder_d,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_d_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_d_iterator.GetCurrentPropertyPath(),
@@ -3514,11 +3816,12 @@ TEST(SchemaPropertyIteratorTest,
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
 
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_a, schema_type_config_a},
-      {schema_b, schema_type_config_b},
-      {schema_c, schema_type_config_c},
-      {schema_d, schema_type_config_d}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(/*enable_schema_type_config_cache=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_a));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_b));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_c));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_d));
 
   // Order of iteration and whether each property is indexable for schema A:
   // "schemaAprop1.schemaBprop1.schemaCprop1.schemaAprop1.schemaBprop2" (true),
@@ -3549,8 +3852,11 @@ TEST(SchemaPropertyIteratorTest,
   // "schemaAprop3.schemaBprop2",
   // "schemaAprop3.schemaDprop1",
   // "schemaAprop3.schemaDprop2.foo"
-  SchemaPropertyIterator schema_a_iterator(schema_type_config_a,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_a,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_a));
+  SchemaPropertyIterator schema_a_iterator(type_config_holder_a,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
   EXPECT_THAT(
@@ -3658,8 +3964,11 @@ TEST(SchemaPropertyIteratorTest,
   // "schemaBprop1.schemaCprop1.schemaAprop3.schemaDprop2" (false),
   // "schemaBprop1.schemaCprop2" (true),
   // "schemaBprop2" (true)
-  SchemaPropertyIterator schema_b_iterator(schema_type_config_b,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_b,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_b));
+  SchemaPropertyIterator schema_b_iterator(type_config_holder_b,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_b_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_b_iterator.GetCurrentPropertyPath(),
@@ -3699,8 +4008,11 @@ TEST(SchemaPropertyIteratorTest,
   // "schemaCprop1.schemaAprop2" (false),
   // "schemaCprop1.schemaAprop3.schemaDprop2" (false),
   // "schemaCprop2" (true)
-  SchemaPropertyIterator schema_c_iterator(schema_type_config_c,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_c,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_c));
+  SchemaPropertyIterator schema_c_iterator(type_config_holder_c,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_c_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_c_iterator.GetCurrentPropertyPath(),
@@ -3740,8 +4052,11 @@ TEST(SchemaPropertyIteratorTest,
   // "schemaDprop1.schemaAprop1.schemaBprop2" (false),
   // "schemaDprop1.schemaAprop2" (false),
   // "schemaDprop2" (true)
-  SchemaPropertyIterator schema_d_iterator(schema_type_config_d,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_d,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_d));
+  SchemaPropertyIterator schema_d_iterator(type_config_holder_d,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_d_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_d_iterator.GetCurrentPropertyPath(),
@@ -3821,9 +4136,11 @@ TEST(SchemaPropertyIteratorTest, TopLevelCycleWithMultipleIndexableLists) {
                   .SetName("schemaBprop3")
                   .SetDataTypeString(TERM_MATCH_EXACT, TOKENIZER_PLAIN))
           .Build();
-
-  SchemaUtil::TypeConfigMap type_config_map = {
-      {schema_a, schema_type_config_a}, {schema_b, schema_type_config_b}};
+  SchemaUtil::TypeConfigInfoCache type_config_info_cache =
+      SchemaUtil::TypeConfigInfoCache(
+          /*enable_schema_definition_deduping=*/true);
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_a));
+  ICING_ASSERT_OK(type_config_info_cache.AddTypeConfig(schema_type_config_b));
 
   // Order of iteration for Schema A:
   // "schemaAprop1.schemaBprop1" (true)
@@ -3834,8 +4151,11 @@ TEST(SchemaPropertyIteratorTest, TopLevelCycleWithMultipleIndexableLists) {
   // "schemaAprop2.schemaAprop1.schemaBprop3" (true)
   // "schemaAprop2.schemaAprop3" (false)
   // "schemaAprop3" (true)
-  SchemaPropertyIterator schema_a_iterator(schema_type_config_a,
-                                           type_config_map);
+  ICING_ASSERT_OK_AND_ASSIGN(
+      SchemaUtil::TypeConfigInfoCache::TypeConfigHolder type_config_holder_a,
+      type_config_info_cache.GetFullSchemaTypeConfigHolder(schema_a));
+  SchemaPropertyIterator schema_a_iterator(type_config_holder_a,
+                                           type_config_info_cache);
 
   EXPECT_THAT(schema_a_iterator.Advance(), IsOk());
   EXPECT_THAT(schema_a_iterator.GetCurrentPropertyPath(),

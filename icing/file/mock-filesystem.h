@@ -299,15 +299,15 @@ class MockFilesystem : public Filesystem {
                size_t data_size),
               (const));
 
-  MOCK_METHOD(bool, Read, (int fd, void* buf, size_t buf_size), (const));
+  MOCK_METHOD(ssize_t, Read, (int fd, void* buf, size_t buf_size), (const));
 
-  MOCK_METHOD(bool, Read, (const char* filename, void* buf, size_t buf_size),
+  MOCK_METHOD(ssize_t, Read, (const char* filename, void* buf, size_t buf_size),
               (const));
 
-  MOCK_METHOD(bool, PRead, (int fd, void* buf, size_t buf_size, off_t offset),
-              (const));
+  MOCK_METHOD(ssize_t, PRead,
+              (int fd, void* buf, size_t buf_size, off_t offset), (const));
 
-  MOCK_METHOD(bool, PRead,
+  MOCK_METHOD(ssize_t, PRead,
               (const char* filename, void* buf, size_t buf_size, off_t offset),
               (const));
 

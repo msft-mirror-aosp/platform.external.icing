@@ -21,6 +21,7 @@
 #include "gtest/gtest.h"
 #include "icing/testing/common-matchers.h"
 #include "icing/testing/icu-i18n-test-utils.h"
+#include "icing/util/i18n-utils.h"
 
 namespace icing {
 namespace lib {
@@ -249,12 +250,13 @@ TEST(CharacterIteratorTest, InvalidUtf) {
   CharacterIterator iterator(kText);
   EXPECT_THAT(iterator.is_valid(), IsTrue());
 
-  // Try to advance to the 'b' in 'bar'. This will fail. Also the iterator will
-  // be in an undefined state, so no need to verify the state or
-  // GetCurrentChar().
-  EXPECT_THAT(iterator.AdvanceToUtf8(6), IsFalse());
-  EXPECT_THAT(iterator.AdvanceToUtf16(6), IsFalse());
-  EXPECT_THAT(iterator.AdvanceToUtf32(6), IsFalse());
+  // Advancing to the invalid byte returns kInvalidUChar32.
+  EXPECT_THAT(iterator.AdvanceToUtf8(4), IsTrue());
+  EXPECT_THAT(iterator.GetCurrentChar(), Eq(i18n_utils::kInvalidUChar32));
+
+  // Advancing past the invalid sequence continues cleanly to 'b' at index 6.
+  EXPECT_THAT(iterator.AdvanceToUtf8(6), IsTrue());
+  EXPECT_THAT(UCharToString(iterator.GetCurrentChar()), Eq("b"));
 }
 
 TEST(CharacterIteratorTest, AdvanceToUtf8_emptyText) {
@@ -345,6 +347,95 @@ TEST(CharacterIteratorTest, AdvanceToUtf8_indexGtCharLength) {
 
   CharacterIterator iter1(text);
   EXPECT_THAT(iter0.AdvanceToUtf8(kText.size() + 2), IsFalse());
+}
+
+TEST(CharacterIteratorTest, DefaultInstanceAdvanceToUtf8) {
+  CharacterIterator iterator;
+  EXPECT_THAT(iterator.is_valid(), IsFalse());
+  EXPECT_THAT(iterator.AdvanceToUtf8(0), IsTrue());
+  EXPECT_THAT(iterator.utf8_index(), Eq(0));
+  EXPECT_THAT(iterator.utf16_index(), Eq(0));
+  EXPECT_THAT(iterator.utf32_index(), Eq(0));
+  EXPECT_THAT(iterator.GetCurrentChar(), Eq(0));
+}
+
+TEST(CharacterIteratorTest, DefaultInstanceMoveToUtf8) {
+  CharacterIterator iterator;
+  EXPECT_THAT(iterator.is_valid(), IsFalse());
+  EXPECT_THAT(iterator.MoveToUtf8(0), IsTrue());
+  EXPECT_THAT(iterator.utf8_index(), Eq(0));
+  EXPECT_THAT(iterator.utf16_index(), Eq(0));
+  EXPECT_THAT(iterator.utf32_index(), Eq(0));
+  EXPECT_THAT(iterator.GetCurrentChar(), Eq(0));
+}
+
+TEST(CharacterIteratorTest, DefaultInstanceAdvanceToUtf8OutOfBounds) {
+  CharacterIterator iterator;
+  EXPECT_THAT(iterator.AdvanceToUtf8(1), IsFalse());
+  EXPECT_THAT(iterator.AdvanceToUtf8(-1), IsFalse());
+}
+
+TEST(CharacterIteratorTest, MoveToUtf8) {
+  constexpr std::string_view kText = "¿Dónde está la biblioteca?";
+  CharacterIterator iterator(kText);
+
+  // Move forwards
+  EXPECT_THAT(iterator.MoveToUtf8(4), IsTrue());
+  EXPECT_THAT(UCharToString(iterator.GetCurrentChar()), Eq("ó"));
+  EXPECT_THAT(iterator,
+              EqualsCharacterIterator(kText, /*expected_utf8_index=*/3,
+                                      /*expected_utf16_index=*/2,
+                                      /*expected_utf32_index=*/2));
+
+  // Move backwards
+  EXPECT_THAT(iterator.MoveToUtf8(0), IsTrue());
+  EXPECT_THAT(UCharToString(iterator.GetCurrentChar()), Eq("¿"));
+  EXPECT_THAT(iterator,
+              EqualsCharacterIterator(kText, /*expected_utf8_index=*/0,
+                                      /*expected_utf16_index=*/0,
+                                      /*expected_utf32_index=*/0));
+}
+
+TEST(CharacterIteratorTest, MoveToUtf16) {
+  constexpr std::string_view kText = "¿Dónde está la biblioteca?";
+  CharacterIterator iterator(kText);
+
+  // Move forwards
+  EXPECT_THAT(iterator.MoveToUtf16(2), IsTrue());
+  EXPECT_THAT(UCharToString(iterator.GetCurrentChar()), Eq("ó"));
+  EXPECT_THAT(iterator,
+              EqualsCharacterIterator(kText, /*expected_utf8_index=*/3,
+                                      /*expected_utf16_index=*/2,
+                                      /*expected_utf32_index=*/2));
+
+  // Move backwards
+  EXPECT_THAT(iterator.MoveToUtf16(0), IsTrue());
+  EXPECT_THAT(UCharToString(iterator.GetCurrentChar()), Eq("¿"));
+  EXPECT_THAT(iterator,
+              EqualsCharacterIterator(kText, /*expected_utf8_index=*/0,
+                                      /*expected_utf16_index=*/0,
+                                      /*expected_utf32_index=*/0));
+}
+
+TEST(CharacterIteratorTest, MoveToUtf32) {
+  constexpr std::string_view kText = "¿Dónde está la biblioteca?";
+  CharacterIterator iterator(kText);
+
+  // Move forwards
+  EXPECT_THAT(iterator.MoveToUtf32(2), IsTrue());
+  EXPECT_THAT(UCharToString(iterator.GetCurrentChar()), Eq("ó"));
+  EXPECT_THAT(iterator,
+              EqualsCharacterIterator(kText, /*expected_utf8_index=*/3,
+                                      /*expected_utf16_index=*/2,
+                                      /*expected_utf32_index=*/2));
+
+  // Move backwards
+  EXPECT_THAT(iterator.MoveToUtf32(0), IsTrue());
+  EXPECT_THAT(UCharToString(iterator.GetCurrentChar()), Eq("¿"));
+  EXPECT_THAT(iterator,
+              EqualsCharacterIterator(kText, /*expected_utf8_index=*/0,
+                                      /*expected_utf16_index=*/0,
+                                      /*expected_utf32_index=*/0));
 }
 
 }  // namespace
