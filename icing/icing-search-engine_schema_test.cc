@@ -4295,6 +4295,9 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
 
   EXPECT_THAT(icing.Put(email_document_without_subject).status(), ProtoIsOk());
   EXPECT_THAT(icing.Put(email_document_with_subject).status(), ProtoIsOk());
+  // Explicitly flush for Put.
+  ASSERT_THAT(icing.PersistToDisk(PersistType::RECOVERY_PROOF).status(),
+              ProtoIsOk());
 
   SchemaProto schema_with_required_subject;
   type = schema_with_required_subject.add_types();
@@ -4353,6 +4356,157 @@ TEST_F(IcingSearchEngineSchemaTest, SetSchemaRevalidatesDocumentsAndReturnsOk) {
   EXPECT_THAT(icing.Get("namespace", "without_subject",
                         GetResultSpecProto::default_instance()),
               EqualsProto(expected_get_result_proto));
+
+  // Initialize another Icing instance. Expect to have data recovery for
+  // DocumentStore. This validates that the previous flush decision made by
+  // SetSchema was correct (no false positive):
+  // - Previously SetSchemaResultProto has needs_persist_type = RECOVERY_PROOF.
+  // - Without calling PersistToDisk after forced SetSchema, DocumentStore
+  //   derived files should remain dirty and the next initialization will have
+  //   data recovery.
+  IcingSearchEngine another_icing(GetDefaultIcingOptions(), GetTestJniCache());
+  InitializeResultProto initialize_result_google::protobuf = another_icing.Initialize();
+  EXPECT_THAT(initialize_result_google::protobuf.status(), ProtoIsOk());
+  EXPECT_FALSE(initialize_result_google::protobuf.has_reset());
+  EXPECT_THAT(
+      initialize_result_google::protobuf.initialize_stats().schema_store_recovery_cause(),
+      Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .document_store_recovery_cause(),
+              Eq(InitializeStatsProto::IO_ERROR));
+  EXPECT_THAT(
+      initialize_result_google::protobuf.initialize_stats().document_store_data_status(),
+      Eq(InitializeStatsProto::NO_DATA_LOSS));
+  EXPECT_THAT(
+      initialize_result_google::protobuf.initialize_stats().index_restoration_cause(),
+      Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .integer_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .qualified_id_join_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .embedding_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  // PersistToDisk is needed since DocumentStore derived files were rebuilt.
+  EXPECT_THAT(initialize_result_google::protobuf.needs_persist_type(),
+              Eq(PersistType::RECOVERY_PROOF));
+}
+
+TEST_F(IcingSearchEngineSchemaTest,
+       IncompatibleChangeWithNoDocumentsDeletedDoesNotRequireFlush) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaProto schema_with_optional_subject;
+  auto type = schema_with_optional_subject.add_types();
+  type->set_schema_type("email");
+
+  // Add a OPTIONAL property
+  auto property = type->add_properties();
+  property->set_property_name("subject");
+  property->set_data_type(PropertyConfigProto::DataType::STRING);
+  property->set_cardinality(PropertyConfigProto::Cardinality::OPTIONAL);
+
+  EXPECT_THAT(icing.SetSchema(schema_with_optional_subject).status(),
+              ProtoIsOk());
+
+  DocumentProto email_document_with_subject =
+      DocumentBuilder()
+          .SetKey("namespace", "with_subject")
+          .SetSchema("email")
+          .AddStringProperty("subject", "foo")
+          .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+          .Build();
+
+  EXPECT_THAT(icing.Put(email_document_with_subject).status(), ProtoIsOk());
+  // Explicitly flush for Put.
+  ASSERT_THAT(icing.PersistToDisk(PersistType::RECOVERY_PROOF).status(),
+              ProtoIsOk());
+
+  SchemaProto schema_with_required_subject;
+  type = schema_with_required_subject.add_types();
+  type->set_schema_type("email");
+
+  // Add a REQUIRED property
+  property = type->add_properties();
+  property->set_property_name("subject");
+  property->set_data_type(PropertyConfigProto::DataType::STRING);
+  property->set_cardinality(PropertyConfigProto::Cardinality::REQUIRED);
+
+  // Can't set the schema since it's incompatible
+  SetSchemaResultProto set_schema_result =
+      icing.SetSchema(schema_with_required_subject);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
+  SetSchemaResultProto expected_set_schema_result_proto;
+  expected_set_schema_result_proto.mutable_status()->set_code(
+      StatusProto::FAILED_PRECONDITION);
+  expected_set_schema_result_proto.mutable_status()->set_message(
+      "Schema is incompatible.");
+  expected_set_schema_result_proto.add_incompatible_schema_types("email");
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result_proto));
+
+  // Force set it
+  set_schema_result =
+      icing.SetSchema(schema_with_required_subject,
+                      /*ignore_errors_and_delete_documents=*/true);
+  // Ignore latency numbers. They're covered elsewhere.
+  set_schema_result.clear_set_schema_stats();
+  set_schema_result.clear_vm_binder_transaction_latency_start_time_ms();
+  expected_set_schema_result_proto.mutable_status()->set_code(StatusProto::OK);
+  expected_set_schema_result_proto.mutable_status()->clear_message();
+  expected_set_schema_result_proto.set_deleted_document_count(0);
+  // All existing documents are compatible with the new schema, so no
+  // documents are deleted and flush is not needed.
+  expected_set_schema_result_proto.set_needs_persist_type(PersistType::UNKNOWN);
+  EXPECT_THAT(set_schema_result, EqualsProto(expected_set_schema_result_proto));
+
+  GetResultProto expected_get_result_proto;
+  expected_get_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_get_result_proto.mutable_document() = email_document_with_subject;
+
+  EXPECT_THAT(icing.Get("namespace", "with_subject",
+                        GetResultSpecProto::default_instance()),
+              EqualsProto(expected_get_result_proto));
+
+  // Initialize another Icing instance. Expect to have no data recovery. This
+  // validates that the previous flush decision made by SetSchema was correct
+  // (no false negative):
+  // - Previously SetSchemaResultProto has needs_persist_type = UNKNOWN.
+  // - Even without calling PersistToDisk after forced SetSchema, all derived
+  //   files should still remain clean and the next initialization will have no
+  //   data recovery.
+  IcingSearchEngine another_icing(GetDefaultIcingOptions(), GetTestJniCache());
+  InitializeResultProto initialize_result_google::protobuf = another_icing.Initialize();
+  EXPECT_THAT(initialize_result_google::protobuf.status(), ProtoIsOk());
+  EXPECT_FALSE(initialize_result_google::protobuf.has_reset());
+  EXPECT_THAT(
+      initialize_result_google::protobuf.initialize_stats().schema_store_recovery_cause(),
+      Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .document_store_recovery_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(
+      initialize_result_google::protobuf.initialize_stats().document_store_data_status(),
+      Eq(InitializeStatsProto::NO_DATA_LOSS));
+  EXPECT_THAT(
+      initialize_result_google::protobuf.initialize_stats().index_restoration_cause(),
+      Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .integer_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .qualified_id_join_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  EXPECT_THAT(initialize_result_google::protobuf.initialize_stats()
+                  .embedding_index_restoration_cause(),
+              Eq(InitializeStatsProto::NONE));
+  // PersistToDisk is not needed.
+  EXPECT_THAT(initialize_result_google::protobuf.needs_persist_type(),
+              Eq(PersistType::UNKNOWN));
 }
 
 TEST_F(IcingSearchEngineSchemaTest, SetSchemaDeletesDocumentsAndReturnsOk) {

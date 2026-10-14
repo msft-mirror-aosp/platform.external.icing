@@ -42,7 +42,8 @@ libtextclassifier3::StatusOr<IcingDatabaseStablenessProto> ReadProtoFromFile(
   }
 
   if (file_size == 0) {
-    return absl_ports::NotFoundError("File is empty.");
+    // Zero byte probably means it was the default proto.
+    return IcingDatabaseStablenessProto::default_instance();
   }
 
   auto buffer = std::make_unique<uint8_t[]>(file_size);
@@ -175,6 +176,14 @@ libtextclassifier3::Status DatabaseStablenessLog::UpdatePersistToDiskHistory(
   // Step 2: write the proto into the disk.
   ICING_RETURN_IF_ERROR(WriteProtoIntoFile(filesystem_, sfd_, cached_proto_));
 
+  return libtextclassifier3::Status::OK;
+}
+
+libtextclassifier3::Status DatabaseStablenessLog::Reset() {
+  absl_ports::unique_lock lock(&mutex_);
+
+  cached_proto_.Clear();
+  ICING_RETURN_IF_ERROR(WriteProtoIntoFile(filesystem_, sfd_, cached_proto_));
   return libtextclassifier3::Status::OK;
 }
 
