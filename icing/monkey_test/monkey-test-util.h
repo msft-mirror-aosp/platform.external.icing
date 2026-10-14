@@ -220,12 +220,12 @@ inline libtextclassifier3::StatusOr<bool> DoesVectorsMatch(
     Quantizer quantizer(candidate.quantized_values().data());
     const uint8_t* quantized_data = reinterpret_cast<const uint8_t*>(
         candidate.quantized_values().data() + sizeof(Quantizer));
-    score = embedding_scorer->EigenScore(dimension, query_values_ptr,
-                                         quantized_data, quantizer);
+    score = embedding_scorer->Score(dimension, query_values_ptr, quantized_data,
+                                    quantizer);
   } else if (quantization_type ==
              EmbeddingIndexingConfig::QuantizationType::NONE) {
-    score = embedding_scorer->EigenScore(dimension, query_values_ptr,
-                                         candidate.values().data());
+    score = embedding_scorer->Score(dimension, query_values_ptr,
+                                    candidate.values().data());
   } else {
     // Quantize the candidate vector.
     // The candidate vector should never be empty, so dereferencing should be
@@ -240,8 +240,8 @@ inline libtextclassifier3::StatusOr<bool> DoesVectorsMatch(
       quantized_candidate.push_back(quantizer.Quantize(value));
     }
     // Score the quantized candidate against the original query.
-    score = embedding_scorer->EigenScore(dimension, query_values_ptr,
-                                         quantized_candidate.data(), quantizer);
+    score = embedding_scorer->Score(dimension, query_values_ptr,
+                                    quantized_candidate.data(), quantizer);
   }
   return min_score <= score && score <= max_score;
 }
