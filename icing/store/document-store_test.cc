@@ -80,6 +80,7 @@ namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
 using ::testing::_;
+using ::testing::Contains;
 using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::Ge;
@@ -94,6 +95,7 @@ using ::testing::Optional;
 using ::testing::Pair;
 using ::testing::Pointee;
 using ::testing::Return;
+using ::testing::SizeIs;
 using ::testing::UnorderedElementsAre;
 
 const NamespaceStorageInfoProto& GetNamespaceStorageInfo(
@@ -7716,6 +7718,156 @@ TEST_P(DocumentStoreTest,
   EXPECT_THAT(
       scorable_property_set1->GetScorablePropertyProto("score"),
       Pointee(EqualsProto(BuildScorablePropertyProtoFromDouble({10, 20}))));
+}
+
+DocumentProto CreateEmailDocument(std::string name_space, std::string uri) {
+  return DocumentBuilder()
+      .SetKey(std::move(name_space), std::move(uri))
+      .SetSchema("email")
+      .SetCreationTimestampMs(0)
+      .Build();
+}
+
+TEST_P(DocumentStoreTest, PutShouldNotWriteToDocumentLogIfNamespaceMapperFull) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+  const std::string document_log_file = absl_ports::StrCat(
+      document_store_dir_, "/", DocumentLogCreator::GetDocumentLogFilename());
+
+  // ~1KB namespaces fill the namespace mapper after ~100 puts.
+  const std::string long_suffix(1000, 'a');
+  int num_successful_puts = 0;
+  int64_t document_log_size_before_put = 0;
+  libtextclassifier3::Status put_status;
+  for (int i = 0; i < 10000 && put_status.ok(); ++i) {
+    DocumentProto document = CreateEmailDocument(
+        absl_ports::StrCat(std::to_string(i), long_suffix), "uri");
+    document_log_size_before_put =
+        filesystem_.GetFileSize(document_log_file.c_str());
+    put_status =
+        doc_store->Put(document_util::CreateDocumentWrapper(document)).status();
+    if (put_status.ok()) {
+      ++num_successful_puts;
+    }
+  }
+  ASSERT_THAT(put_status,
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED,
+                       HasSubstr("namespace mapper")));
+  ASSERT_THAT(num_successful_puts, Gt(0));
+  // The namespace mapper, not the corpus mapper, is full.
+  DocumentStorageInfoProto storage_info = doc_store->GetStorageInfo();
+  ASSERT_THAT(storage_info.num_namespaces(), Eq(num_successful_puts));
+
+  // The failed put should not have written the document to the log.
+  EXPECT_THAT(filesystem_.GetFileSize(document_log_file.c_str()),
+              Eq(document_log_size_before_put));
+
+  // Existing namespaces still work when the namespace mapper is full.
+  ICING_EXPECT_OK(doc_store->Put(document_util::CreateDocumentWrapper(
+      CreateEmailDocument(absl_ports::StrCat("0", long_suffix), "uri2"))));
+}
+
+TEST_P(DocumentStoreTest, PutShouldNotWriteToDocumentLogIfCorpusMapperFull) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+  const std::string document_log_file = absl_ports::StrCat(
+      document_store_dir_, "/", DocumentLogCreator::GetDocumentLogFilename());
+
+  // Corpus keys are longer than these short namespaces, so the corpus mapper
+  // fills up first.
+  int num_successful_puts = 0;
+  int64_t document_log_size_before_put = 0;
+  libtextclassifier3::Status put_status;
+  for (int i = 0; i < 100000 && put_status.ok(); ++i) {
+    DocumentProto document = CreateEmailDocument(std::to_string(i), "uri");
+    document_log_size_before_put =
+        filesystem_.GetFileSize(document_log_file.c_str());
+    put_status =
+        doc_store->Put(document_util::CreateDocumentWrapper(document)).status();
+    if (put_status.ok()) {
+      ++num_successful_puts;
+    }
+  }
+  ASSERT_THAT(put_status,
+              StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED,
+                       HasSubstr("corpus mapper")));
+  ASSERT_THAT(num_successful_puts, Gt(0));
+
+  // The failed put added its namespace before the corpus mapper failed.
+  DocumentStorageInfoProto storage_info = doc_store->GetStorageInfo();
+  ASSERT_THAT(storage_info.num_namespaces(), Eq(num_successful_puts + 1));
+
+  // The failed put should not have written the document to the log.
+  EXPECT_THAT(filesystem_.GetFileSize(document_log_file.c_str()),
+              Eq(document_log_size_before_put));
+
+  // The unused namespace isn't returned.
+  std::vector<std::string> all_namespaces = doc_store->GetAllNamespaces();
+  EXPECT_THAT(all_namespaces,
+              Not(Contains(std::to_string(num_successful_puts))));
+  EXPECT_THAT(all_namespaces, SizeIs(num_successful_puts));
+}
+
+TEST_P(DocumentStoreTest,
+       RegenerateDerivedFilesSucceedsAfterNamespaceMapperFull) {
+  const std::string long_suffix(1000, 'a');
+  std::vector<DocumentProto> successful_documents;
+  std::vector<DocumentProto> failed_documents;
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        DocumentStore::CreateResult create_result,
+        CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                            schema_store_.get()));
+    std::unique_ptr<DocumentStore> doc_store =
+        std::move(create_result.document_store);
+
+    // Fill the namespace mapper, then attempt a few more puts that should fail.
+    for (int i = 0; i < 10000 && failed_documents.size() < 3; ++i) {
+      DocumentProto document = CreateEmailDocument(
+          absl_ports::StrCat(std::to_string(i), long_suffix), "uri");
+      libtextclassifier3::Status put_status =
+          doc_store->Put(document_util::CreateDocumentWrapper(document))
+              .status();
+      if (put_status.ok()) {
+        successful_documents.push_back(std::move(document));
+      } else {
+        ASSERT_THAT(put_status,
+                    StatusIs(libtextclassifier3::StatusCode::RESOURCE_EXHAUSTED,
+                             HasSubstr("namespace mapper")));
+        failed_documents.push_back(std::move(document));
+      }
+    }
+    ASSERT_THAT(successful_documents, Not(IsEmpty()));
+    ASSERT_THAT(failed_documents, SizeIs(3));
+  }
+
+  // Force derived files to be regenerated from the document log.
+  CorruptDocStoreHeaderChecksumFile();
+
+  ICING_ASSERT_OK_AND_ASSIGN(
+      DocumentStore::CreateResult create_result,
+      CreateDocumentStore(&filesystem_, document_store_dir_, &fake_clock_,
+                          schema_store_.get()));
+  EXPECT_TRUE(create_result.derived_files_regenerated);
+  std::unique_ptr<DocumentStore> doc_store =
+      std::move(create_result.document_store);
+
+  for (const DocumentProto& document : successful_documents) {
+    EXPECT_THAT(doc_store->Get(document.namespace_(), document.uri()),
+                IsOkAndHolds(EqualsProto(document)));
+  }
+  for (const DocumentProto& document : failed_documents) {
+    EXPECT_THAT(doc_store->Get(document.namespace_(), document.uri()),
+                StatusIs(libtextclassifier3::StatusCode::NOT_FOUND));
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(
