@@ -12,10 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "icing/text_classifier/lib3/utils/base/status.h"
 #include "gmock/gmock.h"
@@ -1336,6 +1338,68 @@ TEST_P(QualifiedIdJoinIndexingHandlerV3Test,
                   parent_put_result.new_document_id),
               IsOkAndHolds(IsEmpty()));
 
+  EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
+}
+
+TEST_P(QualifiedIdJoinIndexingHandlerV3Test,
+       HandleJoinablePropertyWithEmptyValuesShouldBeSkipped) {
+  class TestTokenizedDocument : public TokenizedDocument {
+   public:
+    explicit TestTokenizedDocument(
+        std::unique_ptr<DocumentWrapper> document_wrapper,
+        std::vector<TokenizedSection>&& tokenized_string_sections,
+        std::vector<Section<int64_t>>&& integer_sections,
+        std::vector<Section<PropertyProto::VectorProto>>&& vector_sections,
+        JoinablePropertyGroup&& joinable_property_group)
+        : TokenizedDocument(
+              std::move(document_wrapper), std::move(tokenized_string_sections),
+              std::move(integer_sections), std::move(vector_sections),
+              std::move(joinable_property_group)) {}
+  };
+
+  // Create base document wrapper.
+  auto document_wrapper = std::make_unique<DocumentWrapper>();
+  *document_wrapper->mutable_document() =
+      DocumentBuilder()
+          .SetKey("icing", "fake_type/1")
+          .SetSchema(std::string(kFakeType))
+          .Build();
+
+  // Populate JoinablePropertyGroup containing a JoinableProperty with empty
+  // values.
+  JoinablePropertyGroup joinable_property_group;
+  JoinablePropertyMetadata metadata(fake_type_joinable_property_id_,
+                                    PropertyConfigProto::DataType::STRING,
+                                    JoinableConfig::ValueType::QUALIFIED_ID,
+                                    JoinableConfig::DeletePropagationType::NONE,
+                                    std::string(kPropertyQualifiedId));
+  std::vector<std::string_view> empty_values;
+  joinable_property_group.qualified_id_properties.push_back(
+      JoinableProperty<std::string_view>(std::move(metadata),
+                                         std::move(empty_values)));
+
+  // Instantiate TestTokenizedDocument.
+  TestTokenizedDocument child_tokenized_document(
+      std::move(document_wrapper), /*tokenized_string_sections=*/{},
+      /*integer_sections=*/{}, /*vector_sections=*/{},
+      std::move(joinable_property_group));
+
+  // Handle document.
+  ASSERT_THAT(qualified_id_join_index_->last_added_document_id(),
+              Eq(kInvalidDocumentId));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<QualifiedIdJoinIndexingHandler> handler,
+      QualifiedIdJoinIndexingHandler::Create(&fake_clock_, doc_store_.get(),
+                                             qualified_id_join_index_.get(),
+                                             feature_flags_.get()));
+  EXPECT_THAT(handler->Handle(child_tokenized_document, /*new_document_id=*/0,
+                              /*old_document_id=*/kInvalidDocumentId,
+                              /*recovery_mode=*/false,
+                              /*put_document_stats=*/nullptr),
+              IsOk());
+
+  // Verify that nothing was written to index or established as a join since
+  // values were empty.
   EXPECT_THAT(qualified_id_join_index_, Pointee(IsEmpty()));
 }
 

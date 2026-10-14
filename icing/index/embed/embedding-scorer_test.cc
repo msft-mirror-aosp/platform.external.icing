@@ -15,12 +15,16 @@
 #include "icing/index/embed/embedding-scorer.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <random>
 #include <tuple>
 #include <vector>
 
+#include "icing/text_classifier/lib3/utils/base/status.h"
+#include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "icing/index/embed/quantizer.h"
 #include "icing/testing/common-matchers.h"
@@ -95,6 +99,54 @@ TEST(EmbeddingScorerTest, Cosine) {
               expected_cosine, eps_quantized);
 }
 
+TEST(EmbeddingScorerTest, CosineWithZeroVector) {
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<EmbeddingScorer> embedding_scorer,
+      EmbeddingScorer::Create(
+          SearchSpecProto::EmbeddingQueryMetricType::COSINE));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      Quantizer quantizer,
+      Quantizer::Create(/*float_min=*/-1.0f, /*float_max=*/1.0f));
+  ICING_ASSERT_OK_AND_ASSIGN(
+      Quantizer zero_quantizer,
+      Quantizer::Create(/*float_min=*/0.0f, /*float_max=*/0.0f));
+
+  int dimension = 3;
+  std::vector<float> zero_vec = {0.0f, 0.0f, 0.0f};
+  std::vector<float> non_zero_vec = {0.7f, -0.3f, -0.6f};
+  std::vector<uint8_t> zero_vec_quantized =
+      QuantizeVector(zero_vec, zero_quantizer);
+  std::vector<uint8_t> non_zero_vec_quantized =
+      QuantizeVector(non_zero_vec, quantizer);
+
+  // Case 1: v1 is zero vector, v2 is non-zero vector
+  EXPECT_FLOAT_EQ(
+      embedding_scorer->Score(dimension, zero_vec.data(), non_zero_vec.data()),
+      0.0f);
+  EXPECT_FLOAT_EQ(
+      embedding_scorer->Score(dimension, zero_vec.data(),
+                              non_zero_vec_quantized.data(), quantizer),
+      0.0f);
+
+  // Case 2: v1 is non-zero vector, v2 is zero vector
+  EXPECT_FLOAT_EQ(
+      embedding_scorer->Score(dimension, non_zero_vec.data(), zero_vec.data()),
+      0.0f);
+  EXPECT_FLOAT_EQ(
+      embedding_scorer->Score(dimension, non_zero_vec.data(),
+                              zero_vec_quantized.data(), zero_quantizer),
+      0.0f);
+
+  // Case 3: Both v1 and v2 are zero vectors
+  EXPECT_FLOAT_EQ(
+      embedding_scorer->Score(dimension, zero_vec.data(), zero_vec.data()),
+      0.0f);
+  EXPECT_FLOAT_EQ(
+      embedding_scorer->Score(dimension, zero_vec.data(),
+                              zero_vec_quantized.data(), zero_quantizer),
+      0.0f);
+}
+
 TEST(EmbeddingScorerTest, Euclidean) {
   constexpr float eps = 0.001f;
   constexpr float eps_quantized = 0.01f;
@@ -123,7 +175,55 @@ TEST(EmbeddingScorerTest, Euclidean) {
               expected_euclidean, eps_quantized);
 }
 
-class EmbeddingScorerEigenTest
+TEST(EmbeddingScorerTest, CreateWithUnknownMetricTypeReturnsError) {
+  EXPECT_THAT(EmbeddingScorer::Create(
+                  SearchSpecProto::EmbeddingQueryMetricType::UNKNOWN),
+              StatusIs(libtextclassifier3::StatusCode::INVALID_ARGUMENT));
+}
+
+// A straightforward, independent implementation of the supported metrics, used
+// as the ground truth to validate EmbeddingScorer against.
+float ReferenceScore(SearchSpecProto::EmbeddingQueryMetricType::Code metric,
+                     const std::vector<float>& v1,
+                     const std::vector<float>& v2) {
+  float dot_product = 0.0f;
+  float squared_norm1 = 0.0f;
+  float squared_norm2 = 0.0f;
+  float squared_distance = 0.0f;
+  for (size_t i = 0; i < v1.size(); ++i) {
+    dot_product += v1[i] * v2[i];
+    squared_norm1 += v1[i] * v1[i];
+    squared_norm2 += v2[i] * v2[i];
+    float diff = v1[i] - v2[i];
+    squared_distance += diff * diff;
+  }
+
+  switch (metric) {
+    case SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT:
+      return dot_product;
+    case SearchSpecProto::EmbeddingQueryMetricType::COSINE: {
+      float divisor = std::sqrt(squared_norm1) * std::sqrt(squared_norm2);
+      return divisor == 0.0f ? 0.0f : dot_product / divisor;
+    }
+    case SearchSpecProto::EmbeddingQueryMetricType::EUCLIDEAN:
+      return std::sqrt(squared_distance);
+    default:
+      ADD_FAILURE() << "Unsupported metric type: " << metric;
+      return 0.0f;
+  }
+}
+
+std::vector<float> DequantizeVector(const std::vector<uint8_t>& quantized,
+                                    const Quantizer& quantizer) {
+  std::vector<float> dequantized;
+  dequantized.reserve(quantized.size());
+  for (uint8_t value : quantized) {
+    dequantized.push_back(quantizer.Dequantize(value));
+  }
+  return dequantized;
+}
+
+class EmbeddingScorerReferenceTest
     : public testing::TestWithParam<
           std::tuple<SearchSpecProto::EmbeddingQueryMetricType::Code, int>> {
  protected:
@@ -163,9 +263,9 @@ class EmbeddingScorerEigenTest
   std::uniform_real_distribution<float> dist_;
 };
 
-// Test that the EigenScore function matches the Score function for a variety
-// of random vectors.
-TEST_P(EmbeddingScorerEigenTest, EigenScoreMatchesScore) {
+// Test that the Score function matches the reference implementation for a
+// variety of random vectors.
+TEST_P(EmbeddingScorerReferenceTest, ScoreMatchesReference) {
   for (int i = 0; i < kNumRandomPairs; ++i) {
     std::vector<float> v1 = GenerateRandomVector();
     std::vector<float> v2 = GenerateRandomVector();
@@ -173,15 +273,13 @@ TEST_P(EmbeddingScorerEigenTest, EigenScoreMatchesScore) {
     // Compare scores
     float score_val =
         embedding_scorer_->Score(dimension_, v1.data(), v2.data());
-    float eigen_score_val =
-        embedding_scorer_->EigenScore(dimension_, v1.data(), v2.data());
-    ASSERT_NEAR(score_val, eigen_score_val, kEps);
+    ASSERT_NEAR(score_val, ReferenceScore(metric_, v1, v2), kEps);
   }
 }
 
-// Test that the EigenScore function matches the Score function for a variety
-// of random quantized vectors.
-TEST_P(EmbeddingScorerEigenTest, EigenScoreMatchesScoreForQuantizedVectors) {
+// Test that the Score function matches the reference implementation for a
+// variety of random quantized vectors.
+TEST_P(EmbeddingScorerReferenceTest, ScoreMatchesReferenceForQuantizedVectors) {
   for (int i = 0; i < kNumRandomPairs; ++i) {
     std::vector<float> v1 = GenerateRandomVector();
     std::vector<float> v2 = GenerateRandomVector();
@@ -196,16 +294,17 @@ TEST_P(EmbeddingScorerEigenTest, EigenScoreMatchesScoreForQuantizedVectors) {
     // Compare scores
     float score_val = embedding_scorer_->Score(dimension_, v1.data(),
                                                v2_quantized.data(), quantizer);
-    float eigen_score_val = embedding_scorer_->EigenScore(
-        dimension_, v1.data(), v2_quantized.data(), quantizer);
-    ASSERT_NEAR(score_val, eigen_score_val, kEps);
+    ASSERT_NEAR(
+        score_val,
+        ReferenceScore(metric_, v1, DequantizeVector(v2_quantized, quantizer)),
+        kEps);
   }
 }
 
-// Test that the EigenScore function matches the Score function for constant
-// vectors (i.e. all values are the same) to be quantized.
-TEST_P(EmbeddingScorerEigenTest,
-       EigenScoreMatchesScoreForQuantizedConstantVectors) {
+// Test that the Score function matches the reference implementation for
+// constant vectors (i.e. all values are the same) to be quantized.
+TEST_P(EmbeddingScorerReferenceTest,
+       ScoreMatchesReferenceForQuantizedConstantVectors) {
   for (int i = 0; i < kNumRandomPairs; ++i) {
     std::vector<float> v1 = GenerateRandomVector();
     std::vector<float> v2 = GenerateRandomConstantVector();
@@ -223,14 +322,15 @@ TEST_P(EmbeddingScorerEigenTest,
     // Compare scores
     float score_val = embedding_scorer_->Score(dimension_, v1.data(),
                                                v2_quantized.data(), quantizer);
-    float eigen_score_val = embedding_scorer_->EigenScore(
-        dimension_, v1.data(), v2_quantized.data(), quantizer);
-    ASSERT_NEAR(score_val, eigen_score_val, kEps);
+    ASSERT_NEAR(
+        score_val,
+        ReferenceScore(metric_, v1, DequantizeVector(v2_quantized, quantizer)),
+        kEps);
   }
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    EigenVsScoreComparison, EmbeddingScorerEigenTest,
+    ScoreVsReferenceComparison, EmbeddingScorerReferenceTest,
     testing::Combine(
         testing::Values(SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
                         SearchSpecProto::EmbeddingQueryMetricType::COSINE,
