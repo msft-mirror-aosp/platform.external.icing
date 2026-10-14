@@ -42,7 +42,6 @@ class DatabaseStablenessLog {
   //   - On success, a DatabaseStablenessLog instance.
   //   - FAILED_PRECONDITION_ERROR if any of the pointer is null.
   //   - INTERNAL_ERROR on I/O errors.
-  //   - Any FileBackedProto errors.
   static libtextclassifier3::StatusOr<std::unique_ptr<DatabaseStablenessLog>>
   Create(const Filesystem* filesystem, std::string file_path);
 
@@ -57,7 +56,6 @@ class DatabaseStablenessLog {
   //   - INVALID_ARGUMENT_ERROR if call_type is IcingApiCallType::Code::UNKNOWN
   //     or IcingApiCallType::Code::PERSIST_TO_DISK.
   //   - INTERNAL_ERROR on I/O errors.
-  //   - Any FileBackedProto errors.
   libtextclassifier3::Status UpdateApiHistory(IcingApiCallType::Code call_type,
                                               int64_t timestamp_ms)
       ICING_LOCKS_EXCLUDED(mutex_);
@@ -68,10 +66,17 @@ class DatabaseStablenessLog {
   //   - OK on success.
   //   - INTERNAL_ERROR on I/O errors.
   //   - INVALID_ARGUMENT_ERROR for invalid persist_type (e.g. UNKNOWN).
-  //   - Any FileBackedProto errors.
   libtextclassifier3::Status UpdatePersistToDiskHistory(
       PersistType::Code persist_type, int64_t timestamp_ms)
       ICING_LOCKS_EXCLUDED(mutex_);
+
+  // Resets the log to an empty state. This should be called after reporting
+  // stats during initialization.
+  //
+  // Returns:
+  //   - OK on success.
+  //   - INTERNAL_ERROR on I/O errors.
+  libtextclassifier3::Status Reset() ICING_LOCKS_EXCLUDED(mutex_);
 
   // Returns a copy of the cached proto.
   IcingDatabaseStablenessProto GetCachedProto() const
