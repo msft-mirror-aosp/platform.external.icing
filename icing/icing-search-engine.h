@@ -641,6 +641,47 @@ class IcingSearchEngine {
   //   FAILED_PRECONDITION IcingSearchEngine has not been initialized yet
   OptimizeResultProto Optimize() ICING_LOCKS_EXCLUDED(mutex_);
 
+  // Prepares the destination directory for optimization (Stage 1).
+  // Performs the heavy I/O work (copying and optimizing document store and
+  // indexes) in a temporary directory. Holds a shared lock, allowing read
+  // queries to run concurrently. Writes are blocked during this call.
+  //
+  // If the temporary directory has already been fully prepared from the
+  // current state (e.g. by a previous call without any writes since then), the
+  // existing result is reused and the heavy work is skipped.
+  //
+  // Calls to OptimizePrepareDestDirectory and OptimizeSwapToDestDirectory are
+  // serialized.
+  //
+  // NOTE: It is recommended to call PersistToDisk(PersistType::FULL) before
+  // calling this method. Otherwise, if Icing restarts after this method
+  // returns, unpersisted changes may be lost or recovered differently, which
+  // changes the checksums, and the subsequent OptimizeSwapToDestDirectory call
+  // with this result will be aborted.
+  //
+  // Returns:
+  //   OptimizePrepareResultProto with OK and intermediate result on success.
+  //   FAILED_PRECONDITION if IcingSearchEngine has not been initialized yet.
+  //   INTERNAL_ERROR on I/O errors.
+  OptimizePrepareResultProto OptimizePrepareDestDirectory()
+      ICING_LOCKS_EXCLUDED(optimize_mutex_, mutex_);
+
+  // Swaps to the optimized destination directory (Stage 2).
+  // Verifies if any writes occurred since Prepare using the intermediate
+  // result, and that the temporary directory was prepared together with it. If
+  // so, swaps the optimized directories and re-initializes the engine. Holds a
+  // unique lock, blocking all reads and writes.
+  //
+  // Returns:
+  //   OK on success
+  //   ABORTED_ERROR if writes occurred since Prepare, or the temporary
+  //     directory doesn't match prepare_result (caller should retry Prepare)
+  //   FAILED_PRECONDITION if IcingSearchEngine has not been initialized yet
+  //   INTERNAL_ERROR on I/O errors
+  OptimizeResultProto OptimizeSwapToDestDirectory(
+      const OptimizePrepareResultProto& prepare_result)
+      ICING_LOCKS_EXCLUDED(optimize_mutex_, mutex_);
+
   // Returns potential size and document savings if Optimize were called.
   //
   // Returns:
@@ -703,6 +744,12 @@ class IcingSearchEngine {
 
   // Used to provide reader and writer locks
   absl_ports::shared_mutex mutex_;
+
+  // Serializes 2-stage optimize calls (OptimizePrepareDestDirectory and
+  // OptimizeSwapToDestDirectory), since they share the same temporary
+  // directory. It is always acquired before mutex_. Other APIs don't need to
+  // acquire this lock.
+  absl_ports::shared_mutex optimize_mutex_ ICING_ACQUIRED_BEFORE(mutex_);
 
   // Stores and processes the schema
   std::unique_ptr<SchemaStore> schema_store_ ICING_GUARDED_BY(mutex_);
@@ -806,6 +853,18 @@ class IcingSearchEngine {
       DocumentStore* document_store,
       const std::unordered_set<DocumentId>& deleted_document_ids,
       int64_t current_time_ms, bool enable_delete_propagation_from);
+
+  // Rebuilds all 4 indices in the temporary directory during Stage 1 (Prepare)
+  // under shared_lock if index translation optimization fails or index rebuild
+  // is requested.
+  static libtextclassifier3::Status RebuildTemporaryIndices(
+      const Filesystem* filesystem, const IcingFilesystem* icing_filesystem,
+      const Clock* clock, const Normalizer* normalizer,
+      const SchemaStore* schema_store,
+      const LanguageSegmenter* language_segmenter,
+      const FeatureFlags& feature_flags,
+      const IcingSearchEngineOptions& options, const std::string& temp_base_dir,
+      DocumentStore* temp_doc_store, OptimizeStatsProto* optimize_stats);
 
   // Resets all members that are created during Initialize.
   //
@@ -915,6 +974,19 @@ class IcingSearchEngine {
       InitializeStatsProto* initialize_stats)
       ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
+  // Do any initialization/recovery necessary to create DocumentStore,
+  // indices (term index, integer index, qualified id join index, and embedding
+  // index), and ResultStateManager instances.
+  //
+  // Returns:
+  //   OK on success
+  //   DATA_LOSS_ERROR on partial data loss
+  //   INTERNAL on I/O error
+  libtextclassifier3::Status InitializeDocumentStoreAndIndices(
+      bool force_recovery_and_revalidate_documents,
+      InitializeStatsProto* initialize_stats)
+      ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
+
   // Do any initialization/recovery necessary to create a DocumentStore
   // instance.
   //
@@ -938,7 +1010,7 @@ class IcingSearchEngine {
   //   OK on success
   //   FAILED_PRECONDITION if initialize_stats is null
   libtextclassifier3::Status InitializeBlobStore(
-      int32_t orphan_blob_time_to_live_ms, int32_t compression_level,
+      int64_t orphan_blob_time_to_live_ms, int32_t compression_level,
       int32_t compression_mem_level) ICING_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   // Do any initialization/recovery necessary to create term index, integer

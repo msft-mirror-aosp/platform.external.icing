@@ -141,6 +141,7 @@ IcingSearchEngineOptions GetDefaultIcingOptions() {
   icing_options.set_enable_repeated_field_joins(true);
   icing_options.set_enable_delete_propagation_from(true);
   icing_options.set_enable_non_existent_qualified_id_join(true);
+  icing_options.set_enable_quantization_scoring_optimization(true);
   return icing_options;
 }
 
@@ -9427,8 +9428,8 @@ TEST_F(IcingSearchEngineEmbeddingSearchQuantizationTest,
   quantized_values_str.append(reinterpret_cast<const char*>(&scale_factor),
                               sizeof(float));
 
-  // Add 3 bytes: {1, 0, 0}.
-  uint8_t raw_data[] = {1, 0, 0};
+  // Add 3 bytes: {1, 2, 3}.
+  uint8_t raw_data[] = {1, 2, 3};
   quantized_values_str.append(reinterpret_cast<const char*>(raw_data), 3);
   query_vector->set_quantized_values(quantized_values_str);
 
@@ -9445,6 +9446,11 @@ TEST_F(IcingSearchEngineEmbeddingSearchQuantizationTest,
                                            ResultSpecProto::default_instance());
   EXPECT_THAT(results.status(), ProtoIsOk());
   EXPECT_THAT(results.results(), SizeIs(1));
+  // Both sides are exact here, so the score is too. The document's values span
+  // [0, 255], so its quantizer has scale 255/255 = 1 and it dequantizes back
+  // to {0, 1, 255}. The query header (min 0, scale 1) likewise dequantizes its
+  // bytes to {1, 2, 3}. Hence 0*1 + 1*2 + 255*3 = 767.
+  EXPECT_THAT(results.results(0).score(), DoubleNear(767, 0.001));
 }
 
 // This test verifies that passing a quantized query vector (with a valid

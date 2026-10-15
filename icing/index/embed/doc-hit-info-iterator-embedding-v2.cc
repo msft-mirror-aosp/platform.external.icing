@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -75,14 +76,17 @@ DocHitInfoIteratorEmbeddingV2::Create(
     // Otherwise, return the error as is.
     return embedding_hit_accessor_or.status();
   }
-  ICING_ASSIGN_OR_RETURN(int dimension, embedding_util::GetDimension(*query));
-  std::vector<float> query_floats;
+  std::optional<EmbeddingQuery> embedding_query;
   if (!query->quantized_values().empty()) {
-    query_floats.resize(dimension);
-    embedding_util::Dequantize(query->quantized_values().data(), dimension,
-                               query_floats.data());
+    ICING_ASSIGN_OR_RETURN(
+        embedding_query, EmbeddingQuery::CreateFromQuantized(
+                             query->quantized_values(),
+                             embedding_index->feature_flags()
+                                 ->enable_quantization_scoring_optimization()));
   } else if (!query->values().empty()) {
-    query_floats.assign(query->values().begin(), query->values().end());
+    ICING_ASSIGN_OR_RETURN(
+        embedding_query, EmbeddingQuery::CreateFromFloats(std::vector<float>(
+                             query->values().begin(), query->values().end())));
   } else {
     return absl_ports::InvalidArgumentError("Query vector is empty");
   }
@@ -92,7 +96,7 @@ DocHitInfoIteratorEmbeddingV2::Create(
 
   return std::unique_ptr<DocHitInfoIteratorEmbeddingV2>(
       new DocHitInfoIteratorEmbeddingV2(
-          std::move(query_floats), metric_type, std::move(embedding_scorer),
+          std::move(*embedding_query), metric_type, std::move(embedding_scorer),
           score_low, score_high, info_map, global_scores, global_section_infos,
           embedding_index, std::move(embedding_hit_accessor), document_store,
           schema_store, current_time_ms));
@@ -215,7 +219,7 @@ DocHitInfoIteratorEmbeddingV2::RetrieveNextHitsBatch() {
     ICING_ASSIGN_OR_RETURN(
         float semantic_score,
         embedding_hit_accessor_->ScoreEmbeddingHit(
-            *embedding_scorer_, query_floats_, hit_info,
+            *embedding_scorer_, query_, hit_info,
             section_metadata->quantization_type, schema_name_hash, is_ann));
     cached_hit_scores_[access_order[i]] = {embedding_hit.basic_hit(),
                                            semantic_score, is_ann};

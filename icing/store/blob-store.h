@@ -32,6 +32,7 @@
 #include "icing/proto/document.pb.h"
 #include "icing/proto/storage.pb.h"
 #include "icing/util/clock.h"
+#include "icing/util/crc32.h"
 
 namespace icing {
 namespace lib {
@@ -55,6 +56,9 @@ class BlobStore {
   // The string is used as the key in the key mapper.
   static std::string BuildBlobHandleStr(
       const PropertyProto::BlobHandleProto& blob_handle);
+
+  // Returns the file path of the blob info proto log file under base_dir.
+  static std::string MakeBlobInfoProtoLogFileName(const std::string& base_dir);
 
   // Factory function to create a BlobStore instance. The base directory is
   // used to persist blobs. If a blob store was previously created with
@@ -216,6 +220,18 @@ class BlobStore {
   //   INTERNAL_ERROR on I/O error
   libtextclassifier3::StatusOr<std::vector<NamespaceBlobStorageInfoProto>>
   GetStorageInfo() const;
+
+  // Calculates and returns the checksum of the blob info metadata (the blob
+  // info proto log). The checksum changes whenever the blob metadata is
+  // mutated (e.g. OpenWrite, CommitBlob, RemoveBlob, PutBlobInfos). Physical
+  // blob file contents are not included.
+  //
+  // This does NOT update the checksum stored in the file header.
+  //
+  // Returns:
+  //   Crc of the blob info metadata on success
+  //   INTERNAL_ERROR on I/O error
+  libtextclassifier3::StatusOr<Crc32> GetChecksum() const;
 
  private:
   explicit BlobStore(

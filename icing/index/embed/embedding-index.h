@@ -216,13 +216,17 @@ class EmbeddingIndex : public PersistentStorage {
 
     // Calculates the score for the given embedding hit with the given query.
     //
+    // When both `query` and the document are quantized (`query.is_quantized()`
+    // is true), scores them directly as integers; otherwise uses
+    // `query.floats()`.
+    //
     // Returns:
     //   - The score on success.
     //   - OUT_OF_RANGE_ERROR if the referred vector is out of range based on
     //     the location and dimension.
     //   - Any error from schema store when getting the quantization type.
     libtextclassifier3::StatusOr<float> ScoreEmbeddingHit(
-        const EmbeddingScorer& scorer, const std::vector<float>& query_floats,
+        const EmbeddingScorer& scorer, const EmbeddingQuery& query,
         const HitInfo& hit_info,
         EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
         uint32_t schema_name_hash, bool is_ann)
@@ -369,6 +373,8 @@ class EmbeddingIndex : public PersistentStorage {
 
     return info().last_added_document_id;
   }
+
+  const FeatureFlags* feature_flags() const { return feature_flags_; }
 
   void set_last_added_document_id(DocumentId document_id)
       ICING_LOCKS_EXCLUDED(mutex_) {
