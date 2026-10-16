@@ -282,6 +282,18 @@ public class IcingSearchEngineImpl implements Closeable {
   }
 
   @Nullable
+  public byte[] optimizePrepareDestDirectory() {
+    throwIfClosed();
+    return nativeOptimizePrepareDestDirectory(this);
+  }
+
+  @Nullable
+  public byte[] optimizeSwapToDestDirectory(@NonNull byte[] optimizePrepareResultBytes) {
+    throwIfClosed();
+    return nativeOptimizeSwapToDestDirectory(this, optimizePrepareResultBytes);
+  }
+
+  @Nullable
   public byte[] getOptimizeInfo() {
     throwIfClosed();
     return nativeGetOptimizeInfo(this);
@@ -427,6 +439,11 @@ public class IcingSearchEngineImpl implements Closeable {
   private static native byte[] nativePersistToDisk(IcingSearchEngineImpl instance, int persistType);
 
   private static native byte[] nativeOptimize(IcingSearchEngineImpl instance);
+
+  private static native byte[] nativeOptimizePrepareDestDirectory(IcingSearchEngineImpl instance);
+
+  private static native byte[] nativeOptimizeSwapToDestDirectory(
+      IcingSearchEngineImpl instance, byte[] optimizePrepareResultBytes);
 
   private static native byte[] nativeGetOptimizeInfo(IcingSearchEngineImpl instance);
 

@@ -154,7 +154,7 @@ class DocHitInfoIteratorEmbeddingV2
   };
 
   explicit DocHitInfoIteratorEmbeddingV2(
-      std::vector<float> query_floats,
+      EmbeddingQuery query,
       SearchSpecProto::EmbeddingQueryMetricType::Code metric_type,
       std::unique_ptr<EmbeddingScorer> embedding_scorer, double score_low,
       double score_high,
@@ -167,7 +167,7 @@ class DocHitInfoIteratorEmbeddingV2
           embedding_hit_accessor,
       const DocumentStore* document_store, const SchemaStore* schema_store,
       int64_t current_time_ms)
-      : query_floats_(std::move(query_floats)),
+      : query_(std::move(query)),
         metric_type_(metric_type),
         embedding_scorer_(std::move(embedding_scorer)),
         score_low_(score_low),
@@ -226,7 +226,7 @@ class DocHitInfoIteratorEmbeddingV2
   bool delegate_node_is_right_most_;
 
   // Query information
-  std::vector<float> query_floats_;
+  EmbeddingQuery query_;
 
   // Scoring arguments
   SearchSpecProto::EmbeddingQueryMetricType::Code metric_type_;

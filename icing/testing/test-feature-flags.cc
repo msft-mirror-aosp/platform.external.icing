@@ -35,6 +35,7 @@ FeatureFlags GetTestFeatureFlags() {
       .set_remove_schema_store_move_assignment(true)
       .set_enable_fine_grained_index_rebuild(true)
       .set_enable_read_during_ann_maintenance(true)
+      .set_enable_quantization_scoring_optimization(true)
       .Build();
 }
 

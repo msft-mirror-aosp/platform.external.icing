@@ -69,6 +69,9 @@ namespace lib {
 namespace {
 
 using ::icing::lib::portable_equals_proto::EqualsProto;
+using ::testing::_;
+using ::testing::AnyNumber;
+using ::testing::AnyOf;
 using ::testing::ElementsAre;
 using ::testing::Eq;
 using ::testing::Ge;
@@ -77,8 +80,10 @@ using ::testing::HasSubstr;
 using ::testing::IsEmpty;
 using ::testing::Lt;
 using ::testing::Ne;
+using ::testing::NotNull;
 using ::testing::Return;
 using ::testing::SizeIs;
+using ::testing::StrEq;
 
 // - Before we only created a marker file for set schema.
 // - Now, we switch to a general marker file for different operations that are
@@ -102,6 +107,16 @@ class TestIcingSearchEngine : public IcingSearchEngine {
 
 std::string GetTestBaseDir() { return GetTestTempDir() + "/icing"; }
 
+// The temporary directory used by 2-stage optimization.
+std::string GetTestOptimizeTempDir() {
+  return GetTestBaseDir() + "_optimize_tmp";
+}
+
+// The file written at the end of a completed 2-stage optimize Stage 1.
+std::string GetTestOptimizePrepareResultFilePath() {
+  return GetTestOptimizeTempDir() + "/optimize_prepare_result";
+}
+
 // This test is meant to cover all tests relating to
 // IcingSearchEngine::Optimize.
 class IcingSearchEngineOptimizeTest : public testing::Test {
@@ -119,11 +134,13 @@ class IcingSearchEngineOptimizeTest : public testing::Test {
       ICING_ASSERT_OK(
           icu_data_file_helper::SetUpIcuDataFile(icu_data_file_path));
     }
+    filesystem_.DeleteDirectoryRecursively(GetTestOptimizeTempDir().c_str());
     filesystem_.CreateDirectoryRecursively(GetTestBaseDir().c_str());
   }
 
   void TearDown() override {
     filesystem_.DeleteDirectoryRecursively(GetTestBaseDir().c_str());
+    filesystem_.DeleteDirectoryRecursively(GetTestOptimizeTempDir().c_str());
   }
 
   const Filesystem* filesystem() const { return &filesystem_; }
@@ -3292,6 +3309,806 @@ TEST_F(
   SearchResultProto results3 = icing.GetNextPage(results2.next_page_token());
   EXPECT_THAT(results3.status(), ProtoIsOk());
   EXPECT_THAT(results3.results(), IsEmpty());
+}
+
+TEST_F(IcingSearchEngineOptimizeTest, TwoStageOptimizeSuccess) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  // Set schema
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  // Insert 3 documents
+  DocumentProto doc1 = DocumentBuilder()
+                           .SetKey("namespace", "uri1")
+                           .SetSchema("Message")
+                           .AddStringProperty("body", "foo")
+                           .Build();
+  DocumentProto doc2 = DocumentBuilder()
+                           .SetKey("namespace", "uri2")
+                           .SetSchema("Message")
+                           .AddStringProperty("body", "bar")
+                           .Build();
+  DocumentProto doc3 = DocumentBuilder()
+                           .SetKey("namespace", "uri3")
+                           .SetSchema("Message")
+                           .AddStringProperty("body", "baz")
+                           .Build();
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(doc2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(doc3).status(), ProtoIsOk());
+
+  // Delete doc2
+  ASSERT_THAT(icing.Delete("namespace", "uri2").status(), ProtoIsOk());
+
+  // Get storage info before optimize to see document count
+  StorageInfoResultProto storage_info_before = icing.GetStorageInfo();
+  ASSERT_THAT(storage_info_before.status(), ProtoIsOk());
+  // doc2 is deleted but still in storage (not optimized yet)
+  EXPECT_THAT(storage_info_before.storage_info()
+                  .document_storage_info()
+                  .num_alive_documents(),
+              Eq(2));
+  EXPECT_THAT(storage_info_before.storage_info()
+                  .document_storage_info()
+                  .num_deleted_documents(),
+              Eq(1));
+
+  // Run Stage 1
+  ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  OptimizePrepareResultProto stage1_result =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(stage1_result.status(), ProtoIsOk());
+
+  // Run Stage 2
+  OptimizeResultProto stage2_result =
+      icing.OptimizeSwapToDestDirectory(stage1_result);
+  ASSERT_THAT(stage2_result.status(), ProtoIsOk());
+
+  // Verify storage info after optimize
+  StorageInfoResultProto storage_info_after = icing.GetStorageInfo();
+  ASSERT_THAT(storage_info_after.status(), ProtoIsOk());
+  // doc2 should be purged, so num_documents should be 2
+  EXPECT_THAT(storage_info_after.storage_info()
+                  .document_storage_info()
+                  .num_alive_documents(),
+              Eq(2));
+  EXPECT_THAT(storage_info_after.storage_info()
+                  .document_storage_info()
+                  .num_deleted_documents(),
+              Eq(0));
+
+  // Verify we can still search for doc1 and doc3, but not doc2
+  SearchSpecProto search_spec;
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  search_spec.set_query("foo OR bar OR baz");
+  SearchResultProto search_result =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  ASSERT_THAT(search_result.results(), SizeIs(2));
+  EXPECT_THAT(search_result.results(0).document().uri(), Eq("uri3"));
+  EXPECT_THAT(search_result.results(1).document().uri(), Eq("uri1"));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest, TwoStageOptimizeAbortOnWrite) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto doc1 = DocumentBuilder()
+                           .SetKey("namespace", "uri1")
+                           .SetSchema("Message")
+                           .AddStringProperty("body", "foo")
+                           .Build();
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+
+  // Run Stage 1
+  ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  OptimizePrepareResultProto stage1_result =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(stage1_result.status(), ProtoIsOk());
+
+  // Concurrent Write!
+  DocumentProto doc2 = DocumentBuilder()
+                           .SetKey("namespace", "uri2")
+                           .SetSchema("Message")
+                           .AddStringProperty("body", "bar")
+                           .Build();
+  ASSERT_THAT(icing.Put(doc2).status(), ProtoIsOk());
+
+  // Run Stage 2 -> Should Abort
+  OptimizeResultProto stage2_result =
+      icing.OptimizeSwapToDestDirectory(stage1_result);
+  EXPECT_THAT(stage2_result.status().code(), Eq(StatusProto::ABORTED));
+
+  // Verify doc1 and doc2 are still retrievable (no data loss)
+  auto get_result1 =
+      icing.Get("namespace", "uri1", GetResultSpecProto::default_instance());
+  ASSERT_THAT(get_result1.status(), ProtoIsOk());
+  EXPECT_THAT(get_result1.document().uri(), Eq("uri1"));
+
+  auto get_result2 =
+      icing.Get("namespace", "uri2", GetResultSpecProto::default_instance());
+  ASSERT_THAT(get_result2.status(), ProtoIsOk());
+  EXPECT_THAT(get_result2.document().uri(), Eq("uri2"));
+
+  // Now call public Optimize() which should fallback to legacy and succeed
+  OptimizeResultProto optimize_result = icing.Optimize();
+  ASSERT_THAT(optimize_result.status(), ProtoIsOk());
+
+  // Verify they are still there
+  get_result1 =
+      icing.Get("namespace", "uri1", GetResultSpecProto::default_instance());
+  ASSERT_THAT(get_result1.status(), ProtoIsOk());
+  get_result2 =
+      icing.Get("namespace", "uri2", GetResultSpecProto::default_instance());
+  ASSERT_THAT(get_result2.status(), ProtoIsOk());
+}
+
+TEST_F(IcingSearchEngineOptimizeTest, TwoStageOptimizeAbortOnSetSchema) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto doc1 = DocumentBuilder()
+                           .SetKey("namespace", "uri1")
+                           .SetSchema("Message")
+                           .AddStringProperty("body", "foo")
+                           .Build();
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+
+  // Run Stage 1
+  ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  OptimizePrepareResultProto stage1_result =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(stage1_result.status(), ProtoIsOk());
+
+  // Concurrent SetSchema!
+  SchemaProto new_schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .AddType(SchemaTypeConfigBuilder().SetType("Person").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("name")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_OPTIONAL)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(new_schema).status(), ProtoIsOk());
+
+  // Run Stage 2 -> Should Abort due to Schema checksum mismatch
+  OptimizeResultProto stage2_result =
+      icing.OptimizeSwapToDestDirectory(stage1_result);
+  EXPECT_THAT(stage2_result.status().code(), Eq(StatusProto::ABORTED));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest, TwoStageOptimizeAbortOnDelete) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto doc1 = DocumentBuilder()
+                           .SetKey("namespace", "uri1")
+                           .SetSchema("Message")
+                           .AddStringProperty("body", "foo")
+                           .Build();
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+
+  // Run Stage 1
+  ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  OptimizePrepareResultProto stage1_result =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(stage1_result.status(), ProtoIsOk());
+
+  // Concurrent Delete!
+  ASSERT_THAT(icing.Delete("namespace", "uri1").status(), ProtoIsOk());
+
+  // Run Stage 2 -> Should Abort due to DocumentStore checksum mismatch
+  OptimizeResultProto stage2_result =
+      icing.OptimizeSwapToDestDirectory(stage1_result);
+  EXPECT_THAT(stage2_result.status().code(), Eq(StatusProto::ABORTED));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest, TwoStageOptimizeUninitialized) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+
+  // Call Stage 1 uninitialized
+  OptimizePrepareResultProto prepare_result =
+      icing.OptimizePrepareDestDirectory();
+  EXPECT_THAT(prepare_result.status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+
+  // Call Stage 2 uninitialized
+  OptimizeResultProto swap_result =
+      icing.OptimizeSwapToDestDirectory(prepare_result);
+  EXPECT_THAT(swap_result.status().code(),
+              Eq(StatusProto::FAILED_PRECONDITION));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest, TwoStageOptimizeMultipleTimes) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  // Cycle 1: Add doc1, delete doc1, optimize
+  DocumentProto doc1 = DocumentBuilder()
+                           .SetKey("namespace", "uri1")
+                           .SetSchema("Message")
+                           .AddStringProperty("body", "foo")
+                           .Build();
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Delete("namespace", "uri1").status(), ProtoIsOk());
+
+  ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  OptimizePrepareResultProto stage1_result1 =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(stage1_result1.status(), ProtoIsOk());
+  OptimizeResultProto stage2_result1 =
+      icing.OptimizeSwapToDestDirectory(stage1_result1);
+  ASSERT_THAT(stage2_result1.status(), ProtoIsOk());
+
+  // Cycle 2: Add doc2, delete doc2, optimize again
+  DocumentProto doc2 = DocumentBuilder()
+                           .SetKey("namespace", "uri2")
+                           .SetSchema("Message")
+                           .AddStringProperty("body", "bar")
+                           .Build();
+  ASSERT_THAT(icing.Put(doc2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Delete("namespace", "uri2").status(), ProtoIsOk());
+
+  ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  OptimizePrepareResultProto stage1_result2 =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(stage1_result2.status(), ProtoIsOk());
+  OptimizeResultProto stage2_result2 =
+      icing.OptimizeSwapToDestDirectory(stage1_result2);
+  ASSERT_THAT(stage2_result2.status(), ProtoIsOk());
+
+  // Verify storage info is completely clean
+  StorageInfoResultProto storage_info = icing.GetStorageInfo();
+  ASSERT_THAT(storage_info.status(), ProtoIsOk());
+  EXPECT_THAT(
+      storage_info.storage_info().document_storage_info().num_alive_documents(),
+      Eq(0));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest, TwoStageOptimizeWithIndexRebuild) {
+  IcingSearchEngineOptions options = GetDefaultIcingOptions();
+  // Setting threshold to 0.0 forces full index rebuild during optimization.
+  options.set_optimize_rebuild_index_threshold(0.0f);
+
+  TestIcingSearchEngine icing(options, std::make_unique<Filesystem>(),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+
+  SchemaProto schema =
+      SchemaBuilder()
+          .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+              PropertyConfigBuilder()
+                  .SetName("body")
+                  .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+                  .SetCardinality(CARDINALITY_REQUIRED)))
+          .Build();
+  ASSERT_THAT(icing.SetSchema(schema).status(), ProtoIsOk());
+
+  DocumentProto doc1 = DocumentBuilder()
+                           .SetKey("namespace", "uri1")
+                           .SetSchema("Message")
+                           .AddStringProperty("body", "foo")
+                           .Build();
+  DocumentProto doc2 = DocumentBuilder()
+                           .SetKey("namespace", "uri2")
+                           .SetSchema("Message")
+                           .AddStringProperty("body", "bar")
+                           .Build();
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(doc2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Delete("namespace", "uri1").status(), ProtoIsOk());
+
+  ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+
+  // Run Stage 1: should rebuild index in temp directory
+  OptimizePrepareResultProto stage1_result =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(stage1_result.status(), ProtoIsOk());
+  EXPECT_THAT(stage1_result.optimize_stats().index_restoration_mode(),
+              Eq(OptimizeStatsProto::FULL_INDEX_REBUILD));
+
+  // Run Stage 2: should swap cleanly
+  OptimizeResultProto stage2_result =
+      icing.OptimizeSwapToDestDirectory(stage1_result);
+  ASSERT_THAT(stage2_result.status(), ProtoIsOk());
+
+  // Verify doc2 is searchable after full index rebuild & swap
+  SearchSpecProto search_spec;
+  search_spec.set_query("bar");
+  search_spec.set_term_match_type(TermMatchType::EXACT_ONLY);
+
+  SearchResultProto search_result =
+      icing.Search(search_spec, GetDefaultScoringSpec(),
+                   ResultSpecProto::default_instance());
+  ASSERT_THAT(search_result.status(), ProtoIsOk());
+  EXPECT_THAT(search_result.results(), SizeIs(1));
+  EXPECT_THAT(search_result.results(0).document().uri(), Eq("uri2"));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest, TwoStageOptimizeShouldCreateMarkerFile) {
+  std::string marker_file_path =
+      absl_ports::StrCat(GetTestBaseDir(), "/", kGeneralMarkerFilename);
+
+  // Mock the filesystem to skip the marker file deletion upon destruction of
+  // the marker file object, simulating a crash during Stage 2.
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  ON_CALL(*mock_filesystem, DeleteFile(Eq(marker_file_path)))
+      .WillByDefault(Return(true));
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  // Marker file should not exist before Optimize.
+  ASSERT_FALSE(filesystem()->FileExists(marker_file_path.c_str()));
+
+  OptimizePrepareResultProto stage1_result =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(stage1_result.status(), ProtoIsOk());
+  // Stage 1 shouldn't create marker file in base_dir.
+  ASSERT_FALSE(filesystem()->FileExists(marker_file_path.c_str()));
+
+  ASSERT_THAT(icing.OptimizeSwapToDestDirectory(stage1_result).status(),
+              ProtoIsOk());
+
+  // Stage 2 should have created the marker file.
+  EXPECT_TRUE(filesystem()->FileExists(marker_file_path.c_str()));
+  std::unique_ptr<IcingSearchEngineMarkerProto> marker_proto =
+      MarkerFile::Postmortem(*filesystem(), marker_file_path);
+  EXPECT_THAT(marker_proto->operation_type(),
+              Eq(IcingSearchEngineMarkerProto::OperationType::OPTIMIZE));
+}
+
+SchemaProto CreateTwoStageOptimizeTestSchema() {
+  return SchemaBuilder()
+      .AddType(SchemaTypeConfigBuilder().SetType("Message").AddProperty(
+          PropertyConfigBuilder()
+              .SetName("body")
+              .SetDataTypeString(TERM_MATCH_PREFIX, TOKENIZER_PLAIN)
+              .SetCardinality(CARDINALITY_REQUIRED)))
+      .Build();
+}
+
+DocumentProto CreateTwoStageOptimizeTestDocument(const std::string& uri) {
+  return DocumentBuilder()
+      .SetKey("namespace", uri)
+      .SetSchema("Message")
+      .AddStringProperty("body", "message body")
+      .SetCreationTimestampMs(kDefaultCreationTimestampMs)
+      .Build();
+}
+
+TEST_F(IcingSearchEngineOptimizeTest,
+       TwoStageOptimizeStaleSwapShouldNotAffectLatestPrepare) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateTwoStageOptimizeTestSchema()).status(),
+              ProtoIsOk());
+  DocumentProto doc1 = CreateTwoStageOptimizeTestDocument("uri1");
+  DocumentProto doc2 = CreateTwoStageOptimizeTestDocument("uri2");
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+
+  // Caller 1 prepares.
+  ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  OptimizePrepareResultProto prepare_result1 =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(prepare_result1.status(), ProtoIsOk());
+
+  // A write happens, then caller 2 prepares again from the new state.
+  ASSERT_THAT(icing.Put(doc2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  OptimizePrepareResultProto prepare_result2 =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(prepare_result2.status(), ProtoIsOk());
+
+  // Caller 1 swaps with the stale prepare result. It should abort without
+  // deleting the temp dir prepared by caller 2.
+  EXPECT_THAT(
+      icing.OptimizeSwapToDestDirectory(prepare_result1).status().code(),
+      Eq(StatusProto::ABORTED));
+  EXPECT_TRUE(
+      filesystem()->FileExists(GetTestOptimizePrepareResultFilePath().c_str()));
+
+  // Caller 2 swaps with the latest prepare result. It should succeed.
+  EXPECT_THAT(icing.OptimizeSwapToDestDirectory(prepare_result2).status(),
+              ProtoIsOk());
+
+  // Both documents should still be retrievable.
+  EXPECT_THAT(
+      icing.Get("namespace", "uri1", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(doc1));
+  EXPECT_THAT(
+      icing.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(doc2));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest,
+       TwoStageOptimizePrepareShouldReusePreparedDirectory) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateTwoStageOptimizeTestSchema()).status(),
+              ProtoIsOk());
+  DocumentProto doc1 = CreateTwoStageOptimizeTestDocument("uri1");
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+
+  ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  OptimizePrepareResultProto prepare_result1 =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(prepare_result1.status(), ProtoIsOk());
+
+  // Put a sentinel file into the temp dir. If the next Stage 1 recreates the
+  // temp dir, the sentinel file will be gone.
+  const std::string sentinel_file =
+      GetTestOptimizeTempDir() + "/reuse_sentinel";
+  ASSERT_TRUE(filesystem()->Write(sentinel_file.c_str(), "x", 1));
+
+  // Prepare again without any writes. It should reuse the prepared directory.
+  OptimizePrepareResultProto prepare_result2 =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(prepare_result2.status(), ProtoIsOk());
+  EXPECT_TRUE(filesystem()->FileExists(sentinel_file.c_str()));
+  EXPECT_THAT(prepare_result2.recorded_document_store_checksum(),
+              Eq(prepare_result1.recorded_document_store_checksum()));
+  EXPECT_THAT(prepare_result2.recorded_schema_store_checksum(),
+              Eq(prepare_result1.recorded_schema_store_checksum()));
+
+  // After a write, prepare should not reuse the stale directory.
+  DocumentProto doc2 = CreateTwoStageOptimizeTestDocument("uri2");
+  ASSERT_THAT(icing.Put(doc2).status(), ProtoIsOk());
+  ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  OptimizePrepareResultProto prepare_result3 =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(prepare_result3.status(), ProtoIsOk());
+  EXPECT_FALSE(filesystem()->FileExists(sentinel_file.c_str()));
+  EXPECT_THAT(prepare_result3.recorded_document_store_checksum(),
+              Ne(prepare_result1.recorded_document_store_checksum()));
+
+  // Swapping with the latest prepare result should succeed.
+  EXPECT_THAT(icing.OptimizeSwapToDestDirectory(prepare_result3).status(),
+              ProtoIsOk());
+  EXPECT_THAT(
+      icing.Get("namespace", "uri1", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(doc1));
+  EXPECT_THAT(
+      icing.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(doc2));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest,
+       TwoStageOptimizeSwapShouldAbortIfTempDirIsNotPrepared) {
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateTwoStageOptimizeTestSchema()).status(),
+              ProtoIsOk());
+  DocumentProto doc1 = CreateTwoStageOptimizeTestDocument("uri1");
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+
+  ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  OptimizePrepareResultProto prepare_result =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(prepare_result.status(), ProtoIsOk());
+
+  // Simulate the temp dir being wiped out after Stage 1.
+  ASSERT_TRUE(filesystem()->DeleteDirectoryRecursively(
+      GetTestOptimizeTempDir().c_str()));
+
+  // Stage 2 should abort without touching the current engine state.
+  EXPECT_THAT(icing.OptimizeSwapToDestDirectory(prepare_result).status().code(),
+              Eq(StatusProto::ABORTED));
+  EXPECT_THAT(
+      icing.Get("namespace", "uri1", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(doc1));
+  DocumentProto doc2 = CreateTwoStageOptimizeTestDocument("uri2");
+  EXPECT_THAT(icing.Put(doc2).status(), ProtoIsOk());
+
+  // A new round of 2-stage optimize should succeed.
+  ASSERT_THAT(icing.PersistToDisk(PersistType::FULL).status(), ProtoIsOk());
+  OptimizePrepareResultProto new_prepare_result =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(new_prepare_result.status(), ProtoIsOk());
+  EXPECT_THAT(icing.OptimizeSwapToDestDirectory(new_prepare_result).status(),
+              ProtoIsOk());
+  EXPECT_THAT(
+      icing.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(doc2));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest,
+       TwoStageOptimizeDocSwapFailureShouldRecoverWithDataLoss) {
+  const std::string marker_file_path =
+      absl_ports::StrCat(GetTestBaseDir(), "/", kGeneralMarkerFilename);
+
+  // Creates a mock filesystem in which swapping the document directory in
+  // Stage 2 fails and deletes both directories.
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  ON_CALL(*mock_filesystem,
+          SwapFiles(StrEq(GetTestOptimizeTempDir() + "/document_dir"),
+                    StrEq(GetTestBaseDir() + "/document_dir")))
+      .WillByDefault([this](const char* one, const char* two) {
+        filesystem()->DeleteDirectoryRecursively(one);
+        filesystem()->DeleteDirectoryRecursively(two);
+        return false;
+      });
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateTwoStageOptimizeTestSchema()).status(),
+              ProtoIsOk());
+  DocumentProto doc1 = CreateTwoStageOptimizeTestDocument("uri1");
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+
+  OptimizePrepareResultProto prepare_result =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(prepare_result.status(), ProtoIsOk());
+
+  OptimizeResultProto swap_result =
+      icing.OptimizeSwapToDestDirectory(prepare_result);
+  EXPECT_THAT(swap_result.status(),
+              ProtoStatusIs(StatusProto::WARNING_DATA_LOSS));
+  // Should rebuild the index for data loss.
+  EXPECT_THAT(swap_result.optimize_stats().index_restoration_mode(),
+              Eq(OptimizeStatsProto::FULL_INDEX_REBUILD));
+  // The engine has been recovered, so the marker file should be removed.
+  EXPECT_FALSE(filesystem()->FileExists(marker_file_path.c_str()));
+  // The temp dir should be cleaned up.
+  EXPECT_FALSE(filesystem()->DirectoryExists(GetTestOptimizeTempDir().c_str()));
+
+  // Document is not found because the document directory is lost.
+  EXPECT_THAT(
+      icing.Get("namespace", "uri1", GetResultSpecProto::default_instance())
+          .status(),
+      ProtoStatusIs(StatusProto::NOT_FOUND));
+
+  // The engine should still be usable.
+  DocumentProto doc2 = CreateTwoStageOptimizeTestDocument("uri2");
+  EXPECT_THAT(icing.Put(doc2).status(), ProtoIsOk());
+
+  SearchSpecProto search_spec;
+  search_spec.set_query("message");
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      doc2;
+  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
+                           ResultSpecProto::default_instance()),
+              EqualsSearchResultIgnoreStatsAndScores(
+                  expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest,
+       TwoStageOptimizeIndexSwapFailureShouldRebuildIndex) {
+  const std::string marker_file_path =
+      absl_ports::StrCat(GetTestBaseDir(), "/", kGeneralMarkerFilename);
+
+  // Creates a mock filesystem in which swapping the term index directory in
+  // Stage 2 fails in the middle and loses the current term index directory,
+  // leaving the term index in an unknown state.
+  auto mock_filesystem = std::make_unique<MockFilesystem>();
+  MockFilesystem* mock_filesystem_ptr = mock_filesystem.get();
+  ON_CALL(*mock_filesystem,
+          SwapFiles(StrEq(GetTestOptimizeTempDir() + "/index_dir"),
+                    StrEq(GetTestBaseDir() + "/index_dir")))
+      .WillByDefault([this](const char*  /*one*/, const char* two) {
+        filesystem()->DeleteDirectoryRecursively(two);
+        return false;
+      });
+
+  TestIcingSearchEngine icing(GetDefaultIcingOptions(),
+                              std::move(mock_filesystem),
+                              std::make_unique<IcingFilesystem>(),
+                              std::make_unique<FakeClock>(), GetTestJniCache());
+  ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+  ASSERT_THAT(icing.SetSchema(CreateTwoStageOptimizeTestSchema()).status(),
+              ProtoIsOk());
+  DocumentProto doc1 = CreateTwoStageOptimizeTestDocument("uri1");
+  DocumentProto doc2 = CreateTwoStageOptimizeTestDocument("uri2");
+  ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+  ASSERT_THAT(icing.Put(doc2).status(), ProtoIsOk());
+  // Delete doc1 so that optimize changes the document ids. The stale index
+  // would then point to wrong document ids if it were not rebuilt.
+  ASSERT_THAT(icing.Delete("namespace", "uri1").status(), ProtoIsOk());
+
+  OptimizePrepareResultProto prepare_result =
+      icing.OptimizePrepareDestDirectory();
+  ASSERT_THAT(prepare_result.status(), ProtoIsOk());
+
+  // Once the term index swap fails, the remaining index swaps should be
+  // skipped since all indices will be rebuilt anyway.
+  EXPECT_CALL(*mock_filesystem_ptr, SwapFiles(_, _)).Times(AnyNumber());
+  EXPECT_CALL(*mock_filesystem_ptr,
+              SwapFiles(StrEq(GetTestOptimizeTempDir() + "/integer_index_dir"),
+                        StrEq(GetTestBaseDir() + "/integer_index_dir")))
+      .Times(0);
+
+  OptimizeResultProto swap_result =
+      icing.OptimizeSwapToDestDirectory(prepare_result);
+  EXPECT_THAT(swap_result.status(), ProtoIsOk());
+  EXPECT_THAT(swap_result.optimize_stats().index_restoration_mode(),
+              Eq(OptimizeStatsProto::FULL_INDEX_REBUILD));
+  EXPECT_FALSE(filesystem()->FileExists(marker_file_path.c_str()));
+
+  // Documents should be intact.
+  EXPECT_THAT(
+      icing.Get("namespace", "uri1", GetResultSpecProto::default_instance())
+          .status(),
+      ProtoStatusIs(StatusProto::NOT_FOUND));
+  EXPECT_THAT(
+      icing.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(doc2));
+
+  // Search should return the correct result from the rebuilt index.
+  SearchSpecProto search_spec;
+  search_spec.set_query("message");
+  search_spec.set_term_match_type(TermMatchType::PREFIX);
+  SearchResultProto expected_search_result_proto;
+  expected_search_result_proto.mutable_status()->set_code(StatusProto::OK);
+  *expected_search_result_proto.mutable_results()->Add()->mutable_document() =
+      doc2;
+  EXPECT_THAT(icing.Search(search_spec, GetDefaultScoringSpec(),
+                           ResultSpecProto::default_instance()),
+              EqualsSearchResultIgnoreStatsAndScores(
+                  expected_search_result_proto));
+}
+
+TEST_F(IcingSearchEngineOptimizeTest,
+       TwoStageOptimizeRecoveryFailureShouldKeepMarkerFile) {
+  const std::string marker_file_path =
+      absl_ports::StrCat(GetTestBaseDir(), "/", kGeneralMarkerFilename);
+  const std::string current_doc_dir = GetTestBaseDir() + "/document_dir";
+
+  DocumentProto doc1 = CreateTwoStageOptimizeTestDocument("uri1");
+  {
+    auto mock_filesystem = std::make_unique<MockFilesystem>();
+    MockFilesystem* mock_filesystem_ptr = mock_filesystem.get();
+    TestIcingSearchEngine icing(
+        GetDefaultIcingOptions(), std::move(mock_filesystem),
+        std::make_unique<IcingFilesystem>(), std::make_unique<FakeClock>(),
+        GetTestJniCache());
+    ASSERT_THAT(icing.Initialize().status(), ProtoIsOk());
+    ASSERT_THAT(icing.SetSchema(CreateTwoStageOptimizeTestSchema()).status(),
+                ProtoIsOk());
+    ASSERT_THAT(icing.Put(doc1).status(), ProtoIsOk());
+
+    OptimizePrepareResultProto prepare_result =
+        icing.OptimizePrepareDestDirectory();
+    ASSERT_THAT(prepare_result.status(), ProtoIsOk());
+
+    // Swapping the document directory fails and deletes both directories, and
+    // recreating the current document directory also fails, so the recovery
+    // fails.
+    ON_CALL(*mock_filesystem_ptr,
+            SwapFiles(StrEq(GetTestOptimizeTempDir() + "/document_dir"),
+                      StrEq(current_doc_dir)))
+        .WillByDefault([this](const char* one, const char* two) {
+          filesystem()->DeleteDirectoryRecursively(one);
+          filesystem()->DeleteDirectoryRecursively(two);
+          return false;
+        });
+    ON_CALL(*mock_filesystem_ptr,
+            CreateDirectoryRecursively(StrEq(current_doc_dir)))
+        .WillByDefault(Return(false));
+
+    OptimizeResultProto swap_result =
+        icing.OptimizeSwapToDestDirectory(prepare_result);
+    EXPECT_THAT(swap_result.status(), ProtoStatusIs(StatusProto::INTERNAL));
+
+    // The marker file should be kept, so that the next Initialize() detects
+    // the unfinished optimize and rebuilds all derived files.
+    EXPECT_TRUE(filesystem()->FileExists(marker_file_path.c_str()));
+    std::unique_ptr<IcingSearchEngineMarkerProto> marker_proto =
+        MarkerFile::Postmortem(*filesystem(), marker_file_path);
+    ASSERT_THAT(marker_proto, NotNull());
+    EXPECT_THAT(marker_proto->operation_type(),
+                Eq(IcingSearchEngineMarkerProto::OperationType::OPTIMIZE));
+
+    // The engine is not usable until it is reinitialized.
+    EXPECT_THAT(icing.Put(doc1).status(),
+                ProtoStatusIs(StatusProto::FAILED_PRECONDITION));
+  }
+
+  // Reinitializing with a normal filesystem should recover the engine.
+  IcingSearchEngine icing(GetDefaultIcingOptions(), GetTestJniCache());
+  InitializeResultProto init_result = icing.Initialize();
+  EXPECT_THAT(init_result.status().code(),
+              AnyOf(Eq(StatusProto::OK), Eq(StatusProto::WARNING_DATA_LOSS)));
+  DocumentProto doc2 = CreateTwoStageOptimizeTestDocument("uri2");
+  EXPECT_THAT(icing.Put(doc2).status(), ProtoIsOk());
+  EXPECT_THAT(
+      icing.Get("namespace", "uri2", GetResultSpecProto::default_instance())
+          .document(),
+      EqualsProto(doc2));
 }
 
 }  // namespace

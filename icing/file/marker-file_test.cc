@@ -144,6 +144,27 @@ TEST_F(MarkerFileTest, WriteFailureShouldDeleteTheFile) {
   EXPECT_THAT(filesystem_.FileExists(file_path.c_str()), IsFalse());
 }
 
+TEST_F(MarkerFileTest, RetainShouldKeepTheFileAfterDestruction) {
+  std::string file_path = test_dir_ + "/marker_file";
+  {
+    ICING_ASSERT_OK_AND_ASSIGN(
+        std::unique_ptr<MarkerFile> marker_file,
+        MarkerFile::Create(
+            &filesystem_, file_path,
+            IcingSearchEngineMarkerProto::OperationType::OPTIMIZE));
+    ASSERT_THAT(filesystem_.FileExists(file_path.c_str()), IsTrue());
+    marker_file->Retain();
+  }
+
+  // The marker file should still exist and be readable by Postmortem.
+  EXPECT_THAT(filesystem_.FileExists(file_path.c_str()), IsTrue());
+  IcingSearchEngineMarkerProto expected_proto;
+  expected_proto.set_operation_type(
+      IcingSearchEngineMarkerProto::OperationType::OPTIMIZE);
+  EXPECT_THAT(MarkerFile::Postmortem(filesystem_, file_path),
+              Pointee(EqualsProto(expected_proto)));
+}
+
 TEST_F(MarkerFileTest, PostmortemExistingMarkerFile) {
   std::string file_path = test_dir_ + "/marker_file";
   ICING_ASSERT_OK_AND_ASSIGN(

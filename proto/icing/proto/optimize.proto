@@ -58,6 +58,42 @@ message OptimizeResultProto {
   optional int32 response_bytes = 6;
 }
 
+// Result of a call to IcingSearchEngine.OptimizePrepareDestDirectory
+// Next tag: 8
+message OptimizePrepareResultProto {
+  // Status code can be one of:
+  //   OK
+  //   FAILED_PRECONDITION
+  //   INTERNAL
+  //
+  // See status.proto for more details.
+  optional StatusProto status = 1;
+
+  optional OptimizeStatsProto optimize_stats = 2;
+
+  // The start time of the binder transaction latency. This is used to measure
+  // the latency of passing data from the VM via the binder.
+  optional int64 vm_binder_transaction_latency_start_time_ms = 3;
+
+  // The checksum of the DocumentStore recorded at the start of Stage 1.
+  // Stage 2 will verify this checksum against the active DocumentStore to
+  // ensure no concurrent writes occurred.
+  optional fixed32 recorded_document_store_checksum = 4;
+
+  // The checksum of the SchemaStore recorded at the start of Stage 1.
+  // Stage 2 will verify this checksum to ensure no schema changes occurred.
+  optional fixed32 recorded_schema_store_checksum = 5;
+
+  // Blob file names that are no longer referenced by any document and should
+  // be removed during Stage 2.
+  repeated string blob_file_names_to_remove = 6;
+
+  // The checksum of the BlobStore metadata recorded at the start of Stage 1.
+  // Stage 2 will verify this checksum to ensure no blob metadata changes
+  // (e.g. OpenWrite, CommitBlob, RemoveBlob) occurred.
+  optional fixed32 recorded_blob_store_checksum = 7;
+}
+
 // Result of a call to IcingSearchEngine.GetOptimizeInfo
 // Next tag: 10
 message GetOptimizeInfoResultProto {

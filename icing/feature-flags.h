@@ -36,7 +36,8 @@ class FeatureFlags {
                         bool schema_store_release_cached_proto_after_use,
                         bool remove_schema_store_move_assignment,
                         bool enable_fine_grained_index_rebuild,
-                        bool enable_read_during_ann_maintenance)
+                        bool enable_read_during_ann_maintenance,
+                        bool enable_quantization_scoring_optimization)
       : allow_circular_schema_definitions_(allow_circular_schema_definitions),
         enable_repeated_field_joins_(enable_repeated_field_joins),
         enable_embedding_backup_generation_(enable_embedding_backup_generation),
@@ -56,8 +57,9 @@ class FeatureFlags {
         remove_schema_store_move_assignment_(
             remove_schema_store_move_assignment),
         enable_fine_grained_index_rebuild_(enable_fine_grained_index_rebuild),
-        enable_read_during_ann_maintenance_(
-            enable_read_during_ann_maintenance) {}
+        enable_read_during_ann_maintenance_(enable_read_during_ann_maintenance),
+        enable_quantization_scoring_optimization_(
+            enable_quantization_scoring_optimization) {}
 
   bool allow_circular_schema_definitions() const {
     return allow_circular_schema_definitions_;
@@ -113,6 +115,10 @@ class FeatureFlags {
 
   bool enable_read_during_ann_maintenance() const {
     return enable_read_during_ann_maintenance_;
+  }
+
+  bool enable_quantization_scoring_optimization() const {
+    return enable_quantization_scoring_optimization_;
   }
 
  private:
@@ -189,6 +195,10 @@ class FeatureFlags {
   // Whether to unblock read requests during ANN index maintenance (k-means
   // calculation).
   bool enable_read_during_ann_maintenance_ = false;
+
+  // Whether to use the optimized scoring path when scoring against quantized
+  // document embeddings, instead of dequantizing per element during scoring.
+  bool enable_quantization_scoring_optimization_ = false;
 };
 
 class FeatureFlagsBuilder {
@@ -291,6 +301,13 @@ class FeatureFlagsBuilder {
       bool enable_read_during_ann_maintenance) {
     feature_flags_.enable_read_during_ann_maintenance_ =
         enable_read_during_ann_maintenance;
+    return *this;
+  }
+
+  FeatureFlagsBuilder& set_enable_quantization_scoring_optimization(
+      bool enable_quantization_scoring_optimization) {
+    feature_flags_.enable_quantization_scoring_optimization_ =
+        enable_quantization_scoring_optimization;
     return *this;
   }
 
