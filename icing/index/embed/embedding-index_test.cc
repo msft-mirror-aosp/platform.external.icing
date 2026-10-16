@@ -3138,5 +3138,82 @@ TEST_F(EmbeddingIndexTest, ResetsDocHitInfoWhenEncounteringError) {
   EXPECT_EQ(iterator->doc_hit_info().document_id(), kInvalidDocumentId);
 }
 
+// Verifies that enable_quantization_scoring_optimization is a working
+// kill-switch. With the flag on, an 8-bit query is scored directly against
+// 8-bit documents. With it off, the query is dequantized first and the
+// pre-existing float path runs. The two are exact algebra for one another, so
+// the resulting scores must agree.
+TEST_F(EmbeddingIndexTest, QuantizedQueryScoringFlagOffMatchesFlagOn) {
+  // Index one quantized embedding.
+  ICING_ASSERT_OK(embedding_index_->BufferEmbedding(
+      BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/0), test_vector1_,
+      QUANTIZATION_TYPE_QUANTIZE_8_BIT, kDefaultSchemaName));
+  ICING_ASSERT_OK(embedding_index_->CommitBufferToIndex());
+  embedding_index_->set_last_added_document_id(0);
+
+  // Supply the query already quantized, which is what makes the new path
+  // reachable at all.
+  ICING_ASSERT_OK_AND_ASSIGN(Quantizer quantizer,
+                             Quantizer::Create(0.1f, 0.3f));
+  std::string quantized_values_str;
+  quantized_values_str.resize(sizeof(Quantizer) + 3);
+  memcpy(quantized_values_str.data(), &quantizer, sizeof(Quantizer));
+  quantized_values_str[sizeof(Quantizer)] = quantizer.Quantize(0.1f);
+  quantized_values_str[sizeof(Quantizer) + 1] = quantizer.Quantize(0.2f);
+  quantized_values_str[sizeof(Quantizer) + 2] = quantizer.Quantize(0.3f);
+
+  PropertyProto::VectorProto query_vector;
+  query_vector.set_model_signature(kDefaultModelSignature);
+  query_vector.set_quantized_values(quantized_values_str);
+
+  std::vector<uint32_t> cluster_ids = {embedding_util::kLinearSearchClusterId};
+
+  // Flag on: the fixture's feature flags enable it.
+  EmbeddingQueryResults::EmbeddingQueryMatchInfoMap info_map_on;
+  std::vector<double> scores_on;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIteratorEmbeddingV2> iterator_on,
+      DocHitInfoIteratorEmbeddingV2::Create(
+          &query_vector, SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
+          /*score_low=*/-1000.0, /*score_high=*/1000.0, &info_map_on,
+          &scores_on, /*global_section_infos=*/nullptr, cluster_ids,
+          embedding_index_.get(), document_store_.get(), schema_store_.get(),
+          /*current_time_ms=*/0));
+  ICING_ASSERT_OK(iterator_on->Advance());
+
+  // Flag off: a separate index whose feature flags disable the new path.
+  // `flags_off` is declared before the index so that it outlives it.
+  FeatureFlags flags_off =
+      FeatureFlagsBuilder(GetTestFeatureFlags())
+          .set_enable_quantization_scoring_optimization(false)
+          .Build();
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<EmbeddingIndex> embedding_index_off,
+      EmbeddingIndex::Create(&filesystem_, test_dir_ + "/embedding_index_off",
+                             &clock_, &flags_off, /*num_shards=*/32));
+  ICING_ASSERT_OK(embedding_index_off->BufferEmbedding(
+      BasicHit(kSectionIdQuantizedEmbedding, /*document_id=*/0), test_vector1_,
+      QUANTIZATION_TYPE_QUANTIZE_8_BIT, kDefaultSchemaName));
+  ICING_ASSERT_OK(embedding_index_off->CommitBufferToIndex());
+  embedding_index_off->set_last_added_document_id(0);
+
+  EmbeddingQueryResults::EmbeddingQueryMatchInfoMap info_map_off;
+  std::vector<double> scores_off;
+  ICING_ASSERT_OK_AND_ASSIGN(
+      std::unique_ptr<DocHitInfoIteratorEmbeddingV2> iterator_off,
+      DocHitInfoIteratorEmbeddingV2::Create(
+          &query_vector, SearchSpecProto::EmbeddingQueryMetricType::DOT_PRODUCT,
+          /*score_low=*/-1000.0, /*score_high=*/1000.0, &info_map_off,
+          &scores_off, /*global_section_infos=*/nullptr, cluster_ids,
+          embedding_index_off.get(), document_store_.get(), schema_store_.get(),
+          /*current_time_ms=*/0));
+  ICING_ASSERT_OK(iterator_off->Advance());
+
+  // Both paths must find the document and agree on its score.
+  ASSERT_EQ(scores_on.size(), 1);
+  ASSERT_EQ(scores_off.size(), 1);
+  EXPECT_NEAR(scores_on[0], scores_off[0], 1e-5);
+}
+
 }  // namespace lib
 }  // namespace icing

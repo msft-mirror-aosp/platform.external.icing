@@ -108,6 +108,7 @@
 #include "icing/tokenization/language-segmenter.h"
 #include "icing/transform/normalizer-factory.h"
 #include "icing/transform/normalizer-options.h"
+#include "icing/transform/normalizer.h"
 #include "icing/util/clock.h"
 #include "icing/util/data-loss.h"
 #include "icing/util/icu-data-file-helper.h"
@@ -145,6 +146,8 @@ constexpr std::string_view kEmbeddingIndexSubfolderName = "embedding_index_dir";
 constexpr std::string_view kSchemaSubfolderName = "schema_dir";
 constexpr std::string_view kInitMarkerFilename = "init_marker";
 constexpr std::string_view kOptimizeStatusFilename = "optimize_status";
+constexpr std::string_view kOptimizePrepareResultFilename =
+    "optimize_prepare_result";
 
 // - Before we only created a marker file for set schema.
 // - Now, we switch to a general marker file for different operations that are
@@ -160,6 +163,23 @@ constexpr std::string_view kDatabaseStablenessLogFilename =
 // state that we will tolerate before deleting all data and starting from a
 // fresh state.
 constexpr int kMaxUnsuccessfulInitAttempts = 5;
+
+// Populates OptimizePrepareResultProto with the intermediate optimization
+// result state from Stage 1 (Prepare).
+void PopulateOptimizePrepareResultProto(
+    std::vector<std::string> blob_file_names_to_remove,
+    uint32_t doc_store_checksum, uint32_t schema_store_checksum,
+    uint32_t blob_store_checksum,
+    OptimizePrepareResultProto* prepare_result_proto) {
+  prepare_result_proto->set_recorded_document_store_checksum(
+      doc_store_checksum);
+  prepare_result_proto->set_recorded_schema_store_checksum(
+      schema_store_checksum);
+  prepare_result_proto->set_recorded_blob_store_checksum(blob_store_checksum);
+  for (std::string& file_name : blob_file_names_to_remove) {
+    prepare_result_proto->add_blob_file_names_to_remove(std::move(file_name));
+  }
+}
 
 libtextclassifier3::Status ValidateResultSpec(
     const SchemaStore* schema_store, const DocumentStore* document_store,
@@ -325,6 +345,61 @@ std::string MakeBlobDirectoryPath(const std::string& base_dir) {
 std::string MakeDocumentTemporaryDirectoryPath(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kDocumentSubfolderName,
                             "_optimize_tmp");
+}
+
+// Makes a temporary base folder path which will be used during 2-stage
+// optimization.
+std::string MakeTemporaryBaseDirectoryPath(std::string_view base_dir) {
+  return absl_ports::StrCat(base_dir, "_optimize_tmp");
+}
+
+// Makes the path of the file which stores the result of a completed Stage 1
+// (Prepare) under the temporary base folder. This file is written at the very
+// end of Stage 1, so its existence indicates that the temporary base folder
+// was fully prepared from the state recorded in it.
+std::string MakeOptimizePrepareResultFilePath(
+    const std::string& temp_base_dir) {
+  return absl_ports::StrCat(temp_base_dir, "/", kOptimizePrepareResultFilename);
+}
+
+// Persists the intermediate result fields (checksums and blob file names to
+// remove) of prepare_result into the temporary base folder.
+libtextclassifier3::Status WriteOptimizePrepareResult(
+    const Filesystem& filesystem, const std::string& temp_base_dir,
+    const OptimizePrepareResultProto& prepare_result) {
+  auto proto = std::make_unique<OptimizePrepareResultProto>();
+  proto->set_recorded_document_store_checksum(
+      prepare_result.recorded_document_store_checksum());
+  proto->set_recorded_schema_store_checksum(
+      prepare_result.recorded_schema_store_checksum());
+  proto->set_recorded_blob_store_checksum(
+      prepare_result.recorded_blob_store_checksum());
+  *proto->mutable_blob_file_names_to_remove() =
+      prepare_result.blob_file_names_to_remove();
+  FileBackedProto<OptimizePrepareResultProto> file_backed_proto(
+      filesystem, MakeOptimizePrepareResultFilePath(temp_base_dir));
+  return file_backed_proto.Write(std::move(proto));
+}
+
+// Reads the intermediate result persisted by WriteOptimizePrepareResult.
+//
+// Returns:
+//   - The persisted result on success.
+//   - NOT_FOUND if the temporary base folder was not fully prepared.
+//   - INTERNAL_ERROR on I/O error or corruption.
+libtextclassifier3::StatusOr<OptimizePrepareResultProto>
+ReadOptimizePrepareResult(const Filesystem& filesystem,
+                          const std::string& temp_base_dir) {
+  std::string file_path = MakeOptimizePrepareResultFilePath(temp_base_dir);
+  if (!filesystem.FileExists(file_path.c_str())) {
+    return absl_ports::NotFoundError(
+        "Temporary optimize directory has not been fully prepared.");
+  }
+  FileBackedProto<OptimizePrepareResultProto> file_backed_proto(filesystem,
+                                                                file_path);
+  ICING_ASSIGN_OR_RETURN(const OptimizePrepareResultProto* proto,
+                         file_backed_proto.Read());
+  return *proto;
 }
 
 // Index files are in a standalone subfolder because for easier file management.
@@ -593,7 +668,8 @@ IcingSearchEngine::IcingSearchEngine(
                      options_.schema_store_release_cached_proto_after_use(),
                      options_.remove_schema_store_move_assignment(),
                      options_.enable_fine_grained_index_rebuild(),
-                     options_.enable_read_during_ann_maintenance()),
+                     options_.enable_read_during_ann_maintenance(),
+                     options_.enable_quantization_scoring_optimization()),
       filesystem_(std::move(filesystem)),
       icing_filesystem_(std::move(icing_filesystem)),
       clock_(std::move(clock)),
@@ -1270,7 +1346,7 @@ libtextclassifier3::StatusOr<bool> IcingSearchEngine::InitializeDocumentStore(
 }
 
 libtextclassifier3::Status IcingSearchEngine::InitializeBlobStore(
-    int32_t orphan_blob_time_to_live_ms, int32_t blob_store_compression_level,
+    int64_t orphan_blob_time_to_live_ms, int32_t blob_store_compression_level,
     int32_t blob_store_compression_mem_level) {
   std::string blob_dir = MakeBlobDirectoryPath(options_.base_dir());
   // Make sure the sub-directory exists
@@ -3131,6 +3207,789 @@ OptimizeResultProto IcingSearchEngine::Optimize() {
   result_proto.set_vm_binder_transaction_latency_start_time_ms(
       clock_->GetSystemTimeMilliseconds());
   ICING_LOG(INFO) << "Finished optimizing icing storage";
+  return result_proto;
+}
+
+// Rebuilds all 4 indices in the temporary directory during Stage 1 (Prepare)
+// under shared_lock if index translation optimization fails or index rebuild is
+// requested.
+/*static*/ libtextclassifier3::Status
+IcingSearchEngine::RebuildTemporaryIndices(
+    const Filesystem* filesystem, const IcingFilesystem* icing_filesystem,
+    const Clock* clock, const Normalizer* normalizer,
+    const SchemaStore* schema_store,
+    const LanguageSegmenter* language_segmenter,
+    const FeatureFlags& feature_flags, const IcingSearchEngineOptions& options,
+    const std::string& temp_base_dir, DocumentStore* temp_doc_store,
+    OptimizeStatsProto* optimize_stats) {
+  std::string dst_index_dir = MakeIndexDirectoryPath(temp_base_dir);
+  std::string dst_integer_index_dir =
+      MakeIntegerIndexWorkingPath(temp_base_dir);
+  std::string dst_join_index_dir =
+      MakeQualifiedIdJoinIndexWorkingPath(temp_base_dir);
+  std::string dst_embedding_index_dir =
+      MakeEmbeddingIndexWorkingPath(temp_base_dir);
+
+  // 1. Delete and clean any existing temporary index directories.
+  filesystem->DeleteDirectoryRecursively(dst_index_dir.c_str());
+  filesystem->DeleteDirectoryRecursively(dst_integer_index_dir.c_str());
+  filesystem->DeleteDirectoryRecursively(dst_join_index_dir.c_str());
+  filesystem->DeleteDirectoryRecursively(dst_embedding_index_dir.c_str());
+
+  if (!filesystem->CreateDirectoryRecursively(dst_index_dir.c_str()) ||
+      !filesystem->CreateDirectoryRecursively(dst_integer_index_dir.c_str()) ||
+      !filesystem->CreateDirectoryRecursively(dst_join_index_dir.c_str()) ||
+      !filesystem->CreateDirectoryRecursively(
+          dst_embedding_index_dir.c_str())) {
+    return absl_ports::InternalError(
+        "Failed to create temporary index directories for rebuild.");
+  }
+
+  // 2. Instantiate all 4 indices in temp dir.
+  Index::Options temp_index_options(dst_index_dir, options.index_merge_size(),
+                                    options.lite_index_sort_size());
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<Index> temp_index,
+                         Index::Create(temp_index_options, filesystem,
+                                       icing_filesystem, &feature_flags));
+
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<IntegerIndex> temp_integer_index,
+      IntegerIndex::Create(*filesystem, dst_integer_index_dir,
+                           options.integer_index_bucket_split_threshold(),
+                           options.pre_mapping_fbv()));
+
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<QualifiedIdJoinIndex> temp_join_index,
+      CreateQualifiedIdJoinIndex(*filesystem, dst_join_index_dir, options,
+                                 feature_flags));
+
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<EmbeddingIndex> temp_embedding_index,
+      EmbeddingIndex::Create(filesystem, dst_embedding_index_dir, clock,
+                             &feature_flags,
+                             options.embedding_index_num_shards()));
+
+  // 3. Create handlers.
+  std::vector<std::unique_ptr<DataIndexingHandler>> handlers;
+  ICING_ASSIGN_OR_RETURN(std::unique_ptr<TermIndexingHandler> term_handler,
+                         TermIndexingHandler::Create(
+                             clock, normalizer, temp_index.get(),
+                             options.build_property_existence_metadata_hits()));
+  handlers.push_back(std::move(term_handler));
+
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<IntegerSectionIndexingHandler> integer_handler,
+      IntegerSectionIndexingHandler::Create(clock, temp_integer_index.get()));
+  handlers.push_back(std::move(integer_handler));
+
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<QualifiedIdJoinIndexingHandler> join_handler,
+      QualifiedIdJoinIndexingHandler::Create(
+          clock, temp_doc_store, temp_join_index.get(), &feature_flags));
+  handlers.push_back(std::move(join_handler));
+
+  ICING_ASSIGN_OR_RETURN(
+      std::unique_ptr<EmbeddingIndexingHandler> embedding_handler,
+      EmbeddingIndexingHandler::Create(clock, temp_embedding_index.get()));
+  handlers.push_back(std::move(embedding_handler));
+
+  // 4. Index all documents from temp_doc_store.
+  IndexProcessor index_processor(std::move(handlers), clock,
+                                 /*recovery_mode=*/true);
+
+  int64_t current_time_ms = clock->GetSystemTimeMilliseconds();
+  DocumentId last_stored_doc_id = temp_doc_store->last_added_document_id();
+  ICING_ASSIGN_OR_RETURN(
+      IcingSearchEngine::ReplayDocumentsResult replay_result,
+      IcingSearchEngine::ReplayDocumentsForIndexRestoration(
+          options, temp_doc_store, schema_store, language_segmenter,
+          temp_join_index.get(), &index_processor,
+          /*start_document_id=*/0, last_stored_doc_id, current_time_ms));
+  if (!replay_result.overall_status.ok() &&
+      !absl_ports::IsDataLoss(replay_result.overall_status)) {
+    return replay_result.overall_status;
+  }
+
+  // 5. Persist all rebuilt indices.
+  ICING_RETURN_IF_ERROR(temp_index->PersistToDisk());
+  ICING_RETURN_IF_ERROR(temp_integer_index->PersistToDisk());
+  ICING_RETURN_IF_ERROR(temp_join_index->PersistToDisk());
+  ICING_RETURN_IF_ERROR(temp_embedding_index->PersistToDisk());
+
+  optimize_stats->set_index_restoration_mode(
+      OptimizeStatsProto::FULL_INDEX_REBUILD);
+  return libtextclassifier3::Status::OK;
+}
+
+OptimizePrepareResultProto IcingSearchEngine::OptimizePrepareDestDirectory() {
+  ICING_LOG(INFO) << "Preparing optimization (Stage 1)";
+
+  OptimizePrepareResultProto prepare_result_proto;
+  StatusProto* result_status = prepare_result_proto.mutable_status();
+
+  // Serialize with other 2-stage optimize calls since they share the same
+  // temporary directory. Always acquire optimize_mutex_ before mutex_.
+  absl_ports::unique_lock optimize_lock(&optimize_mutex_);
+  absl_ports::shared_lock l(&mutex_);
+  if (!initialized_) {
+    result_status->set_code(StatusProto::FAILED_PRECONDITION);
+    result_status->set_message("IcingSearchEngine has not been initialized!");
+    prepare_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
+    return prepare_result_proto;
+  }
+
+  OptimizeStatsProto* optimize_stats =
+      prepare_result_proto.mutable_optimize_stats();
+  std::unique_ptr<Timer> stage1_timer = clock_->GetNewTimer();
+
+  // 1. Get current checksum of document store, schema store, and blob store.
+  auto doc_store_checksum_or = document_store_->GetChecksum();
+  if (!doc_store_checksum_or.ok()) {
+    TransformStatus(doc_store_checksum_or.status(), result_status);
+    prepare_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
+    return prepare_result_proto;
+  }
+  uint32_t doc_store_checksum = doc_store_checksum_or.ValueOrDie().Get();
+
+  auto schema_store_checksum_or = schema_store_->GetChecksum();
+  if (!schema_store_checksum_or.ok()) {
+    TransformStatus(schema_store_checksum_or.status(), result_status);
+    prepare_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
+    return prepare_result_proto;
+  }
+  uint32_t schema_store_checksum = schema_store_checksum_or.ValueOrDie().Get();
+
+  // The blob store checksum is 0 if there is no blob store.
+  uint32_t blob_store_checksum = 0;
+  if (blob_store_ != nullptr) {
+    auto blob_store_checksum_or = blob_store_->GetChecksum();
+    if (!blob_store_checksum_or.ok()) {
+      TransformStatus(blob_store_checksum_or.status(), result_status);
+      prepare_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return prepare_result_proto;
+    }
+    blob_store_checksum = blob_store_checksum_or.ValueOrDie().Get();
+  }
+
+  // 2. Reuse the existing temp dir if it has already been fully prepared from
+  // the current state (e.g. by a previous call without any writes since then).
+  std::string temp_base_dir =
+      MakeTemporaryBaseDirectoryPath(options_.base_dir());
+  auto existing_prepare_result_or =
+      ReadOptimizePrepareResult(*filesystem_, temp_base_dir);
+  if (existing_prepare_result_or.ok() &&
+      existing_prepare_result_or.ValueOrDie()
+              .recorded_document_store_checksum() == doc_store_checksum &&
+      existing_prepare_result_or.ValueOrDie()
+              .recorded_schema_store_checksum() == schema_store_checksum &&
+      existing_prepare_result_or.ValueOrDie()
+              .recorded_blob_store_checksum() == blob_store_checksum) {
+    ICING_LOG(INFO) << "Reusing the already prepared optimize directory.";
+    OptimizePrepareResultProto existing_prepare_result =
+        std::move(existing_prepare_result_or).ValueOrDie();
+    prepare_result_proto.set_recorded_document_store_checksum(
+        doc_store_checksum);
+    prepare_result_proto.set_recorded_schema_store_checksum(
+        schema_store_checksum);
+    prepare_result_proto.set_recorded_blob_store_checksum(blob_store_checksum);
+    *prepare_result_proto.mutable_blob_file_names_to_remove() =
+        std::move(*existing_prepare_result.mutable_blob_file_names_to_remove());
+    optimize_stats->set_latency_ms(
+        static_cast<int32_t>(stage1_timer->GetElapsedMilliseconds()));
+    result_status->set_code(StatusProto::OK);
+    prepare_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
+    return prepare_result_proto;
+  }
+
+  // 3. Create temp base dir.
+  if (!filesystem_->DeleteDirectoryRecursively(temp_base_dir.c_str()) ||
+      !filesystem_->CreateDirectoryRecursively(temp_base_dir.c_str())) {
+    result_status->set_code(StatusProto::INTERNAL);
+    result_status->set_message("Failed to create temporary directory.");
+    prepare_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
+    return prepare_result_proto;
+  }
+
+  // 4. Optimize Document Store into temp dir.
+  std::string temp_doc_dir = MakeDocumentDirectoryPath(temp_base_dir);
+  if (!filesystem_->CreateDirectoryRecursively(temp_doc_dir.c_str())) {
+    filesystem_->DeleteDirectoryRecursively(temp_base_dir.c_str());
+    result_status->set_code(StatusProto::INTERNAL);
+    result_status->set_message(
+        "Failed to create temporary document directory.");
+    prepare_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
+    return prepare_result_proto;
+  }
+
+  std::unordered_set<std::string> potentially_optimizable_blob_handles;
+  if (blob_store_ != nullptr) {
+    potentially_optimizable_blob_handles =
+        blob_store_->GetPotentiallyOptimizableBlobHandles();
+  }
+
+  auto optimize_result_or = document_store_->OptimizeInto(
+      temp_doc_dir, language_segmenter_.get(),
+      std::move(potentially_optimizable_blob_handles), optimize_stats);
+
+  if (!optimize_result_or.ok()) {
+    filesystem_->DeleteDirectoryRecursively(temp_base_dir.c_str());
+    TransformStatus(optimize_result_or.status(), result_status);
+    prepare_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
+    return prepare_result_proto;
+  }
+  DocumentStore::OptimizeResult optimize_result =
+      std::move(optimize_result_or).ValueOrDie();
+
+  // 5. Initialize temporary document store for optimizing or rebuilding
+  // indexes.
+  std::unique_ptr<DocumentStore> temp_doc_store;
+  auto temp_doc_store_create_result_or = DocumentStore::Create(
+      filesystem_.get(), temp_doc_dir, clock_.get(), schema_store_.get(),
+      &feature_flags_,
+      /*force_recovery_and_revalidate_documents=*/false,
+      /*pre_mapping_fbv=*/false,
+      /*use_persistent_hash_map=*/true, options_.compression_level(),
+      options_.compression_threshold_bytes(), options_.compression_mem_level(),
+      /*initialize_stats=*/nullptr);
+  if (!temp_doc_store_create_result_or.ok()) {
+    filesystem_->DeleteDirectoryRecursively(temp_base_dir.c_str());
+    TransformStatus(temp_doc_store_create_result_or.status(), result_status);
+    prepare_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
+    return prepare_result_proto;
+  }
+  temp_doc_store =
+      std::move(temp_doc_store_create_result_or.ValueOrDie().document_store);
+
+  // 6. Optimize or rebuild indexes in temp dir.
+  bool should_rebuild_index =
+      optimize_result.should_rebuild_index ||
+      ShouldRebuildIndex(*optimize_stats,
+                         options_.optimize_rebuild_index_threshold());
+
+  std::string dst_index_dir = MakeIndexDirectoryPath(temp_base_dir);
+  std::string dst_integer_index_dir =
+      MakeIntegerIndexWorkingPath(temp_base_dir);
+  std::string dst_join_index_dir =
+      MakeQualifiedIdJoinIndexWorkingPath(temp_base_dir);
+  std::string dst_embedding_index_dir =
+      MakeEmbeddingIndexWorkingPath(temp_base_dir);
+
+  if (!should_rebuild_index) {
+    optimize_stats->set_index_restoration_mode(
+        OptimizeStatsProto::INDEX_TRANSLATION);
+
+    // 1. Term Index
+    libtextclassifier3::Status index_status = index_->OptimizeInto(
+        dst_index_dir, optimize_result.document_id_old_to_new,
+        temp_doc_store->last_added_document_id());
+    if (!index_status.ok()) {
+      ICING_LOG(WARNING) << "Failed to optimize term index into temp dir: "
+                         << index_status.error_message();
+      should_rebuild_index = true;
+    }
+
+    // 2. Integer Index
+    if (!should_rebuild_index) {
+      libtextclassifier3::Status integer_index_status =
+          integer_index_->OptimizeInto(
+              dst_integer_index_dir, optimize_result.document_id_old_to_new,
+              temp_doc_store->last_added_document_id());
+      if (!integer_index_status.ok()) {
+        ICING_LOG(WARNING) << "Failed to optimize integer index into temp dir: "
+                           << integer_index_status.error_message();
+        should_rebuild_index = true;
+      }
+    }
+
+    // 3. Join Index
+    if (!should_rebuild_index) {
+      libtextclassifier3::Status join_index_status =
+          qualified_id_join_index_->OptimizeInto(
+              temp_doc_store.get(), dst_join_index_dir,
+              optimize_result.document_id_old_to_new,
+              optimize_result.namespace_id_old_to_new,
+              temp_doc_store->last_added_document_id());
+      if (!join_index_status.ok()) {
+        ICING_LOG(WARNING) << "Failed to optimize join index into temp dir: "
+                           << join_index_status.error_message();
+        should_rebuild_index = true;
+      }
+    }
+
+    // 4. Embedding Index
+    if (!should_rebuild_index) {
+      libtextclassifier3::Status embedding_index_status =
+          embedding_index_->OptimizeInto(
+              temp_doc_store.get(), schema_store_.get(),
+              dst_embedding_index_dir, optimize_result.document_id_old_to_new,
+              temp_doc_store->last_added_document_id());
+      if (!embedding_index_status.ok()) {
+        ICING_LOG(WARNING)
+            << "Failed to optimize embedding index into temp dir: "
+            << embedding_index_status.error_message();
+        should_rebuild_index = true;
+      }
+    }
+  }
+
+  // If translation failed or rebuild was required, rebuild all indices in temp
+  // dir.
+  if (should_rebuild_index) {
+    auto rebuild_status = RebuildTemporaryIndices(
+        filesystem_.get(), icing_filesystem_.get(), clock_.get(),
+        normalizer_.get(), schema_store_.get(), language_segmenter_.get(),
+        feature_flags_, options_, temp_base_dir, temp_doc_store.get(),
+        optimize_stats);
+    if (!rebuild_status.ok()) {
+      temp_doc_store.reset();
+      filesystem_->DeleteDirectoryRecursively(temp_base_dir.c_str());
+      TransformStatus(rebuild_status, result_status);
+      prepare_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return prepare_result_proto;
+    }
+  }
+
+  // The temporary document store is no longer needed after indexes are
+  // optimized or rebuilt. Release it so that its files are closed before any
+  // subsequent early return deletes the temp directory.
+  temp_doc_store.reset();
+
+  // 7. Optimize Blob Store into temp dir.
+  std::vector<std::string> blob_file_names_to_remove;
+  if (blob_store_ != nullptr) {
+    std::string temp_blob_dir = MakeBlobDirectoryPath(temp_base_dir);
+    if (!filesystem_->CreateDirectoryRecursively(temp_blob_dir.c_str())) {
+      filesystem_->DeleteDirectoryRecursively(temp_base_dir.c_str());
+      result_status->set_code(StatusProto::INTERNAL);
+      result_status->set_message("Failed to create temporary blob directory.");
+      prepare_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return prepare_result_proto;
+    }
+
+    std::string temp_blob_info_proto_filename =
+        BlobStore::MakeBlobInfoProtoLogFileName(temp_blob_dir);
+    auto optimize_blob_info_result_or = blob_store_->OptimizeBlobInfoInto(
+        temp_blob_info_proto_filename, optimize_result.dead_blob_handles);
+    if (!optimize_blob_info_result_or.ok()) {
+      filesystem_->DeleteDirectoryRecursively(temp_base_dir.c_str());
+      TransformStatus(optimize_blob_info_result_or.status(), result_status);
+      prepare_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return prepare_result_proto;
+    }
+    blob_file_names_to_remove = std::move(
+        optimize_blob_info_result_or.ValueOrDie().blob_file_names_to_remove);
+  }
+
+  // 8. Populate intermediate optimize fields in prepare_result_proto.
+  PopulateOptimizePrepareResultProto(std::move(blob_file_names_to_remove),
+                                     doc_store_checksum, schema_store_checksum,
+                                     blob_store_checksum,
+                                     &prepare_result_proto);
+
+  // 9. Persist the intermediate result into the temp dir. This must be the
+  // last step, so that the file only exists if the temp dir is fully prepared.
+  libtextclassifier3::Status write_status = WriteOptimizePrepareResult(
+      *filesystem_, temp_base_dir, prepare_result_proto);
+  if (!write_status.ok()) {
+    filesystem_->DeleteDirectoryRecursively(temp_base_dir.c_str());
+    TransformStatus(write_status, result_status);
+    prepare_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+        clock_->GetSystemTimeMilliseconds());
+    return prepare_result_proto;
+  }
+
+  optimize_stats->set_latency_ms(
+      static_cast<int32_t>(stage1_timer->GetElapsedMilliseconds()));
+  result_status->set_code(StatusProto::OK);
+  prepare_result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
+  return prepare_result_proto;
+}
+
+OptimizeResultProto IcingSearchEngine::OptimizeSwapToDestDirectory(
+    const OptimizePrepareResultProto& prepare_result) {
+  ICING_LOG(INFO) << "Swapping to optimized directory (Stage 2)";
+
+  OptimizeResultProto result_proto;
+  StatusProto* result_status = result_proto.mutable_status();
+
+  OptimizeStatsProto* optimize_stats = result_proto.mutable_optimize_stats();
+  std::unique_ptr<Timer> stage2_timer = clock_->GetNewTimer();
+
+  std::string temp_base_dir =
+      MakeTemporaryBaseDirectoryPath(options_.base_dir());
+
+  // OK, or DATA_LOSS if swapping failed but the engine was recovered.
+  libtextclassifier3::Status final_status = libtextclassifier3::Status::OK;
+
+  // Serialize with other 2-stage optimize calls since they share the same
+  // temporary directory. Hold it for the whole call (including the temp dir
+  // cleanup outside of mutex_ below), so that the cleanup doesn't race with a
+  // subsequent Stage 1. Always acquire optimize_mutex_ before mutex_.
+  absl_ports::unique_lock optimize_lock(&optimize_mutex_);
+  {
+    absl_ports::unique_lock l(&mutex_);
+    if (!initialized_) {
+      result_status->set_code(StatusProto::FAILED_PRECONDITION);
+      result_status->set_message("IcingSearchEngine has not been initialized!");
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return result_proto;
+    }
+
+    // 1. Verify checksums of document store, schema store, and blob store, and
+    // verify that the temp dir was prepared together with prepare_result.
+    //
+    // The blob store checksum is needed because blob store writes (OpenWrite,
+    // CommitBlob, RemoveBlob) don't change the document store or schema store
+    // checksums. Without it, swapping would overwrite the current blob info
+    // proto file with the stale one generated in Stage 1 and lose those blob
+    // metadata changes.
+    //
+    // On failure, don't delete the temp dir since it may have been prepared by
+    // another Stage 1 call. The next Stage 1 call will clean it up anyway.
+    auto doc_store_checksum_or = document_store_->GetChecksum();
+    if (!doc_store_checksum_or.ok()) {
+      TransformStatus(doc_store_checksum_or.status(), result_status);
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return result_proto;
+    }
+
+    auto schema_store_checksum_or = schema_store_->GetChecksum();
+    if (!schema_store_checksum_or.ok()) {
+      TransformStatus(schema_store_checksum_or.status(), result_status);
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return result_proto;
+    }
+
+    // The blob store checksum is 0 if there is no blob store.
+    uint32_t blob_store_checksum = 0;
+    if (blob_store_ != nullptr) {
+      auto blob_store_checksum_or = blob_store_->GetChecksum();
+      if (!blob_store_checksum_or.ok()) {
+        TransformStatus(blob_store_checksum_or.status(), result_status);
+        result_proto.set_vm_binder_transaction_latency_start_time_ms(
+            clock_->GetSystemTimeMilliseconds());
+        return result_proto;
+      }
+      blob_store_checksum = blob_store_checksum_or.ValueOrDie().Get();
+    }
+
+    if (doc_store_checksum_or.ValueOrDie().Get() !=
+            prepare_result.recorded_document_store_checksum() ||
+        schema_store_checksum_or.ValueOrDie().Get() !=
+            prepare_result.recorded_schema_store_checksum() ||
+        blob_store_checksum != prepare_result.recorded_blob_store_checksum()) {
+      // Checksum mismatch -> write occurred after prepare stage. Abort.
+      result_status->set_code(StatusProto::ABORTED);
+      result_status->set_message(
+          "Concurrent document write, blob write, or schema change detected "
+          "after prepare stage. Aborted.");
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return result_proto;
+    }
+
+    auto persisted_prepare_result_or =
+        ReadOptimizePrepareResult(*filesystem_, temp_base_dir);
+    if (!persisted_prepare_result_or.ok() ||
+        persisted_prepare_result_or.ValueOrDie()
+                .recorded_document_store_checksum() !=
+            prepare_result.recorded_document_store_checksum() ||
+        persisted_prepare_result_or.ValueOrDie()
+                .recorded_schema_store_checksum() !=
+            prepare_result.recorded_schema_store_checksum() ||
+        persisted_prepare_result_or.ValueOrDie()
+                .recorded_blob_store_checksum() !=
+            prepare_result.recorded_blob_store_checksum()) {
+      // The temp dir is missing, incomplete, or was prepared from a different
+      // state. Abort without touching the current engine state.
+      result_status->set_code(StatusProto::ABORTED);
+      result_status->set_message(
+          "Temporary optimize directory doesn't match the prepare result. "
+          "Aborted.");
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return result_proto;
+    }
+
+    // 2. Create the marker file indicating that we are swapping directories for
+    // optimize. If Icing crashes or loses power while swapping, the marker file
+    // will remain and trigger recovery on restart.
+    std::string marker_filepath =
+        MakeGeneralMarkerFilePath(options_.base_dir());
+    auto marker_file_or = MarkerFile::Create(
+        filesystem_.get(), marker_filepath,
+        IcingSearchEngineMarkerProto::OperationType::OPTIMIZE);
+    if (!marker_file_or.ok()) {
+      TransformStatus(marker_file_or.status(), result_status);
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return result_proto;
+    }
+    std::unique_ptr<MarkerFile> marker_file =
+        std::move(marker_file_or).ValueOrDie();
+
+    // Invalidate the persisted prepare result before swapping. After swapping,
+    // the temp dir holds the old data, so it must never be reused by a
+    // subsequent Stage 1 call, even if we crash in the middle.
+    std::string prepare_result_filepath =
+        MakeOptimizePrepareResultFilePath(temp_base_dir);
+    if (!filesystem_->DeleteFile(prepare_result_filepath.c_str())) {
+      result_status->set_code(StatusProto::INTERNAL);
+      result_status->set_message(
+          "Failed to invalidate the persisted optimize prepare result.");
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return result_proto;
+    }
+
+    // 3. Reset active components (excluding schema_store_ which is unchanged).
+    // TODO(b/446719537): Update result states with document_id_old_to_new and
+    // namespace_id_old_to_new instead of evicting them to avoid interrupting
+    // active pagination journeys.
+    result_state_manager_.reset();
+    document_store_.reset();
+    index_.reset();
+    integer_index_.reset();
+    qualified_id_join_index_.reset();
+    embedding_index_.reset();
+    blob_store_.reset();
+
+    // From now on, initialized_ stays false until the engine is fully
+    // reinitialized, so that no requests are served on any early return below.
+    //
+    // TODO(b/448657720): Define an error code to tell the caller that Icing is
+    //   in an invalid state and must be re-instantiated and re-initialized. This
+    //   applies to all Icing APIs, not only 2-stage optimize.
+    initialized_ = false;
+
+    // Swap failures in steps 4-6 are handled as follows:
+    // - On document directory swap failure, ensure that the current document
+    //   directory exists, reinitialize the document store from it, rebuild all
+    //   indices from scratch, and return DATA_LOSS.
+    // - On any index directory swap failure, discard all index directories and
+    //   rebuild all indices from the document store.
+    // - If the recovery fails, keep the marker file so that the next
+    //   Initialize() detects it and rebuilds all derived files, and return
+    //   INTERNAL.
+    bool should_rebuild_index = false;
+    bool doc_swap_failed = false;
+    bool blob_info_swap_failed = false;
+
+    // 4. Swap document directory.
+    std::string current_doc_dir =
+        MakeDocumentDirectoryPath(options_.base_dir());
+    std::string temp_doc_dir = MakeDocumentDirectoryPath(temp_base_dir);
+    if (!filesystem_->SwapFiles(temp_doc_dir.c_str(),
+                                current_doc_dir.c_str())) {
+      ICING_LOG(ERROR) << "Failed to swap document directory.";
+      doc_swap_failed = true;
+      // The indices in the temp dir were generated for the new document store,
+      // so rebuild all indices from whatever document store is in the current
+      // directory.
+      should_rebuild_index = true;
+
+      // SwapFiles is not atomic, so ensure that the current document directory
+      // still exists.
+      if (!filesystem_->CreateDirectoryRecursively(current_doc_dir.c_str())) {
+        marker_file->Retain();
+        result_status->set_code(StatusProto::INTERNAL);
+        result_status->set_message(
+            "Failed to create file directory for document store after failing "
+            "to swap document directory.");
+        result_proto.set_vm_binder_transaction_latency_start_time_ms(
+            clock_->GetSystemTimeMilliseconds());
+        return result_proto;
+      }
+    }
+
+    // 5. Swap index directories. If any of them fails, rebuild all indices
+    // after reinitialization. Once a rebuild is needed, skip the remaining
+    // swaps since all index directories will be discarded anyway.
+    std::string current_index_dir = MakeIndexDirectoryPath(options_.base_dir());
+    std::string temp_index_dir = MakeIndexDirectoryPath(temp_base_dir);
+    if (!should_rebuild_index &&
+        !filesystem_->SwapFiles(temp_index_dir.c_str(),
+                                current_index_dir.c_str())) {
+      should_rebuild_index = true;
+    }
+
+    std::string current_integer_index_dir =
+        MakeIntegerIndexWorkingPath(options_.base_dir());
+    std::string temp_integer_index_dir =
+        MakeIntegerIndexWorkingPath(temp_base_dir);
+    if (!should_rebuild_index &&
+        !filesystem_->SwapFiles(temp_integer_index_dir.c_str(),
+                                current_integer_index_dir.c_str())) {
+      should_rebuild_index = true;
+    }
+
+    std::string current_join_index_dir =
+        MakeQualifiedIdJoinIndexWorkingPath(options_.base_dir());
+    std::string temp_join_index_dir =
+        MakeQualifiedIdJoinIndexWorkingPath(temp_base_dir);
+    if (!should_rebuild_index &&
+        !filesystem_->SwapFiles(temp_join_index_dir.c_str(),
+                                current_join_index_dir.c_str())) {
+      should_rebuild_index = true;
+    }
+
+    std::string current_embedding_index_dir =
+        MakeEmbeddingIndexWorkingPath(options_.base_dir());
+    std::string temp_embedding_index_dir =
+        MakeEmbeddingIndexWorkingPath(temp_base_dir);
+    if (!should_rebuild_index &&
+        !filesystem_->SwapFiles(temp_embedding_index_dir.c_str(),
+                                current_embedding_index_dir.c_str())) {
+      should_rebuild_index = true;
+    }
+
+    // 6. Swap only the blob info proto metadata file instead of the whole blob
+    // directory, preserving physical payload files under blob_files/.
+    //
+    // Skip it if the document directory swap failed, since the blob info in the
+    // temp dir was generated for the new document store.
+    std::string current_blob_info_proto_filename =
+        BlobStore::MakeBlobInfoProtoLogFileName(
+            MakeBlobDirectoryPath(options_.base_dir()));
+    std::string temp_blob_info_proto_filename =
+        BlobStore::MakeBlobInfoProtoLogFileName(
+            MakeBlobDirectoryPath(temp_base_dir));
+    if (!doc_swap_failed &&
+        filesystem_->FileExists(temp_blob_info_proto_filename.c_str()) &&
+        !filesystem_->SwapFiles(temp_blob_info_proto_filename.c_str(),
+                                current_blob_info_proto_filename.c_str())) {
+      ICING_LOG(ERROR) << "Failed to swap blob info proto file.";
+      blob_info_swap_failed = true;
+    }
+
+    // 7. If any swap failed, the index directories may be in an unknown state
+    // (e.g. only part of the files were swapped), so discard all of them
+    // instead of opening them. InitializeIndex() will then recreate the indices
+    // and rebuild them from the document store.
+    if (should_rebuild_index) {
+      optimize_stats->set_index_restoration_mode(
+          OptimizeStatsProto::FULL_INDEX_REBUILD);
+      ICING_LOG(WARNING) << "Discarding all index directories for rebuild.";
+      if (!filesystem_->DeleteDirectoryRecursively(current_index_dir.c_str()) ||
+          !IntegerIndex::Discard(*filesystem_, current_integer_index_dir)
+               .ok() ||
+          !QualifiedIdJoinIndex::Discard(*filesystem_, current_join_index_dir)
+               .ok() ||
+          !EmbeddingIndex::Discard(*filesystem_, current_embedding_index_dir)
+               .ok()) {
+        marker_file->Retain();
+        result_status->set_code(StatusProto::INTERNAL);
+        result_status->set_message(
+            "Failed to discard index directories after failing to swap.");
+        result_proto.set_vm_binder_transaction_latency_start_time_ms(
+            clock_->GetSystemTimeMilliseconds());
+        return result_proto;
+      }
+    }
+
+    // 8. Re-initialize document store, indices, blob store, and result state
+    // manager. If the index directories were discarded in step 7,
+    // InitializeIndex() rebuilds all indices from the document store.
+    InitializeStatsProto initialize_stats;
+    auto document_store_derived_files_regenerated_or = InitializeDocumentStore(
+        /*force_recovery_and_revalidate_documents=*/false, &initialize_stats);
+    if (!document_store_derived_files_regenerated_or.ok()) {
+      marker_file->Retain();
+      TransformStatus(document_store_derived_files_regenerated_or.status(),
+                      result_status);
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return result_proto;
+    }
+    bool document_store_derived_files_regenerated =
+        document_store_derived_files_regenerated_or.ValueOrDie();
+
+    libtextclassifier3::Status init_index_status = InitializeIndex(
+        document_store_derived_files_regenerated, &initialize_stats);
+    if (!init_index_status.ok() && !absl_ports::IsDataLoss(init_index_status)) {
+      marker_file->Retain();
+      TransformStatus(init_index_status, result_status);
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return result_proto;
+    }
+
+    auto blob_store_init_status =
+        InitializeBlobStore(options_.orphan_blob_time_to_live_ms(),
+                            options_.blob_store_compression_level(),
+                            options_.blob_store_compression_mem_level());
+    if (!blob_store_init_status.ok()) {
+      marker_file->Retain();
+      TransformStatus(blob_store_init_status, result_status);
+      result_proto.set_vm_binder_transaction_latency_start_time_ms(
+          clock_->GetSystemTimeMilliseconds());
+      return result_proto;
+    }
+
+    result_state_manager_ = std::make_unique<ResultStateManager>(
+        performance_configuration_.max_num_total_hits);
+
+    initialized_ = true;
+
+    // 9. Delete marker file now that the engine is in a consistent state.
+    marker_file.reset();
+
+    // 10. Delete dead blob files or populate blob file names to remove.
+    //
+    // Skip it if any ground truth swap failed, since the dead blobs may still
+    // be referenced by the current document store or blob info.
+    if (doc_swap_failed || blob_info_swap_failed) {
+      ICING_LOG(WARNING) << "Skip removing dead blob files since swapping "
+                            "failed.";
+    } else if (options_.manage_blob_files()) {
+      for (const std::string& file_name :
+           prepare_result.blob_file_names_to_remove()) {
+        std::string file_path =
+            absl_ports::StrCat(MakeBlobDirectoryPath(options_.base_dir()),
+                               "/blob_files/", file_name);
+        if (!filesystem_->DeleteFile(file_path.c_str())) {
+          ICING_LOG(WARNING) << "Failed to delete blob file: " << file_path;
+        }
+      }
+    } else {
+      *result_proto.mutable_blob_file_names_to_remove() =
+          prepare_result.blob_file_names_to_remove();
+    }
+
+    if (doc_swap_failed) {
+      final_status = absl_ports::DataLossError(
+          "Failed to swap document directory, there might be data loss");
+    } else if (blob_info_swap_failed) {
+      final_status = absl_ports::DataLossError(
+          "Failed to swap blob info proto file, there might be blob metadata "
+          "loss");
+    }
+  }
+
+  // 11. Cleanup temp dir outside of the write lock.
+  filesystem_->DeleteDirectoryRecursively(temp_base_dir.c_str());
+
+  optimize_stats->set_latency_ms(
+      static_cast<int32_t>(stage2_timer->GetElapsedMilliseconds()));
+  TransformStatus(final_status, result_status);
+  result_proto.set_vm_binder_transaction_latency_start_time_ms(
+      clock_->GetSystemTimeMilliseconds());
   return result_proto;
 }
 

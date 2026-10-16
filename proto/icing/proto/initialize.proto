@@ -176,7 +176,7 @@ message IcingSearchEngineMarkerProto {
 //       truth data requires migration.
 //     - In this case, a corresponding field in
 //       IcingSearchEngineFeatureInfoProto is required to be set.
-// Next tag: 64
+// Next tag: 65
 message IcingSearchEngineOptions {
   // [CONFIG_OPTION]
   // Directory to persist files for Icing. Required.
@@ -719,6 +719,16 @@ message IcingSearchEngineOptions {
   // continuing the restoration process with the next document. This will avoid
   // crashes given that some instances may be invalid after the error.
   optional bool enable_index_restoration_critical_error_handling_fix = 63;
+
+  // [PURE_ROLLOUT_FLAG]
+  // Whether to use the optimized scoring path (algebraic expansion with
+  // precomputed query statistics) when scoring against quantized document
+  // embeddings, instead of dequantizing per element during scoring.
+  //
+  // This is exact algebra rather than an approximation, so it introduces no
+  // additional quantization error; results differ from the unquantized path
+  // only by floating-point rounding.
+  optional bool enable_quantization_scoring_optimization = 64;
 
   reserved 2, 20, 25;
 }

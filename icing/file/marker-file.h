@@ -57,7 +57,18 @@ class MarkerFile {
   static std::unique_ptr<IcingSearchEngineMarkerProto> Postmortem(
       const Filesystem& filesystem, const std::string& filepath);
 
+  // Prevents the marker file from being deleted upon destruction of this
+  // object. This is useful when an operation fails in an unrecoverable way and
+  // the caller wants the next initialization to detect the marker file and
+  // recover from the inconsistent state.
+  void Retain() { retained_ = true; }
+
   ~MarkerFile() {
+    if (retained_) {
+      ICING_LOG(INFO) << "Retaining marker file " << filepath_
+                      << " for recovery on the next initialization.";
+      return;
+    }
     if (!filesystem_.DeleteFile(filepath_.c_str())) {
       ICING_VLOG(1) << "Failed to delete marker file " << filepath_
                     << " during destruction.";
@@ -81,6 +92,9 @@ class MarkerFile {
   // write new fields to the marker file.
   std::unique_ptr<FileBackedProto<IcingSearchEngineMarkerProto>>
       file_backed_proto_;
+
+  // Whether the marker file should be kept on disk upon destruction.
+  bool retained_ = false;
 };
 
 }  // namespace lib
