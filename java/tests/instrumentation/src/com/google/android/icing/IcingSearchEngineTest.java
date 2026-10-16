@@ -44,6 +44,7 @@ import com.google.android.icing.proto.JoinableConfig;
 import com.google.android.icing.proto.LogSeverity;
 import com.google.android.icing.proto.MaintainAnnIndexOptions;
 import com.google.android.icing.proto.MaintainAnnIndexResultProto;
+import com.google.android.icing.proto.OptimizePrepareResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
@@ -1113,6 +1114,75 @@ public final class IcingSearchEngineTest {
 
     OptimizeResultProto optimizeResultProto = icingSearchEngine.optimize();
     assertStatusOk(optimizeResultProto.getStatus());
+  }
+
+  @Test
+  public void testTwoStageOptimize() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertStatusOk(
+        icingSearchEngine
+            .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+            .getStatus());
+    assertStatusOk(icingSearchEngine.put(createEmailDocument("namespace", "uri1")).getStatus());
+    assertStatusOk(icingSearchEngine.put(createEmailDocument("namespace", "uri2")).getStatus());
+    assertStatusOk(icingSearchEngine.delete("namespace", "uri1").getStatus());
+
+    assertStatusOk(icingSearchEngine.persistToDisk(PersistType.Code.FULL).getStatus());
+    OptimizePrepareResultProto optimizePrepareResultProto =
+        icingSearchEngine.optimizePrepareDestDirectory();
+    assertStatusOk(optimizePrepareResultProto.getStatus());
+
+    OptimizeResultProto optimizeResultProto =
+        icingSearchEngine.optimizeSwapToDestDirectory(optimizePrepareResultProto);
+    assertStatusOk(optimizeResultProto.getStatus());
+
+    GetResultProto getResultProto =
+        icingSearchEngine.get("namespace", "uri2", GetResultSpecProto.getDefaultInstance());
+    assertStatusOk(getResultProto.getStatus());
+    assertThat(
+            icingSearchEngine
+                .get("namespace", "uri1", GetResultSpecProto.getDefaultInstance())
+                .getStatus()
+                .getCode())
+        .isEqualTo(StatusProto.Code.NOT_FOUND);
+  }
+
+  @Test
+  public void testTwoStageOptimize_writeAfterPrepare_aborted() throws Exception {
+    assertStatusOk(icingSearchEngine.initialize().getStatus());
+
+    SchemaTypeConfigProto emailTypeConfig = createEmailTypeConfig();
+    SchemaProto schema = SchemaProto.newBuilder().addTypes(emailTypeConfig).build();
+    assertStatusOk(
+        icingSearchEngine
+            .setSchema(schema, /* ignoreErrorsAndDeleteDocuments= */ false)
+            .getStatus());
+    assertStatusOk(icingSearchEngine.put(createEmailDocument("namespace", "uri1")).getStatus());
+
+    assertStatusOk(icingSearchEngine.persistToDisk(PersistType.Code.FULL).getStatus());
+    OptimizePrepareResultProto optimizePrepareResultProto =
+        icingSearchEngine.optimizePrepareDestDirectory();
+    assertStatusOk(optimizePrepareResultProto.getStatus());
+
+    // A write after Stage 1 should make Stage 2 abort.
+    assertStatusOk(icingSearchEngine.put(createEmailDocument("namespace", "uri2")).getStatus());
+
+    OptimizeResultProto optimizeResultProto =
+        icingSearchEngine.optimizeSwapToDestDirectory(optimizePrepareResultProto);
+    assertThat(optimizeResultProto.getStatus().getCode()).isEqualTo(StatusProto.Code.ABORTED);
+
+    // Active storage should be untouched.
+    assertStatusOk(
+        icingSearchEngine
+            .get("namespace", "uri1", GetResultSpecProto.getDefaultInstance())
+            .getStatus());
+    assertStatusOk(
+        icingSearchEngine
+            .get("namespace", "uri2", GetResultSpecProto.getDefaultInstance())
+            .getStatus());
   }
 
   @Test

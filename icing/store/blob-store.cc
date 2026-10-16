@@ -39,6 +39,7 @@
 #include "icing/proto/blob.pb.h"
 #include "icing/proto/document.pb.h"
 #include "icing/util/clock.h"
+#include "icing/util/crc32.h"
 #include "icing/util/encode-util.h"
 #include "icing/util/logging.h"
 #include "icing/util/sha256.h"
@@ -57,10 +58,6 @@ static constexpr int32_t kReadBufferSize = 8192;
 namespace {
 
 using ::icing::lib::status_util::TransformStatus;
-
-std::string MakeBlobInfoProtoLogFileName(const std::string& base_dir) {
-  return absl_ports::StrCat(base_dir, "/", kBlobInfoProtoLogFileName);
-}
 
 std::string MakeBlobFileDir(const std::string& base_dir) {
   return absl_ports::StrCat(base_dir, "/", kBlobFileDir);
@@ -136,6 +133,11 @@ BlobProto CreateBlobProtoFromFileDescriptor(int file_descriptor) {
     const PropertyProto::BlobHandleProto& blob_handle) {
   return encode_util::EncodeStringToCString(blob_handle.digest() +
                                             blob_handle.namespace_());
+}
+
+/* static */ std::string BlobStore::MakeBlobInfoProtoLogFileName(
+    const std::string& base_dir) {
+  return absl_ports::StrCat(base_dir, "/", kBlobInfoProtoLogFileName);
 }
 
 libtextclassifier3::StatusOr<BlobStore> BlobStore::Create(
@@ -693,6 +695,10 @@ BlobStore::GetStorageInfo() const {
   }
 
   return namespace_blob_storage_infos;
+}
+
+libtextclassifier3::StatusOr<Crc32> BlobStore::GetChecksum() const {
+  return blob_info_log_->GetChecksum();
 }
 
 }  // namespace lib

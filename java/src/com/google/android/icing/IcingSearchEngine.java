@@ -37,6 +37,7 @@ import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.LogSeverity;
 import com.google.android.icing.proto.MaintainAnnIndexOptions;
 import com.google.android.icing.proto.MaintainAnnIndexResultProto;
+import com.google.android.icing.proto.OptimizePrepareResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
@@ -308,6 +309,19 @@ public class IcingSearchEngine implements IcingSearchEngineInterface {
   @Override
   public @NonNull OptimizeResultProto optimize() {
     return IcingSearchEngineUtils.byteArrayToOptimizeResultProto(icingSearchEngineImpl.optimize());
+  }
+
+  @Override
+  public @NonNull OptimizePrepareResultProto optimizePrepareDestDirectory() {
+    return IcingSearchEngineUtils.byteArrayToOptimizePrepareResultProto(
+        icingSearchEngineImpl.optimizePrepareDestDirectory());
+  }
+
+  @Override
+  public @NonNull OptimizeResultProto optimizeSwapToDestDirectory(
+      @NonNull OptimizePrepareResultProto optimizePrepareResult) {
+    return IcingSearchEngineUtils.byteArrayToOptimizeResultProto(
+        icingSearchEngineImpl.optimizeSwapToDestDirectory(optimizePrepareResult.toByteArray()));
   }
 
   @Override

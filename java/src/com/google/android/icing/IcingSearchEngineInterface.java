@@ -21,6 +21,7 @@ import com.google.android.icing.proto.HandleExpiredDocumentsResultProto;
 import com.google.android.icing.proto.InitializeResultProto;
 import com.google.android.icing.proto.MaintainAnnIndexOptions;
 import com.google.android.icing.proto.MaintainAnnIndexResultProto;
+import com.google.android.icing.proto.OptimizePrepareResultProto;
 import com.google.android.icing.proto.OptimizeResultProto;
 import com.google.android.icing.proto.PersistToDiskResultProto;
 import com.google.android.icing.proto.PersistType;
@@ -227,6 +228,30 @@ public interface IcingSearchEngineInterface extends Closeable {
 
   /** Makes the icing instance run tasks that are too expensive to be run in real-time. */
   OptimizeResultProto optimize();
+
+  /**
+   * Stage 1 of the 2-stage optimization: compacts the document store and indexes into a temporary
+   * directory without swapping them in.
+   *
+   * <p>Read operations can run concurrently with this call, while write operations are blocked. The
+   * caller MUST call {@link #persistToDisk} with {@link PersistType.Code#FULL} immediately before
+   * calling this method.
+   *
+   * <p>The returned {@link OptimizePrepareResultProto} should be passed to {@link
+   * #optimizeSwapToDestDirectory(OptimizePrepareResultProto)} to finish the optimization.
+   */
+  OptimizePrepareResultProto optimizePrepareDestDirectory();
+
+  /**
+   * Stage 2 of the 2-stage optimization: swaps the directories prepared by {@link
+   * #optimizePrepareDestDirectory()} into place and re-initializes the icing instance.
+   *
+   * <p>Returns ABORTED if any write happened after {@link #optimizePrepareDestDirectory()}, in
+   * which case the active storage is left untouched and the caller may retry from Stage 1.
+   *
+   * @param optimizePrepareResult the result returned by {@link #optimizePrepareDestDirectory()}.
+   */
+  OptimizeResultProto optimizeSwapToDestDirectory(OptimizePrepareResultProto optimizePrepareResult);
 
   /** Gets information about the optimization. */
   GetOptimizeInfoResultProto getOptimizeInfo();

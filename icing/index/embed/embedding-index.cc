@@ -1143,7 +1143,7 @@ libtextclassifier3::Status EmbeddingIndex::EmbeddingHitAccessor::AddAccessor(
 
 libtextclassifier3::StatusOr<float>
 EmbeddingIndex::EmbeddingHitAccessor::ScoreEmbeddingHit(
-    const EmbeddingScorer& scorer, const std::vector<float>& query_floats,
+    const EmbeddingScorer& scorer, const EmbeddingQuery& query,
     const HitInfo& hit_info,
     EmbeddingIndexingConfig::QuantizationType::Code quantization_type,
     uint32_t schema_name_hash, bool is_ann) {
@@ -1152,7 +1152,7 @@ EmbeddingIndex::EmbeddingHitAccessor::ScoreEmbeddingHit(
   }
   uint32_t shard_id = embedding_index_.GetShardId(
       hit_info.posting_list_key_hash, schema_name_hash);
-  int dimension = static_cast<int>(query_floats.size());
+  int dimension = query.dimension();
   float semantic_score;
   const EmbeddingHit& hit = hit_info.hit;
   if (quantization_type == EmbeddingIndexingConfig::QuantizationType::NONE) {
@@ -1160,7 +1160,7 @@ EmbeddingIndex::EmbeddingHitAccessor::ScoreEmbeddingHit(
         const float* vector,
         embedding_index_.GetEmbeddingVector(hit, dimension, shard_id));
     semantic_score = scorer.Score(dimension,
-                                  /*v1=*/query_floats.data(),
+                                  /*v1=*/query.floats().data(),
                                   /*v2=*/vector);
     ++embedding_stats_.num_unquantized_embeddings_scored;
     embedding_stats_.unquantized_shards_read.insert(shard_id);
@@ -1174,7 +1174,7 @@ EmbeddingIndex::EmbeddingHitAccessor::ScoreEmbeddingHit(
     const uint8_t* quantized_vector =
         reinterpret_cast<const uint8_t*>(data + sizeof(Quantizer));
     semantic_score = scorer.Score(dimension,
-                                  /*v1=*/query_floats.data(),
+                                  /*v1=*/query,
                                   /*v2=*/quantized_vector, quantizer);
     ++embedding_stats_.num_quantized_embeddings_scored;
     embedding_stats_.quantized_shards_read.insert(shard_id);

@@ -621,6 +621,43 @@ jbyteArray nativeOptimize(JNIEnv* env, jclass clazz, jobject object) {
   return SerializeProtoToJniByteArray(env, optimize_result_proto);
 }
 
+// TODO : b/434206770 - pre-register this API once Jetpack build is dropped back
+// into g3
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeOptimizePrepareDestDirectory(
+    JNIEnv* env, jclass clazz, jobject object) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::OptimizePrepareResultProto optimize_prepare_result_proto =
+      icing->OptimizePrepareDestDirectory();
+
+  return SerializeProtoToJniByteArray(env, optimize_prepare_result_proto);
+}
+
+// TODO : b/434206770 - pre-register this API once Jetpack build is dropped back
+// into g3
+JNIEXPORT jbyteArray JNICALL
+Java_com_google_android_icing_IcingSearchEngineImpl_nativeOptimizeSwapToDestDirectory(
+    JNIEnv* env, jclass clazz, jobject object,
+    jbyteArray optimize_prepare_result_bytes) {
+  icing::lib::IcingSearchEngine* icing =
+      GetIcingSearchEnginePointer(env, object);
+
+  icing::lib::OptimizePrepareResultProto optimize_prepare_result_proto;
+  if (!ParseProtoFromJniByteArray(env, optimize_prepare_result_bytes,
+                                  &optimize_prepare_result_proto)) {
+    ICING_LOG(icing::lib::ERROR)
+        << "Failed to parse OptimizePrepareResultProto in "
+           "nativeOptimizeSwapToDestDirectory";
+    return nullptr;
+  }
+  icing::lib::OptimizeResultProto optimize_result_proto =
+      icing->OptimizeSwapToDestDirectory(optimize_prepare_result_proto);
+
+  return SerializeProtoToJniByteArray(env, optimize_result_proto);
+}
+
 jbyteArray nativeGetOptimizeInfo(JNIEnv* env, jclass clazz, jobject object) {
   icing::lib::IcingSearchEngine* icing =
       GetIcingSearchEnginePointer(env, object);
