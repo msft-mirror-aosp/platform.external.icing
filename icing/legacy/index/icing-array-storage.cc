@@ -67,9 +67,22 @@ bool IcingArrayStorage::Init(int fd, size_t fd_offset, bool map_shared,
     ICING_LOG(ERROR) << "Array storage could not get file size";
     return false;
   }
+  if (file_size > IcingArrayStorage::kMaxFileSize) {
+    ICING_LOG(ERROR) << "Array storage file size " << file_size
+                     << " exceeds max file size "
+                     << IcingArrayStorage::kMaxFileSize;
+    return false;
+  }
   if (file_size < fd_offset) {
     ICING_LOG(ERROR) << "Array storage file size " << file_size
                      << " less than offset " << fd_offset;
+    return false;
+  }
+
+  if (static_cast<uint64_t>(max_num_elts) * elt_size > kMaxFileSize) {
+    ICING_LOG(ERROR) << "Cannot initialize array storage with max_num_elts "
+                     << max_num_elts << " and elt_size " << elt_size
+                     << " because it exceeds max file size";
     return false;
   }
 
@@ -82,8 +95,11 @@ bool IcingArrayStorage::Init(int fd, size_t fd_offset, bool map_shared,
 
   // Map beyond the capacity. We will grow underlying file to avoid
   // SIGBUS.
-  mmapper_ = new IcingMMapper(fd, false, fd_offset, max_num_elts * elt_size,
-                              map_shared ? MAP_SHARED : MAP_PRIVATE);
+  mmapper_ = new IcingMMapper(
+      fd, false, fd_offset,
+      max_num_elts * elt_size,  // won't overflow because we already ensured
+                                // this value <= kMaxFileSize
+      map_shared ? MAP_SHARED : MAP_PRIVATE);
   if (!mmapper_->is_valid()) {
     ICING_LOG(ERROR) << "Array storage map failed";
     delete mmapper_;

@@ -30,6 +30,9 @@ namespace lib {
 namespace {
 
 using testing::Eq;
+using testing::IsFalse;
+using testing::IsTrue;
+using testing::Ne;
 
 class IcingArrayStorageTest : public ::testing::Test {
  protected:
@@ -47,6 +50,13 @@ class IcingArrayStorageTest : public ::testing::Test {
   std::string array_files_dir_;
   std::string array_file_;
 };
+
+struct TestStruct {
+  int32_t a;
+  char b;
+  char c;
+} __attribute__((packed));
+static_assert(sizeof(TestStruct) == 6);
 
 TEST_F(IcingArrayStorageTest, UpdateCrcNoCrcPtr) {
   IcingArrayStorage storage(filesystem_);
@@ -167,6 +177,57 @@ TEST_F(IcingArrayStorageTest, UpdateCrcDoesUpdateHeader) {
                          /*max_num_elts=*/1000, &crc, /*init_crc=*/false));
     EXPECT_THAT(storage_two.GetCrc().Get(), Eq(937357362));
   }
+}
+
+TEST_F(IcingArrayStorageTest, InitSucceedsWithMaxFileSize) {
+  uint32_t crc = 0;
+
+  IcingArrayStorage storage(filesystem_);
+  IcingScopedFd sfd(filesystem_.OpenForWrite(array_file_.c_str()));
+  ASSERT_TRUE(sfd.is_valid());
+
+  // Intentionally choose an elt_size that is not a divisor of the max file
+  // size.
+  uint32_t elt_size = sizeof(TestStruct);
+  uint32_t max_num_elts_allowed = IcingArrayStorage::kMaxFileSize / elt_size;
+
+  // Should succeed.
+  EXPECT_THAT(
+      storage.Init(sfd.get(), /*fd_offset=*/0, /*map_shared=*/true, elt_size,
+                   /*num_elts=*/0, max_num_elts_allowed, /*crc_ptr=*/&crc,
+                   /*init_crc=*/false),
+      IsTrue());
+
+  // Write, UpdateCrc, and Sync should all succeed.
+  ICING_ASSERT_OK_AND_ASSIGN(TestStruct * ptr,
+                             storage.GetMutableMem<TestStruct>(100000, 1));
+  ptr->a = 1;
+  ptr->b = 2;
+  ptr->c = 3;
+
+  EXPECT_THAT(storage.UpdateCrc().Get(), Ne(0));
+  EXPECT_THAT(storage.Sync(), Eq(0));
+}
+
+TEST_F(IcingArrayStorageTest,
+       InitFailsIfMaxNumEltsAndEltSizeExceedsMaxFileSize) {
+  uint32_t crc = 0;
+
+  IcingArrayStorage storage(filesystem_);
+  IcingScopedFd sfd(filesystem_.OpenForWrite(array_file_.c_str()));
+  ASSERT_TRUE(sfd.is_valid());
+
+  // Intentionally choose an elt_size that is not a divisor of the max file
+  // size.
+  uint32_t elt_size = sizeof(TestStruct);
+  uint32_t max_num_elts_allowed = IcingArrayStorage::kMaxFileSize / elt_size;
+
+  // Should fail.
+  EXPECT_THAT(
+      storage.Init(sfd.get(), /*fd_offset=*/0, /*map_shared=*/true, elt_size,
+                   /*num_elts=*/0, max_num_elts_allowed + 1, /*crc_ptr=*/&crc,
+                   /*init_crc=*/false),
+      IsFalse());
 }
 
 }  // namespace
