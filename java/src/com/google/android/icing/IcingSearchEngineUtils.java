@@ -405,11 +405,15 @@ public final class IcingSearchEngineUtils {
   @NonNull
   public static OptimizePrepareResultProto byteArrayToOptimizePrepareResultProto(
       @Nullable byte[] optimizePrepareResultBytes) {
-    return getResponseProtoBuilderFromRawData(
+    OptimizePrepareResultProto.Builder builder =
+        getResponseProtoBuilderFromRawData(
             optimizePrepareResultBytes,
             OptimizePrepareResultProto.newBuilder(),
-            status -> OptimizePrepareResultProto.newBuilder().setStatus(status))
-        .build();
+            status -> OptimizePrepareResultProto.newBuilder().setStatus(status));
+    if (optimizePrepareResultBytes != null) {
+      builder.setResponseBytes(optimizePrepareResultBytes.length);
+    }
+    return builder.build();
   }
 
   @NonNull
