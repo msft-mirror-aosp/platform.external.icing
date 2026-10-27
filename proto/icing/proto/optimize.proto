@@ -59,7 +59,7 @@ message OptimizeResultProto {
 }
 
 // Result of a call to IcingSearchEngine.OptimizePrepareDestDirectory
-// Next tag: 10
+// Next tag: 8
 message OptimizePrepareResultProto {
   // Status code can be one of:
   //   OK
@@ -92,14 +92,6 @@ message OptimizePrepareResultProto {
   // Stage 2 will verify this checksum to ensure no blob metadata changes
   // (e.g. OpenWrite, CommitBlob, RemoveBlob) occurred.
   optional fixed32 recorded_blob_store_checksum = 7;
-
-  // The latency of the GetVm call.
-  optional int32 get_vm_latency_ms = 8;
-
-  // Size of the OptimizePrepareResultProto response in bytes.
-  // This field is not populated by libicing and is populated by the
-  // IcingSearchEngine java class.
-  optional int32 response_bytes = 9;
 }
 
 // Result of a call to IcingSearchEngine.GetOptimizeInfo

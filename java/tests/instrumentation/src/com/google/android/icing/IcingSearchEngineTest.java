@@ -1134,12 +1134,10 @@ public final class IcingSearchEngineTest {
     OptimizePrepareResultProto optimizePrepareResultProto =
         icingSearchEngine.optimizePrepareDestDirectory();
     assertStatusOk(optimizePrepareResultProto.getStatus());
-    assertThat(optimizePrepareResultProto.getResponseBytes()).isGreaterThan(0);
 
     OptimizeResultProto optimizeResultProto =
         icingSearchEngine.optimizeSwapToDestDirectory(optimizePrepareResultProto);
     assertStatusOk(optimizeResultProto.getStatus());
-    assertThat(optimizeResultProto.getResponseBytes()).isGreaterThan(0);
 
     GetResultProto getResultProto =
         icingSearchEngine.get("namespace", "uri2", GetResultSpecProto.getDefaultInstance());

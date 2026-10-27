@@ -22,7 +22,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <string>
 #include <vector>
 
@@ -30,7 +29,6 @@
 #include "icing/absl_ports/canonical_errors.h"
 #include "icing/legacy/index/icing-filesystem.h"
 #include "icing/legacy/index/icing-mmapper.h"
-#include "icing/portable/platform.h"
 #include "icing/util/crc32.h"
 
 namespace icing {
@@ -40,20 +38,6 @@ class IcingArrayStorage {
  public:
   explicit IcingArrayStorage(const IcingFilesystem &filesystem);
   ~IcingArrayStorage();
-
-  // Absolute max file size for IcingArrayStorage.
-  // - We memory map the whole file, so file size ~= memory size.
-  // - On 32-bit platform, the virtual memory address space is 4GB. To avoid
-  //   exhausting the memory, set smaller file size limit for 32-bit platform.
-  //   Note: 2^28 or 2^27 may be better choices, but IcingDynamicTrie::kMaxNexts
-  //   is (2^27 - 1) and sizeof(Next) is 4, so the max file size MUST be at
-  //   least 2^29.
-#ifdef ICING_ARCH_BIT_64
-  static constexpr uint32_t kMaxFileSize =
-      std::numeric_limits<uint32_t>::max();  // 2^32-1 Bytes, ~4.3 GB
-#else
-  static constexpr uint32_t kMaxFileSize = (1u << 29);  // 2^29, ~512 MiB
-#endif
 
   // Mmap a disk-backed array at fd_offset in fd. fd is owned by the
   // caller and must be kept valid.
